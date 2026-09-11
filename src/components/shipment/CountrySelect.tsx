@@ -41,9 +41,23 @@ export default function CountrySelect({ value, onChange }: Props) {
   }, []);
 
   const term = query.trim().toLowerCase();
+  // Rank matches by relevance instead of leaving them in plain alphabetical order —
+  // otherwise an exact ISO2 match like "US" (United States) can end up buried at the
+  // bottom just because "United States" comes late alphabetically among the matches.
+  function matchRank(c: Country): number {
+    const name = c.name.toLowerCase();
+    const iso2 = c.iso2.toLowerCase();
+    if (iso2 === term) return 0;
+    if (name.startsWith(term)) return 1;
+    if (iso2.startsWith(term)) return 2;
+    if (name.includes(term)) return 3;
+    return 4;
+  }
   const results =
     open && term
-      ? countries.filter((c) => c.name.toLowerCase().includes(term) || c.iso2.toLowerCase().includes(term))
+      ? countries
+          .filter((c) => c.name.toLowerCase().includes(term) || c.iso2.toLowerCase().includes(term))
+          .sort((a, b) => matchRank(a) - matchRank(b) || a.name.localeCompare(b.name))
       : countries;
 
   return (
