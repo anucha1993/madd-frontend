@@ -1,6 +1,5 @@
 import { getToken } from "./auth";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
+import { API_URL } from "./apiUrl";
 
 export class ApiError extends Error {
   status: number;
