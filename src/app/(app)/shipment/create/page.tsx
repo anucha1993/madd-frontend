@@ -1,15 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, ChevronLeft, ChevronRight, FileText, Loader2, Package, Plus, Search, ShieldCheck, Tag, Trash2 } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, FileText, Loader2, Lock, Package, Plus, Search, ShieldCheck, Tag, Trash2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import ThaiAddressSearch from "@/components/shipment/ThaiAddressSearch";
-import { INTERNATIONAL_COUNTRIES } from "@/lib/countries";
+import CountrySelect from "@/components/shipment/CountrySelect";
+import { listCountries, type Country } from "@/lib/countries";
 import { listAgents, type Agent } from "@/lib/agentAccounts";
 import { listSupplies, type Supply } from "@/lib/supplies";
 import { listAddonItems, type AddonItem } from "@/lib/addonItems";
-import { listProductWeightBands, matchProductWeightBand, type ProductWeightBand } from "@/lib/productWeightBands";
+import { listProductWeightBands, matchProductWeightBand, pickForcedWeightBand, type ProductWeightBand } from "@/lib/productWeightBands";
 import { getThaiSubdistrictsByZipCode } from "@/lib/thaiSubdistricts";
 import { checkRate, type CheckRateInput, type RateQuote, type ShipmentPackageInput } from "@/lib/shipping";
 
@@ -19,10 +20,20 @@ const STEPS = [
   { number: 3 as const, label: "Payment & Add-on" },
 ];
 
-type PackageRow = ShipmentPackageInput & { key: number };
+type PackageRow = ShipmentPackageInput & { key: number; forcedWeightBandId: number | null };
 
 let rowKeySeq = 1;
-const newRow = (): PackageRow => ({ key: rowKeySeq++, weight: 1, length: 10, width: 10, height: 10, quantity: 1 });
+const newRow = (): PackageRow => ({
+  key: rowKeySeq++,
+  weight: 1,
+  length: 10,
+  width: 10,
+  height: 10,
+  quantity: 1,
+  description: "",
+  is_document: false,
+  forcedWeightBandId: null,
+});
 
 type GoodsRow = { key: number; name: string; hsCode: string; quantity: number; value: number };
 let goodsKeySeq = 1;
@@ -35,8 +46,8 @@ const CUSTOMER_TYPE_OPTIONS: { value: "DAILY" | "CR" | "WI"; label: string; desc
 ];
 
 const ENTITY_TYPE_OPTIONS: { value: "INDIVIDUAL" | "COMPANY"; label: string; description: string }[] = [
-  { value: "INDIVIDUAL", label: "บุคคลธรรมดา", description: "การจัดส่งเพื่อการใช้งานส่วนตัว ของขวัญ หรือของใช้ในบ้าน" },
-  { value: "COMPANY", label: "บริษัท", description: "การจัดส่งเพื่อวัตถุประสงค์ทางการค้าด้วย VAT/ID ภาษี" },
+  { value: "INDIVIDUAL", label: "INDIVIDUAL", description: "การจัดส่งเพื่อการใช้งานส่วนตัว ของขวัญ หรือของใช้ในบ้าน" },
+  { value: "COMPANY", label: "COMPANY", description: "การจัดส่งเพื่อวัตถุประสงค์ทางการค้าด้วย VAT/ID ภาษี" },
 ];
 
 const INSURANCE_SERVICES: Record<"DAILY" | "CR" | "WI", { code: string; label: string; multiplier: number }[]> = {
@@ -75,7 +86,7 @@ export default function ShipmentCreatePage() {
 
   const [destinationContactName, setDestinationContactName] = useState("");
   const [destinationCompany, setDestinationCompany] = useState("");
-  const [destinationCountry, setDestinationCountry] = useState(INTERNATIONAL_COUNTRIES[0].code);
+  const [destinationCountry, setDestinationCountry] = useState("");
   const [destinationCity, setDestinationCity] = useState("");
   const [destinationPostcode, setDestinationPostcode] = useState("");
   const [destinationAddress, setDestinationAddress] = useState("");
@@ -84,9 +95,9 @@ export default function ShipmentCreatePage() {
   const [destinationPhone, setDestinationPhone] = useState("");
   const [destinationEmail, setDestinationEmail] = useState("");
 
-  const [packageType, setPackageType] = useState<"box" | "document">("box");
-  const isDocument = packageType === "document";
   const [packages, setPackages] = useState<PackageRow[]>([newRow()]);
+  // Which package row Common Sizes / dimension edits apply to — only one row is "unlocked" at a time.
+  const [activePackageKey, setActivePackageKey] = useState<number | null>(packages[0]?.key ?? null);
 
   const [customerType, setCustomerType] = useState<"DAILY" | "CR" | "WI">("DAILY");
   const [entityType, setEntityType] = useState<"INDIVIDUAL" | "COMPANY">("INDIVIDUAL");
@@ -107,6 +118,7 @@ export default function ShipmentCreatePage() {
   const [goods, setGoods] = useState<GoodsRow[]>([newGoodsRow()]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [weightBands, setWeightBands] = useState<ProductWeightBand[]>([]);
+  const [countries, setCountries] = useState<Country[]>([]);
 
   useEffect(() => {
     listSupplies()
@@ -121,22 +133,36 @@ export default function ShipmentCreatePage() {
     listProductWeightBands()
       .then((all) => setWeightBands(all.filter((b) => b.status)))
       .catch(() => {});
+    listCountries()
+      .then((all) => {
+        const active = all.filter((c) => c.status);
+        setCountries(active);
+        setDestinationCountry((current) => current || active[0]?.iso2 || "");
+      })
+      .catch(() => {});
   }, []);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [results, setResults] = useState<RateQuote[] | null>(null);
 
-  function updatePackage(key: number, patch: Partial<ShipmentPackageInput>) {
+  function updatePackage(key: number, patch: Partial<PackageRow>) {
     setPackages((prev) => prev.map((p) => (p.key === key ? { ...p, ...patch } : p)));
   }
 
   function addPackage() {
-    setPackages((prev) => [...prev, newRow()]);
+    const row = newRow();
+    setPackages((prev) => [...prev, row]);
+    setActivePackageKey(row.key);
   }
 
   function removePackage(key: number) {
-    setPackages((prev) => (prev.length > 1 ? prev.filter((p) => p.key !== key) : prev));
+    setPackages((prev) => {
+      if (prev.length <= 1) return prev;
+      const next = prev.filter((p) => p.key !== key);
+      if (activePackageKey === key) setActivePackageKey(next[next.length - 1].key);
+      return next;
+    });
   }
 
   function updateGoods(key: number, patch: Partial<GoodsRow>) {
@@ -189,31 +215,48 @@ export default function ShipmentCreatePage() {
   const selectedInsuranceService = insuranceServiceOptions.find((s) => s.code === insuranceService) ?? insuranceServiceOptions[0];
   const estimatedPremium = insuranceEnabled ? (Number(declaredValue) || 0) * selectedInsuranceService.multiplier : 0;
 
+  // The currently "active" (unlocked) package row — used to decide whether to show the
+  // Common Sizes guide / dimension fields, since box vs document is now chosen per row.
+  const activeRow = packages.find((p) => p.key === activePackageKey) ?? packages[0];
+
   // Shipment Weight Range — auto-matched from total weight (legacy system required manually
-  // picking this from a radio list; here it's derived automatically instead).
+  // picking this from a radio list; here it's derived automatically instead). A supply box
+  // linked to a fixed Weight Range (e.g. CPM10/CPM25) always overrides the weight-based match,
+  // even if the actual total weight doesn't reach that band's threshold.
   const totalShipmentWeight = packages.reduce((sum, p) => sum + (Number(p.weight) || 0) * (Number(p.quantity) || 1), 0);
-  const matchedWeightBand = matchProductWeightBand(weightBands, totalShipmentWeight, packageType);
+  const overallPackageType: "box" | "document" = packages.every((p) => p.is_document) ? "document" : "box";
+  const forcedBandIds = packages.map((p) => p.forcedWeightBandId).filter((id): id is number => !!id);
+  const matchedWeightBand =
+    pickForcedWeightBand(weightBands, forcedBandIds) ?? matchProductWeightBand(weightBands, totalShipmentWeight, overallPackageType);
 
   // Applying a stock size only fills in the dimensions as a guide — it does not add a purchase.
+  // Targets whichever package row is currently "active" (unlocked), not always the first one.
+  // If the supply is linked to a fixed Weight Range (CPM10/CPM25), that row now forces it.
   function applyStockSize(supply: Supply) {
     setStockSupplyId(supply.id);
-    const firstKey = packages[0].key;
-    updatePackage(firstKey, {
-      weight: Number(supply.weight) || packages[0].weight,
+    const targetKey = activePackageKey ?? packages[0].key;
+    updatePackage(targetKey, {
+      weight: Number(supply.weight) || packages.find((p) => p.key === targetKey)?.weight,
       length: Number(supply.length) || undefined,
       width: Number(supply.width) || undefined,
       height: Number(supply.height) || undefined,
+      is_document: false,
+      forcedWeightBandId: supply.weight_band_id ?? null,
     });
   }
 
-  // Only show the 3 most commonly used sizes by default — search reveals the rest.
+  // Show the admin-pinned "Common Sizes" guide (max 6, configured in /config/supplies);
+  // fall back to the first 3 supplies if none are pinned yet. Search reveals everything.
+  const featuredSupplies = supplies.filter((s) => s.is_featured);
   const visibleSupplies = supplySearch.trim()
     ? supplies.filter(
         (s) =>
           s.name.toLowerCase().includes(supplySearch.trim().toLowerCase()) ||
           (s.description ?? "").toLowerCase().includes(supplySearch.trim().toLowerCase()),
       )
-    : supplies.slice(0, 3);
+    : featuredSupplies.length > 0
+      ? featuredSupplies
+      : supplies.slice(0, 3);
 
   async function handleSubmit() {
     setError("");
@@ -228,9 +271,19 @@ export default function ShipmentCreatePage() {
       return;
     }
 
-    const effectivePackages: ShipmentPackageInput[] = isDocument
-      ? packages.map((p) => ({ weight: p.weight, quantity: p.quantity }))
-      : packages.map((p) => ({ weight: p.weight, length: p.length, width: p.width, height: p.height, quantity: p.quantity }));
+    const effectivePackages: ShipmentPackageInput[] = packages.map((p) =>
+      p.is_document
+        ? { weight: p.weight, quantity: p.quantity, description: p.description, is_document: true }
+        : {
+            weight: p.weight,
+            length: p.length,
+            width: p.width,
+            height: p.height,
+            quantity: p.quantity,
+            description: p.description,
+            is_document: false,
+          },
+    );
 
     const payload: CheckRateInput = {
       origin_contact_name: originContactName.trim() || undefined,
@@ -251,7 +304,6 @@ export default function ShipmentCreatePage() {
       destination_address3: destinationAddress3.trim() || undefined,
       destination_phone: destinationPhone.trim() || undefined,
       destination_email: destinationEmail.trim() || undefined,
-      is_document: isDocument,
       packages: effectivePackages,
     };
 
@@ -330,7 +382,7 @@ export default function ShipmentCreatePage() {
         </div>
 
         <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">ประเภทบุคคล</h2>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Individual Category</h2>
           <div className="flex flex-wrap items-center gap-2">
             {ENTITY_TYPE_OPTIONS.map((opt) => (
               <button
@@ -388,6 +440,7 @@ export default function ShipmentCreatePage() {
                 onSelect={(row) => {
                   setOriginPostcode(row.zip_code);
                   setOriginCity(row.district_name_en ?? row.district_name_th);
+                  setOriginSearchValue(`${row.name_en}, ${row.district_name_en}, ${row.province_name_en} - ${row.zip_code}`);
                   setOriginLookup({
                     status: "found",
                     label: `${row.name_en}, ${row.district_name_en}, ${row.province_name_en}`,
@@ -466,20 +519,7 @@ export default function ShipmentCreatePage() {
             </div>
             <label className="flex flex-col gap-1">
               <span className={labelClass}>Country</span>
-              <div className="relative">
-                <select
-                  value={destinationCountry}
-                  onChange={(e) => setDestinationCountry(e.target.value)}
-                  className={`${inputClass} pr-9`}
-                >
-                  {INTERNATIONAL_COUNTRIES.map((c) => (
-                    <option key={c.code} value={c.code}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-                <CheckCircle2 className="pointer-events-none absolute right-7 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />
-              </div>
+              <CountrySelect value={destinationCountry} onChange={setDestinationCountry} />
             </label>
             <div className="grid grid-cols-2 gap-2.5">
               <label className="flex flex-col gap-1">
@@ -604,33 +644,49 @@ export default function ShipmentCreatePage() {
         <>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="flex flex-col gap-4 lg:col-span-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Product Type</h2>
         <div className="flex flex-wrap items-end gap-4">
-          <label className="flex max-w-xs flex-col gap-1">
-            <span className={labelClass}>Package Type</span>
-            <select
-              value={packageType}
-              onChange={(e) => setPackageType(e.target.value as "box" | "document")}
-              className={inputClass}
-            >
-              <option value="box">Package (Box)</option>
-              <option value="document">Document</option>
-            </select>
-          </label>
           <div className="flex flex-col gap-1">
             <span className={labelClass}>Shipment Weight Range</span>
             <span className="flex h-[34px] items-center rounded-lg bg-slate-100 px-3 text-sm font-semibold text-slate-600">
               {matchedWeightBand ? matchedWeightBand.label : "-"}
             </span>
           </div>
+          <p className="text-xs text-slate-400">
+            คำนวณอัตโนมัติจากน้ำหนักรวมและประเภทกล่องที่เลือกในหัวข้อ Packages ด้านล่าง — ถ้าเลือกกล่อง CPM ระบบจะบังคับใช้ช่วงน้ำหนักของกล่องนั้นเสมอ
+          </p>
         </div>
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Ship Info</h2>
+        <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+          <div>
+            <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Ship From</span>
+            <p className="font-medium text-slate-700">{originContactName || "-"}</p>
+            <p className="text-xs text-slate-500">
+              {[originAddress, originCity].filter(Boolean).join(", ") || "-"}
+            </p>
+          </div>
+          <div>
+            <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Ship To</span>
+            <p className="font-medium text-slate-700">{destinationContactName || "-"}</p>
+            <p className="text-xs text-slate-500">
+              {[destinationAddress, destinationCity, countries.find((c) => c.iso2 === destinationCountry)?.name]
+                .filter(Boolean)
+                .join(", ") || "-"}
+            </p>
+          </div>
+        </div>
+      </div>
       </div>
 
       <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Packages</h2>
-          {!isDocument && (
+          {!activeRow.is_document && (
             <div className="flex items-center gap-3">
               <span className={labelClass}>Common Sizes (guide — click to fill dimensions)</span>
               <div className="relative w-56">
@@ -647,86 +703,158 @@ export default function ShipmentCreatePage() {
           )}
         </div>
 
-        <div className={isDocument ? "" : "flex flex-col gap-3 lg:flex-row lg:items-start"}>
-          <div className={isDocument ? "flex flex-col gap-2.5" : "flex flex-col gap-2.5 lg:flex-1"}>
-            {packages.map((pkg) => (
-              <div key={pkg.key} className="flex items-end gap-3 rounded-lg border border-slate-100 bg-slate-50 p-2.5">
-                <label className="flex w-24 flex-col gap-1">
-                  <span className={labelClass}>Weight (kg)</span>
-                  <input
-                    type="number"
-                    min={0.1}
-                    step={0.1}
-                    value={pkg.weight}
-                    onChange={(e) => updatePackage(pkg.key, { weight: Number(e.target.value) })}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
-                  />
-                </label>
-                {!isDocument && (
-                  <div className="flex flex-col gap-1">
-                    <div className="flex">
-                      <span className={`${labelClass} w-16`}>Length</span>
-                      <span className={`${labelClass} w-16`}>Width</span>
-                      <span className={`${labelClass} w-16`}>Height</span>
-                    </div>
-                    <div className="flex divide-x divide-slate-300 rounded-lg border border-slate-300 bg-white focus-within:border-brand-navy focus-within:ring-2 focus-within:ring-brand-navy/15">
-                      <input
-                        type="number"
-                        min={1}
-                        value={pkg.length}
-                        onChange={(e) => updatePackage(pkg.key, { length: Number(e.target.value) })}
-                        className="w-16 rounded-l-lg px-3 py-1.5 text-sm outline-none"
-                      />
-                      <input
-                        type="number"
-                        min={1}
-                        value={pkg.width}
-                        onChange={(e) => updatePackage(pkg.key, { width: Number(e.target.value) })}
-                        className="w-16 px-3 py-1.5 text-sm outline-none"
-                      />
-                      <input
-                        type="number"
-                        min={1}
-                        value={pkg.height}
-                        onChange={(e) => updatePackage(pkg.key, { height: Number(e.target.value) })}
-                        className="w-16 rounded-r-lg px-3 py-1.5 text-sm outline-none"
-                      />
-                    </div>
-                  </div>
-                )}
-                <label className="flex w-20 flex-col gap-1">
-                  <span className={labelClass}>Qty</span>
-                  <input
-                    type="number"
-                    min={1}
-                    value={pkg.quantity}
-                    onChange={(e) => updatePackage(pkg.key, { quantity: Number(e.target.value) })}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
-                  />
-                </label>
-                <button
-                  type="button"
-                  onClick={() => removePackage(pkg.key)}
-                  disabled={packages.length <= 1}
-                  className="rounded-lg p-2 text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-30"
-                  aria-label="Remove package"
+        <div className={activeRow.is_document ? "" : "flex flex-col gap-3 lg:flex-row lg:items-start"}>
+          <div className={activeRow.is_document ? "flex flex-col gap-2.5" : "flex flex-col gap-2.5 lg:flex-1"}>
+            {packages.map((pkg) => {
+              const isActive = pkg.key === activePackageKey;
+              return (
+                <div
+                  key={pkg.key}
+                  onClick={() => !isActive && setActivePackageKey(pkg.key)}
+                  className={`relative flex flex-col gap-2 rounded-lg border p-2.5 transition ${
+                    isActive ? "border-brand-amber bg-amber-50/40" : "cursor-pointer border-slate-100 bg-slate-50"
+                  }`}
                 >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            ))}
-            {!isDocument && (
-              <button
-                type="button"
-                onClick={addPackage}
-                className="flex items-center gap-1 text-sm font-medium text-amber-600 hover:underline"
-              >
-                <Plus className="h-4 w-4" /> Add package
-              </button>
-            )}
+                  {!isActive && (
+                    <span
+                      title="Click to edit this package"
+                      className="absolute -left-2 -top-2 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-slate-400 text-white shadow"
+                    >
+                      <Lock className="h-3 w-3" />
+                    </span>
+                  )}
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={!isActive}
+                      onClick={() => updatePackage(pkg.key, { is_document: false, forcedWeightBandId: null })}
+                      className={`rounded-md px-2 py-0.5 text-xs font-semibold transition disabled:cursor-not-allowed ${
+                        !pkg.is_document ? "bg-brand-navy-dark text-white" : "bg-slate-200 text-slate-500"
+                      }`}
+                    >
+                      Box
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!isActive}
+                      onClick={() => updatePackage(pkg.key, { is_document: true, forcedWeightBandId: null })}
+                      className={`rounded-md px-2 py-0.5 text-xs font-semibold transition disabled:cursor-not-allowed ${
+                        pkg.is_document ? "bg-violet-600 text-white" : "bg-slate-200 text-slate-500"
+                      }`}
+                    >
+                      Document
+                    </button>
+                    {pkg.forcedWeightBandId && (
+                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                        Fixed Weight Range: {weightBands.find((b) => b.id === pkg.forcedWeightBandId)?.label}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-end gap-3">
+                  <label className="flex w-24 flex-col gap-1">
+                    <span className={labelClass}>Weight (kg)</span>
+                    <input
+                      type="number"
+                      min={0.1}
+                      step={0.1}
+                      value={pkg.weight}
+                      disabled={!isActive}
+                      onChange={(e) => updatePackage(pkg.key, { weight: Number(e.target.value) })}
+                      className={`w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15 disabled:bg-slate-100 ${
+                        !isActive ? "pointer-events-none" : ""
+                      }`}
+                    />
+                  </label>
+                  {!pkg.is_document && (
+                    <div className="flex flex-col gap-1">
+                      <div className="flex">
+                        <span className={`${labelClass} w-16`}>Length</span>
+                        <span className={`${labelClass} w-16`}>Width</span>
+                        <span className={`${labelClass} w-16`}>Height</span>
+                      </div>
+                      <div className="flex divide-x divide-slate-300 rounded-lg border border-slate-300 bg-white focus-within:border-brand-navy focus-within:ring-2 focus-within:ring-brand-navy/15">
+                        <input
+                          type="number"
+                          min={1}
+                          value={pkg.length}
+                          disabled={!isActive}
+                          onChange={(e) => updatePackage(pkg.key, { length: Number(e.target.value) })}
+                          className={`w-16 rounded-l-lg px-3 py-1.5 text-sm outline-none disabled:bg-slate-100 ${
+                            !isActive ? "pointer-events-none" : ""
+                          }`}
+                        />
+                        <input
+                          type="number"
+                          min={1}
+                          value={pkg.width}
+                          disabled={!isActive}
+                          onChange={(e) => updatePackage(pkg.key, { width: Number(e.target.value) })}
+                          className={`w-16 px-3 py-1.5 text-sm outline-none disabled:bg-slate-100 ${
+                            !isActive ? "pointer-events-none" : ""
+                          }`}
+                        />
+                        <input
+                          type="number"
+                          min={1}
+                          value={pkg.height}
+                          disabled={!isActive}
+                          onChange={(e) => updatePackage(pkg.key, { height: Number(e.target.value) })}
+                          className={`w-16 rounded-r-lg px-3 py-1.5 text-sm outline-none disabled:bg-slate-100 ${
+                            !isActive ? "pointer-events-none" : ""
+                          }`}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  <label className="flex w-20 flex-col gap-1">
+                    <span className={labelClass}>Qty</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={pkg.quantity}
+                      disabled={!isActive}
+                      onChange={(e) => updatePackage(pkg.key, { quantity: Number(e.target.value) })}
+                      className={`w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15 disabled:bg-slate-100 ${
+                        !isActive ? "pointer-events-none" : ""
+                      }`}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => removePackage(pkg.key)}
+                    disabled={packages.length <= 1}
+                    className="rounded-lg p-2 text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-30"
+                    aria-label="Remove package"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                  </div>
+                  <label className="flex flex-col gap-1">
+                    <span className={labelClass}>Description of Goods</span>
+                    <input
+                      type="text"
+                      value={pkg.description ?? ""}
+                      disabled={!isActive}
+                      onChange={(e) => updatePackage(pkg.key, { description: e.target.value })}
+                      placeholder="e.g. Cotton T-shirts, 10 pcs"
+                      className={`w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15 disabled:bg-slate-100 ${
+                        !isActive ? "pointer-events-none" : ""
+                      }`}
+                    />
+                  </label>
+                </div>
+              );
+            })}
+            <button
+              type="button"
+              onClick={addPackage}
+              className="flex items-center gap-1 text-sm font-medium text-amber-600 hover:underline"
+            >
+              <Plus className="h-4 w-4" /> Add package
+            </button>
           </div>
 
-          {!isDocument && (
+          {!activeRow.is_document && (
             <div className="flex-1 rounded-lg border border-slate-100 bg-slate-50 p-2.5 lg:border-0 lg:bg-transparent lg:p-0">
               {supplies.length === 0 ? (
                 <p className="text-sm text-slate-400">No supplies available.</p>
@@ -803,7 +931,8 @@ export default function ShipmentCreatePage() {
         </div>
 
         <div className="lg:col-span-1">
-          <div className="sticky top-4 rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
+          <div className="sticky top-4 flex flex-col gap-4">
+            <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Rate Quotes</h2>
             {!results ? (
               <p className="text-sm text-slate-400">Fill in package details and click &quot;Check Rate&quot; to see live quotes from UPS/DHL here.</p>
@@ -864,6 +993,7 @@ export default function ShipmentCreatePage() {
                 </div>
               </>
             )}
+          </div>
           </div>
         </div>
       </div>

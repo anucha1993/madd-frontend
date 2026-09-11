@@ -1,15 +1,19 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import type { Supply, SupplyInput } from "@/lib/supplies";
+import { listProductWeightBands, type ProductWeightBand } from "@/lib/productWeightBands";
 
 type Props = {
   initial?: Supply | null;
+  featuredCount: number;
   onSubmit: (data: SupplyInput) => Promise<void>;
   onCancel: () => void;
 };
 
-export default function SupplyForm({ initial, onSubmit, onCancel }: Props) {
+const MAX_FEATURED = 6;
+
+export default function SupplyForm({ initial, featuredCount, onSubmit, onCancel }: Props) {
   const [name, setName] = useState(initial?.name ?? "");
   const [type, setType] = useState(initial?.type ?? "");
   const [weight, setWeight] = useState(initial?.weight != null ? String(initial.weight) : "");
@@ -17,6 +21,15 @@ export default function SupplyForm({ initial, onSubmit, onCancel }: Props) {
   const [width, setWidth] = useState(initial?.width != null ? String(initial.width) : "");
   const [height, setHeight] = useState(initial?.height != null ? String(initial.height) : "");
   const [iconUrl, setIconUrl] = useState(initial?.icon_url ?? "");
+  const [weightBands, setWeightBands] = useState<ProductWeightBand[]>([]);
+  // "CPM" bands are box bands with no weight range (min/max both blank) — they always
+  // force a fixed rate regardless of actual weight. "REG" bands (with a weight range) are
+  // matched automatically by weight, so a supply never needs to force one directly.
+  const cpmBands = weightBands.filter((b) => b.package_type === "box" && b.min_weight == null && b.max_weight == null);
+  const initialIsCpm = initial?.weight_band_id != null && cpmBands.some((b) => b.id === initial.weight_band_id);
+  const [rangeType, setRangeType] = useState<"reg" | "cpm">(initialIsCpm ? "cpm" : "reg");
+  const [weightBandId, setWeightBandId] = useState(initialIsCpm ? String(initial!.weight_band_id) : "");
+  const [isFeatured, setIsFeatured] = useState(initial?.is_featured ?? false);
   const [costPrice, setCostPrice] = useState(initial ? String(initial.cost_price) : "0");
   const [salePrice, setSalePrice] = useState(initial ? String(initial.sale_price) : "0");
   const [description, setDescription] = useState(initial?.description ?? "");
@@ -24,12 +37,39 @@ export default function SupplyForm({ initial, onSubmit, onCancel }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    listProductWeightBands()
+      .then((all) => setWeightBands(all.filter((b) => b.status)))
+      .catch(() => {});
+  }, []);
+
+  // weightBands loads async, so the initial CPM/REG detection above (computed on an empty
+  // array during first render) needs to be re-synced once the bands actually arrive.
+  useEffect(() => {
+    if (!initial?.weight_band_id || weightBands.length === 0) return;
+    const band = weightBands.find((b) => b.id === initial.weight_band_id);
+    if (band && band.package_type === "box" && band.min_weight == null && band.max_weight == null) {
+      setRangeType("cpm");
+      setWeightBandId(String(initial.weight_band_id));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weightBands]);
+
+  // Was this supply already featured before editing? If so, toggling it off then back on
+  // shouldn't count against the limit twice within this same form session.
+  const wasFeatured = initial?.is_featured ?? false;
+  const featuredLimitReached = isFeatured && !wasFeatured && featuredCount >= MAX_FEATURED;
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError("");
 
     if (!name.trim()) {
       setError("Please fill in the name.");
+      return;
+    }
+    if (featuredLimitReached) {
+      setError(`ปักหมุด Common Sizes guide ได้สูงสุด ${MAX_FEATURED} รายการ`);
       return;
     }
 
@@ -43,6 +83,8 @@ export default function SupplyForm({ initial, onSubmit, onCancel }: Props) {
         width: width.trim() ? Number(width) : undefined,
         height: height.trim() ? Number(height) : undefined,
         icon_url: iconUrl.trim() || undefined,
+        weight_band_id: rangeType === "cpm" && weightBandId ? Number(weightBandId) : null,
+        is_featured: isFeatured,
         cost_price: Number(costPrice) || 0,
         sale_price: Number(salePrice) || 0,
         description: description.trim() || undefined,
@@ -153,6 +195,46 @@ export default function SupplyForm({ initial, onSubmit, onCancel }: Props) {
         />
       </label>
 
+      <label className="flex flex-col gap-1.5">
+        <span className={labelClass}>Shipment Weight Range Type</span>
+        <select
+          value={rangeType}
+          onChange={(e) => {
+            const next = e.target.value as "reg" | "cpm";
+            setRangeType(next);
+            if (next === "reg") setWeightBandId("");
+          }}
+          className={inputClass}
+        >
+          <option value="reg">REG (ใช้น้ำหนักจริงคำนวณอัตโนมัติ)</option>
+          <option value="cpm">CPM (บังคับใช้ Weight Range คงที่ ต่อให้น้ำหนักจริงไม่ถึง)</option>
+        </select>
+        {rangeType === "cpm" && (
+          <select value={weightBandId} onChange={(e) => setWeightBandId(e.target.value)} className={inputClass}>
+            <option value="">- เลือก CPM Band -</option>
+            {cpmBands.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.label}
+              </option>
+            ))}
+          </select>
+        )}
+        <p className="text-xs text-slate-400">
+          เช่น กล่อง CPM10 → เลือก Type “CPM” แล้วเลือก Band “CPM10” — ระบบจะคิดเรทที่ 10 KG เสมอ ต่อให้น้ำหนักจริงไม่ถึง
+        </p>
+      </label>
+
+      <label className="flex items-center gap-2 text-sm text-slate-600">
+        <input
+          type="checkbox"
+          checked={isFeatured}
+          onChange={(e) => setIsFeatured(e.target.checked)}
+          disabled={featuredLimitReached}
+          className="h-4 w-4 rounded border-slate-300 accent-brand-amber"
+        />
+        ปักหมุดแสดงใน &quot;Common Sizes&quot; guide (สูงสุด {MAX_FEATURED} รายการ — ตอนนี้ปักอยู่ {featuredCount}/{MAX_FEATURED})
+      </label>
+
       <label className="flex items-center gap-2 text-sm text-slate-600">
         <input
           type="checkbox"
@@ -179,7 +261,7 @@ export default function SupplyForm({ initial, onSubmit, onCancel }: Props) {
         </button>
         <button
           type="submit"
-          disabled={submitting}
+          disabled={submitting || featuredLimitReached}
           className="rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-brand-navy-dark/90 disabled:opacity-60"
         >
           {submitting ? "Saving..." : "Save"}

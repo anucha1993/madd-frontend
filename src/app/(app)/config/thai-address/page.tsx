@@ -174,7 +174,7 @@ export default function ThaiSubdistrictsPage() {
               </thead>
               <tbody>
                 {rows.map((row) => (
-                  <tr key={row.id} className="border-b border-slate-50 last:border-0">
+                  <tr key={row.id} className="border-b border-slate-200 last:border-0">
                     <td className="px-5 py-3 font-medium text-slate-700">{row.zip_code}</td>
                     <td className="px-5 py-3 text-slate-500">
                       <div className="text-slate-700">{row.name_th}</div>

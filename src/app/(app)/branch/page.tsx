@@ -106,7 +106,7 @@ export default function BranchPage() {
             </thead>
             <tbody>
               {branches.map((branch) => (
-                <tr key={branch.id} className="border-b border-slate-50 last:border-0">
+                <tr key={branch.id} className="border-b border-slate-200 last:border-0">
                   <td className="px-5 py-3">
                     <div className="font-medium text-slate-700">{branch.name}</div>
                     <div className="text-xs text-slate-400">{branch.company_name}</div>

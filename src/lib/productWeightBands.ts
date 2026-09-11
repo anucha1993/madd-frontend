@@ -48,3 +48,13 @@ export function matchProductWeightBand(
     }) ?? null
   );
 }
+
+/** Some supplies (e.g. CPM10/CPM25 boxes) force a fixed Weight Range regardless of actual
+ * weight — those bands are excluded from automatic weight-based matching (see above) and
+ * only apply when the linked supply was explicitly selected. If more than one forced band
+ * is present in a shipment, the one with the highest max weight wins (billed conservatively). */
+export function pickForcedWeightBand(bands: ProductWeightBand[], forcedBandIds: number[]): ProductWeightBand | null {
+  const forced = bands.filter((b) => forcedBandIds.includes(b.id));
+  if (forced.length === 0) return null;
+  return forced.reduce((best, b) => (Number(b.max_weight ?? 0) > Number(best.max_weight ?? 0) ? b : best));
+}

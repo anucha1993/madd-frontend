@@ -89,7 +89,7 @@ export default function UsersPage() {
             </thead>
             <tbody>
               {users.map((user) => (
-                <tr key={user.id} className="border-b border-slate-50 last:border-0">
+                <tr key={user.id} className="border-b border-slate-200 last:border-0">
                   <td className="px-5 py-3">
                     <div className="font-medium text-slate-700">{user.name}</div>
                     <div className="text-xs text-slate-400">{user.email}</div>

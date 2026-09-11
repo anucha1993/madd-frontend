@@ -9,6 +9,9 @@ export type Supply = {
   width: string | number | null;
   height: string | number | null;
   icon_url: string | null;
+  weight_band_id: number | null;
+  weight_band?: { id: number; code: string; label: string } | null;
+  is_featured: boolean;
   cost_price: string | number;
   sale_price: string | number;
   description: string | null;
@@ -23,6 +26,8 @@ export type SupplyInput = {
   width?: number;
   height?: number;
   icon_url?: string;
+  weight_band_id?: number | null;
+  is_featured?: boolean;
   cost_price: number;
   sale_price: number;
   description?: string;

@@ -1,34 +1,29 @@
-/** Common international shipping destinations (Thailand excluded on purpose — the
- * MADD shipment flow only ever ships FROM Thailand TO another country). */
-export const INTERNATIONAL_COUNTRIES: { code: string; name: string }[] = [
-  { code: "SG", name: "Singapore" },
-  { code: "MY", name: "Malaysia" },
-  { code: "ID", name: "Indonesia" },
-  { code: "PH", name: "Philippines" },
-  { code: "VN", name: "Vietnam" },
-  { code: "KH", name: "Cambodia" },
-  { code: "LA", name: "Laos" },
-  { code: "MM", name: "Myanmar" },
-  { code: "CN", name: "China" },
-  { code: "HK", name: "Hong Kong" },
-  { code: "TW", name: "Taiwan" },
-  { code: "JP", name: "Japan" },
-  { code: "KR", name: "South Korea" },
-  { code: "IN", name: "India" },
-  { code: "AU", name: "Australia" },
-  { code: "NZ", name: "New Zealand" },
-  { code: "AE", name: "United Arab Emirates" },
-  { code: "SA", name: "Saudi Arabia" },
-  { code: "GB", name: "United Kingdom" },
-  { code: "DE", name: "Germany" },
-  { code: "FR", name: "France" },
-  { code: "IT", name: "Italy" },
-  { code: "ES", name: "Spain" },
-  { code: "NL", name: "Netherlands" },
-  { code: "SE", name: "Sweden" },
-  { code: "CH", name: "Switzerland" },
-  { code: "US", name: "United States" },
-  { code: "CA", name: "Canada" },
-  { code: "MX", name: "Mexico" },
-  { code: "BR", name: "Brazil" },
-];
+import { apiClient } from "./apiClient";
+
+export type Country = {
+  id: number;
+  iso2: string;
+  name: string;
+  region: string | null;
+  subregion: string | null;
+  status: boolean;
+  synced_at: string | null;
+};
+
+export const listCountries = () => apiClient.get<Country[]>("/countries");
+
+export const syncCountries = () => apiClient.post<{ message: string; count: number }>("/countries/sync", {});
+
+export const updateCountryStatus = (id: number, status: boolean) =>
+  apiClient.put<Country>(`/countries/${id}`, { status });
+
+export type RestCountriesSettings = {
+  is_configured: boolean;
+  masked_api_key: string | null;
+};
+
+export const getRestCountriesSettings = () => apiClient.get<RestCountriesSettings>("/countries/settings");
+
+export const updateRestCountriesSettings = (apiKey: string) =>
+  apiClient.put<{ message: string } & RestCountriesSettings>("/countries/settings", { api_key: apiKey });
+

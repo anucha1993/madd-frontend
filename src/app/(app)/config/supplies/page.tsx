@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Boxes, Pencil, Plus, Trash2 } from "lucide-react";
+import { Boxes, Pin, Pencil, Plus, Trash2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import PageLoading from "@/components/ui/PageLoading";
@@ -64,6 +64,8 @@ export default function SuppliesPage() {
     }
   }
 
+  const featuredCount = supplies.filter((s) => s.is_featured).length;
+
   return (
     <div className="relative min-h-[360px]">
       <div className="mb-6 flex items-start justify-between">
@@ -96,6 +98,8 @@ export default function SuppliesPage() {
                 <th className="px-5 py-2.5 font-medium">Name</th>
                 <th className="px-5 py-2.5 font-medium">Type</th>
                 <th className="px-5 py-2.5 font-medium">Dimensions</th>
+                <th className="px-5 py-2.5 font-medium">Weight Range</th>
+                <th className="px-5 py-2.5 font-medium">Guide Pin</th>
                 <th className="px-5 py-2.5 font-medium">Cost Price</th>
                 <th className="px-5 py-2.5 font-medium">Sale Price</th>
                 <th className="px-5 py-2.5 font-medium">Status</th>
@@ -104,7 +108,7 @@ export default function SuppliesPage() {
             </thead>
             <tbody>
               {supplies.map((supply) => (
-                <tr key={supply.id} className="border-b border-slate-50 last:border-0">
+                <tr key={supply.id} className="border-b border-slate-200 last:border-0">
                   <td className="px-5 py-3">
                     {supply.icon_url ? (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -123,6 +127,16 @@ export default function SuppliesPage() {
                       ? `${supply.length}x${supply.width}x${supply.height} cm`
                       : "-"}
                     {supply.weight ? ` / ${supply.weight} kg` : ""}
+                  </td>
+                  <td className="px-5 py-3 text-slate-500">{supply.weight_band?.label ?? "-"}</td>
+                  <td className="px-5 py-3">
+                    {supply.is_featured ? (
+                      <span className="flex items-center gap-1 text-xs font-medium text-brand-amber">
+                        <Pin className="h-3.5 w-3.5" /> Pinned
+                      </span>
+                    ) : (
+                      <span className="text-xs text-slate-300">-</span>
+                    )}
                   </td>
                   <td className="px-5 py-3 text-slate-500">{formatBaht(supply.cost_price)}</td>
                   <td className="px-5 py-3 font-medium text-slate-700">{formatBaht(supply.sale_price)}</td>
@@ -172,6 +186,7 @@ export default function SuppliesPage() {
         >
           <SupplyForm
             initial={modalSupply === "new" ? null : modalSupply}
+            featuredCount={featuredCount}
             onSubmit={handleSubmit}
             onCancel={() => setModalSupply(null)}
           />

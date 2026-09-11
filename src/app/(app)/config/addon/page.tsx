@@ -271,7 +271,7 @@ export default function AddonSettingsPage() {
                       </tr>
                     ) : (
                       visibleItems.map((item) => (
-                        <tr key={item.id} className="border-b border-slate-50 last:border-0">
+                        <tr key={item.id} className="border-b border-slate-200 last:border-0">
                           <td className="px-5 py-3 font-medium text-slate-700">
                             {item.name}
                             {item.note && <div className="text-xs font-normal text-slate-400">{item.note}</div>}

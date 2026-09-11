@@ -164,7 +164,7 @@ export default function WeightBandsPage() {
                   </tr>
                 ) : (
                   bands.map((band) => (
-                    <tr key={band.id} className="border-b border-slate-50 last:border-0">
+                    <tr key={band.id} className="border-b border-slate-200 last:border-0">
                       <td className="px-5 py-3 font-medium text-slate-700">{band.code}</td>
                       <td className="px-5 py-3 text-slate-500">{band.label}</td>
                       <td className="px-5 py-3 text-slate-500">{band.package_type === "document" ? "Document" : "Box"}</td>

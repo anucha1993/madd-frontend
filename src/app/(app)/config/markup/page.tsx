@@ -304,7 +304,7 @@ export default function ConfigMarkupPage() {
                   </tr>
                 ) : (
                   visibleRules.map((rule) => (
-                    <tr key={rule.id} className="border-b border-slate-50 last:border-0">
+                    <tr key={rule.id} className="border-b border-slate-200 last:border-0">
                       <td className="px-5 py-3 text-slate-500">{rule.agent?.agent_name ?? "-"}</td>
                       <td className="px-5 py-3 text-slate-500">{rule.agent_account?.username_acc ?? "-"}</td>
                       <td className="px-5 py-3 font-medium text-slate-700">

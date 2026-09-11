@@ -73,7 +73,7 @@ export default function ShipmentListPage() {
           </thead>
           <tbody>
             {MOCK_SHIPMENTS.map((s) => (
-              <tr key={s.id} className="border-b border-slate-50 last:border-0">
+              <tr key={s.id} className="border-b border-slate-200 last:border-0">
                 <td className="px-5 py-3 font-medium text-slate-700">{s.ref}</td>
                 <td className="px-5 py-3 text-slate-500">
                   {s.carrier} — {s.service}

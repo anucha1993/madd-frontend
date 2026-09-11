@@ -6,6 +6,8 @@ export type ShipmentPackageInput = {
   width?: number;
   height?: number;
   quantity?: number;
+  description?: string;
+  is_document?: boolean;
 };
 
 export type CheckRateInput = {
@@ -27,7 +29,6 @@ export type CheckRateInput = {
   destination_address3?: string;
   destination_phone?: string;
   destination_email?: string;
-  is_document: boolean;
   packages: ShipmentPackageInput[];
   agent_account_ids?: number[];
 };
