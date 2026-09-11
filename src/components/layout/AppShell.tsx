@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
+import RateChatWidget from "@/components/ai/RateChatWidget";
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -23,6 +24,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <Topbar onMenuClick={() => setSidebarOpen((v) => !v)} />
         <main className="relative flex-1 p-4 sm:p-6">{children}</main>
       </div>
+
+      <RateChatWidget />
     </div>
   );
 }
+

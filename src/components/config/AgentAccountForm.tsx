@@ -19,6 +19,7 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
   const [basicAuthUsername, setBasicAuthUsername] = useState(initial?.basic_auth_username ?? "");
   const [basicAuthPassword, setBasicAuthPassword] = useState("");
   const [status, setStatus] = useState(initial?.status ?? true);
+  const [mode, setMode] = useState<"test" | "production">(initial?.mode ?? "production");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -42,6 +43,7 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
         basic_auth_username: basicAuthUsername.trim() || undefined,
         basic_auth_password: basicAuthPassword.trim() || undefined,
         status,
+        mode,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
@@ -121,6 +123,17 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
           />
         </label>
       </div>
+
+      <label className="flex flex-col gap-1.5">
+        <span className={labelClass}>Mode</span>
+        <select value={mode} onChange={(e) => setMode(e.target.value as "test" | "production")} className={inputClass}>
+          <option value="production">Production (ใช้งานจริง)</option>
+          <option value="test">Test (ทดสอบบน Sandbox — ไม่คิดเงินจริง)</option>
+        </select>
+        <p className="text-xs text-slate-400">
+          กำหนดว่า Client ID/Secret หรือ Basic Auth ของบัญชีนี้เป็นของ Sandbox (Test) หรือ Production จริง — ระบบจะเรียก URL ของ UPS/DHL คนละสภาพแวดล้อมตามค่านี้
+        </p>
+      </label>
 
       <label className="flex items-center gap-2 text-sm text-slate-600">
         <input

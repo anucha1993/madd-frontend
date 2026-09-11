@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, ChevronLeft, ChevronRight, FileText, Loader2, Lock, Package, Plus, Search, ShieldCheck, Tag, Trash2 } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, FileText, Loader2, Lock, Package, Plus, Search, ShieldCheck, Sparkles, Tag, Trash2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import ThaiAddressSearch from "@/components/shipment/ThaiAddressSearch";
@@ -10,6 +10,8 @@ import { listCountries, type Country } from "@/lib/countries";
 import { listAgents, type Agent } from "@/lib/agentAccounts";
 import { listSupplies, type Supply } from "@/lib/supplies";
 import { listAddonItems, type AddonItem } from "@/lib/addonItems";
+import { parseAddressWithAi } from "@/lib/ai";
+import { useAiEnabled } from "@/hooks/useAiEnabled";
 import { listProductWeightBands, matchProductWeightBand, pickForcedWeightBand, type ProductWeightBand } from "@/lib/productWeightBands";
 import { getThaiSubdistrictsByZipCode } from "@/lib/thaiSubdistricts";
 import { checkRate, type CheckRateInput, type RateQuote, type ShipmentPackageInput } from "@/lib/shipping";
@@ -66,6 +68,7 @@ const INSURANCE_SERVICES: Record<"DAILY" | "CR" | "WI", { code: string; label: s
 };
 
 export default function ShipmentCreatePage() {
+  const { enabled: aiEnabled } = useAiEnabled();
   const [step, setStep] = useState<1 | 2 | 3>(1);
 
   const [originContactName, setOriginContactName] = useState("");
@@ -83,6 +86,11 @@ export default function ShipmentCreatePage() {
   const [showAutoFill, setShowAutoFill] = useState(false);
   const [autoFillText, setAutoFillText] = useState("");
   const [autoFillError, setAutoFillError] = useState("");
+
+  const [aiFillTarget, setAiFillTarget] = useState<"from" | "to" | null>(null);
+  const [aiFillText, setAiFillText] = useState("");
+  const [aiFillLoading, setAiFillLoading] = useState(false);
+  const [aiFillError, setAiFillError] = useState("");
 
   const [destinationContactName, setDestinationContactName] = useState("");
   const [destinationCompany, setDestinationCompany] = useState("");
@@ -208,6 +216,49 @@ export default function ShipmentCreatePage() {
       setAutoFillText("");
     } catch {
       setAutoFillError("Failed to look up the postcode. Please try again.");
+    }
+  }
+
+  // AI-powered address parsing — works for both Ship From and Ship To, and unlike the
+  // Thai-postcode regex above, can handle messy/international addresses in any language.
+  async function handleAiFillApply() {
+    if (!aiFillTarget || !aiFillText.trim()) return;
+    setAiFillLoading(true);
+    setAiFillError("");
+    try {
+      const fields = await parseAddressWithAi(aiFillText.trim());
+      if (aiFillTarget === "from") {
+        if (fields.contact_name) setOriginContactName(fields.contact_name);
+        if (fields.company) setOriginCompany(fields.company);
+        if (fields.address1) setOriginAddress(fields.address1);
+        if (fields.address2) setOriginAddress2(fields.address2);
+        const cityLabel = fields.city || fields.province;
+        if (cityLabel) {
+          setOriginCity(cityLabel);
+          setOriginSearchValue([cityLabel, fields.province, fields.postal_code].filter(Boolean).join(", "));
+        }
+        if (fields.postal_code) setOriginPostcode(fields.postal_code);
+        if (fields.phone) setOriginPhone(fields.phone);
+      } else {
+        if (fields.contact_name) setDestinationContactName(fields.contact_name);
+        if (fields.company) setDestinationCompany(fields.company);
+        if (fields.address1) setDestinationAddress(fields.address1);
+        if (fields.address2) setDestinationAddress2(fields.address2);
+        if (fields.city || fields.province) setDestinationCity(fields.city || fields.province || "");
+        if (fields.postal_code) setDestinationPostcode(fields.postal_code);
+        if (fields.phone) setDestinationPhone(fields.phone);
+        if (fields.email) setDestinationEmail(fields.email);
+        if (fields.country_iso2) {
+          const match = countries.find((c) => c.iso2.toLowerCase() === fields.country_iso2!.toLowerCase() && c.status);
+          if (match) setDestinationCountry(match.iso2);
+        }
+      }
+      setAiFillTarget(null);
+      setAiFillText("");
+    } catch (err) {
+      setAiFillError(err instanceof Error ? err.message : "AI parsing failed. Please try again.");
+    } finally {
+      setAiFillLoading(false);
     }
   }
 
@@ -408,13 +459,24 @@ export default function ShipmentCreatePage() {
         <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Ship From</h2>
-            <button
-              type="button"
-              onClick={() => setShowAutoFill(true)}
-              className="text-xs font-medium text-amber-600 hover:underline"
-            >
-              + Add address automatically
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setShowAutoFill(true)}
+                className="text-xs font-medium text-amber-600 hover:underline"
+              >
+                + Add address automatically
+              </button>
+              {aiEnabled && (
+                <button
+                  type="button"
+                  onClick={() => setAiFillTarget("from")}
+                  className="flex items-center gap-1 text-xs font-medium text-violet-600 hover:underline"
+                >
+                  <Sparkles className="h-3.5 w-3.5" /> AI Fill
+                </button>
+              )}
+            </div>
           </div>
           <div className="flex flex-col gap-2.5">
             <div className="grid grid-cols-2 gap-2.5">
@@ -483,7 +545,18 @@ export default function ShipmentCreatePage() {
         </div>
 
         <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Ship To</h2>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Ship To</h2>
+            {aiEnabled && (
+              <button
+                type="button"
+                onClick={() => setAiFillTarget("to")}
+                className="flex items-center gap-1 text-xs font-medium text-violet-600 hover:underline"
+              >
+                <Sparkles className="h-3.5 w-3.5" /> AI Fill
+              </button>
+            )}
+          </div>
           <div className="flex flex-col gap-2.5">
             <div className="grid grid-cols-2 gap-2.5">
               <label className="flex flex-col gap-1">
@@ -996,6 +1069,8 @@ export default function ShipmentCreatePage() {
           </div>
           </div>
         </div>
+
+
       </div>
         </>
       )}
@@ -1230,6 +1305,48 @@ export default function ShipmentCreatePage() {
                 className="rounded-lg bg-brand-amber px-4 py-2 text-sm font-semibold text-brand-navy-dark hover:brightness-95"
               >
                 Save and Apply
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {aiFillTarget && (
+        <Modal title={`AI Fill — ${aiFillTarget === "from" ? "Ship From" : "Ship To"}`} onClose={() => setAiFillTarget(null)}>
+          <div className="flex flex-col gap-3">
+            <div>
+              <span className={labelClass}>Paste any address (any language / format)</span>
+              <p className="mt-1 text-xs text-slate-400">
+                วางที่อยู่แบบไหนก็ได้ ยาวแค่ไหนก็ได้ (ไทยหรือต่างประเทศ) — AI จะแยกชื่อผู้ติดต่อ บริษัท ที่อยู่ เมือง รหัสไปรษณีย์
+                {aiFillTarget === "to" && ", ประเทศ,"} เบอร์โทร และอีเมล ให้อัตโนมัติ
+              </p>
+            </div>
+            <textarea
+              value={aiFillText}
+              onChange={(e) => setAiFillText(e.target.value)}
+              rows={6}
+              maxLength={2000}
+              placeholder={"e.g. John Tan, ABC Trading Pte Ltd\n1 Raffles Place #12-34\nSingapore 048616\n+65 8123 4567 john@abc.com"}
+              className={`${inputClass} resize-y`}
+            />
+            <div className="text-right text-xs text-slate-400">{aiFillText.length} / 2000</div>
+            {aiFillError && <p className="text-xs text-red-600">{aiFillError}</p>}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setAiFillTarget(null)}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleAiFillApply}
+                disabled={aiFillLoading || !aiFillText.trim()}
+                className="flex items-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-60"
+              >
+                <Sparkles className="h-4 w-4" />
+                {aiFillLoading ? "Parsing with AI..." : "Parse & Apply"}
               </button>
             </div>
           </div>

@@ -20,6 +20,7 @@ export type AgentAccount = {
   has_client_secret: boolean;
   has_basic_auth_password: boolean;
   status: boolean;
+  mode: "test" | "production";
 };
 
 export type AgentAccountInput = {
@@ -31,6 +32,7 @@ export type AgentAccountInput = {
   basic_auth_username?: string;
   basic_auth_password?: string;
   status?: boolean;
+  mode?: "test" | "production";
 };
 
 export const listAgents = () => apiClient.get<Agent[]>("/agents");

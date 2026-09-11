@@ -175,6 +175,7 @@ export default function AgentAccountsPage() {
                         <th className="px-5 py-2.5 font-medium">ชื่อบัญชี</th>
                         <th className="px-5 py-2.5 font-medium">Client ID</th>
                         <th className="px-5 py-2.5 font-medium">Credentials</th>
+                        <th className="px-5 py-2.5 font-medium">Mode</th>
                         <th className="px-5 py-2.5 font-medium">สถานะ</th>
                         <th className="px-5 py-2.5 font-medium">ผลทดสอบ</th>
                         <th className="px-5 py-2.5 font-medium text-right">จัดการ</th>
@@ -204,6 +205,15 @@ export default function AgentAccountsPage() {
                                 </span>
                               )}
                             </div>
+                          </td>
+                          <td className="px-5 py-3">
+                            <span
+                              className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                                account.mode === "test" ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-600"
+                              }`}
+                            >
+                              {account.mode === "test" ? "Test" : "Production"}
+                            </span>
                           </td>
                           <td className="px-5 py-3">
                             <button
