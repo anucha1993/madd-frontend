@@ -69,6 +69,7 @@ export const NAV_SECTIONS: NavItem[] = [
       { label: "Insurance Country Caps", href: "/config/insurance-caps" },
       { label: "Packaging Supplies", href: "/config/supplies" },
       { label: "Shipment Weight Bands", href: "/config/weight-bands" },
+      { label: "Manifest Form Options", href: "/config/manifest-options" },
       { label: "Countries", href: "/config/countries" },
     ],
   },

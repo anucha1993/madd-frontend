@@ -13,6 +13,7 @@ import { listAddonItems, type AddonItem } from "@/lib/addonItems";
 import { parseAddressWithAi } from "@/lib/ai";
 import { useAiEnabled } from "@/hooks/useAiEnabled";
 import { listProductWeightBands, matchProductWeightBand, pickForcedWeightBand, type ProductWeightBand } from "@/lib/productWeightBands";
+import { listManifestOptions, type ManifestOption } from "@/lib/manifestOptions";
 import { getThaiSubdistrictsByZipCode } from "@/lib/thaiSubdistricts";
 import { checkRate, type CheckRateInput, type RateQuote, type ShipmentPackageInput } from "@/lib/shipping";
 
@@ -41,18 +42,12 @@ type GoodsRow = { key: number; name: string; hsCode: string; quantity: number; v
 let goodsKeySeq = 1;
 const newGoodsRow = (): GoodsRow => ({ key: goodsKeySeq++, name: "", hsCode: "", quantity: 1, value: 0 });
 
-const CUSTOMER_TYPE_OPTIONS: { value: "DAILY" | "CR" | "WI"; label: string; description: string }[] = [
-  { value: "DAILY", label: "DAILY", description: "ลูกค้าบัญชีประจำ ส่งสินค้าเป็นประจำทุกวันผ่านบัญชี Agent" },
-  { value: "CR", label: "Shop CR", description: "ลูกค้าร้านค้าที่มาส่งที่เคาน์เตอร์ (Shop Counter Rate)" },
-  { value: "WI", label: "WI", description: "ลูกค้าทั่วไปที่เดินเข้ามาส่งเอง (Walk-in)" },
-];
-
 const ENTITY_TYPE_OPTIONS: { value: "INDIVIDUAL" | "COMPANY"; label: string; description: string }[] = [
   { value: "INDIVIDUAL", label: "INDIVIDUAL", description: "การจัดส่งเพื่อการใช้งานส่วนตัว ของขวัญ หรือของใช้ในบ้าน" },
   { value: "COMPANY", label: "COMPANY", description: "การจัดส่งเพื่อวัตถุประสงค์ทางการค้าด้วย VAT/ID ภาษี" },
 ];
 
-const INSURANCE_SERVICES: Record<"DAILY" | "CR" | "WI", { code: string; label: string; multiplier: number }[]> = {
+const INSURANCE_SERVICES: Record<string, { code: string; label: string; multiplier: number }[]> = {
   DAILY: [
     { code: "UPSC", label: "UPS Shipment Care", multiplier: 0.011 },
     { code: "ICDV", label: "International Carriage of Dangerous Goods", multiplier: 0.011 },
@@ -66,6 +61,9 @@ const INSURANCE_SERVICES: Record<"DAILY" | "CR" | "WI", { code: string; label: s
     { code: "ICDV", label: "International Carriage of Dangerous Goods", multiplier: 0.004 },
   ],
 };
+// Fallback multiplier set used for any Customer Type code loaded from the Manifest Options
+// admin config that doesn't match one of the multiplier sets hardcoded above.
+const DEFAULT_INSURANCE_SERVICES = INSURANCE_SERVICES.WI;
 
 export default function ShipmentCreatePage() {
   const { enabled: aiEnabled } = useAiEnabled();
@@ -107,9 +105,11 @@ export default function ShipmentCreatePage() {
   // Which package row Common Sizes / dimension edits apply to — only one row is "unlocked" at a time.
   const [activePackageKey, setActivePackageKey] = useState<number | null>(packages[0]?.key ?? null);
 
-  const [customerType, setCustomerType] = useState<"DAILY" | "CR" | "WI">("DAILY");
+  const [customerTypeOptions, setCustomerTypeOptions] = useState<ManifestOption[]>([]);
+  const [customerType, setCustomerType] = useState("DAILY");
   const [entityType, setEntityType] = useState<"INDIVIDUAL" | "COMPANY">("INDIVIDUAL");
-  const [paymentMethod, setPaymentMethod] = useState("company_account");
+  const [paymentOptions, setPaymentOptions] = useState<ManifestOption[]>([]);
+  const [paymentMethod, setPaymentMethod] = useState("");
 
   const [insuranceEnabled, setInsuranceEnabled] = useState(false);
   const [insuranceService, setInsuranceService] = useState(INSURANCE_SERVICES.DAILY[0].code);
@@ -146,6 +146,20 @@ export default function ShipmentCreatePage() {
         const active = all.filter((c) => c.status);
         setCountries(active);
         setDestinationCountry((current) => current || active[0]?.iso2 || "");
+      })
+      .catch(() => {});
+    listManifestOptions("customer_type")
+      .then((all) => {
+        const active = all.filter((o) => o.status);
+        setCustomerTypeOptions(active);
+        setCustomerType((current) => (active.some((o) => o.code === current) ? current : active[0]?.code ?? current));
+      })
+      .catch(() => {});
+    listManifestOptions("payment_option")
+      .then((all) => {
+        const active = all.filter((o) => o.status);
+        setPaymentOptions(active);
+        setPaymentMethod((current) => current || active[0]?.code || "");
       })
       .catch(() => {});
   }, []);
@@ -262,7 +276,7 @@ export default function ShipmentCreatePage() {
     }
   }
 
-  const insuranceServiceOptions = INSURANCE_SERVICES[customerType];
+  const insuranceServiceOptions = INSURANCE_SERVICES[customerType] ?? DEFAULT_INSURANCE_SERVICES;
   const selectedInsuranceService = insuranceServiceOptions.find((s) => s.code === insuranceService) ?? insuranceServiceOptions[0];
   const estimatedPremium = insuranceEnabled ? (Number(declaredValue) || 0) * selectedInsuranceService.multiplier : 0;
 
@@ -413,20 +427,20 @@ export default function ShipmentCreatePage() {
         <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Customer Type</h2>
           <div className="flex flex-wrap items-center gap-2">
-            {CUSTOMER_TYPE_OPTIONS.map((opt) => (
+            {customerTypeOptions.map((opt) => (
               <button
-                key={opt.value}
+                key={opt.id}
                 type="button"
-                title={opt.description}
-                onClick={() => setCustomerType(opt.value)}
+                title={opt.name}
+                onClick={() => setCustomerType(opt.code)}
                 className={`relative flex min-w-[120px] items-center justify-center gap-1.5 rounded-lg border px-5 py-1.5 text-xs font-semibold transition ${
-                  customerType === opt.value
+                  customerType === opt.code
                     ? "border-brand-amber bg-amber-50 text-amber-700"
                     : "border-slate-200 text-slate-600 hover:border-slate-300"
                 }`}
               >
-                {customerType === opt.value && <CheckCircle2 className="h-3.5 w-3.5 text-brand-amber" />}
-                {opt.label}
+                {customerType === opt.code && <CheckCircle2 className="h-3.5 w-3.5 text-brand-amber" />}
+                {opt.name}
               </button>
             ))}
           </div>
@@ -1032,7 +1046,10 @@ export default function ShipmentCreatePage() {
                         </div>
                         <p className="mt-0.5 text-xs text-slate-500">{r.serviceLabel}</p>
                         <div className="mt-1 flex items-center justify-between text-xs text-slate-400">
-                          <span>{r.username}</span>
+                          <span>
+                            {r.username}
+                            {r.zone && ` · Zone ${r.zone}`}
+                          </span>
                           <span>{r.transitDays != null ? `${r.transitDays} days` : "-"}</span>
                         </div>
                         {r.chargeBreakdown && r.chargeBreakdown.length > 0 && (
@@ -1083,9 +1100,11 @@ export default function ShipmentCreatePage() {
           <label className="flex max-w-xs flex-col gap-1">
             <span className={labelClass}>Payment Method</span>
             <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={inputClass}>
-              <option value="company_account">Company Account</option>
-              <option value="cod">Cash on Delivery</option>
-              <option value="credit_card">Credit Card</option>
+              {paymentOptions.map((opt) => (
+                <option key={opt.id} value={opt.code}>
+                  {opt.name}
+                </option>
+              ))}
             </select>
           </label>
         </div>

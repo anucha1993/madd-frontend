@@ -49,6 +49,7 @@ export type RateQuote = {
   currency?: string;
   billedWeight?: string | number | null;
   billedWeightUnit?: string | null;
+  zone?: string | null;
   published?: number | null;
   negotiated?: number | null;
   isCustomerAgreement?: boolean;

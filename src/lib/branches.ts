@@ -10,6 +10,7 @@ export type Branch = {
   phone: string | null;
   status: boolean;
   users_count?: number;
+  carrier_accounts_count?: number;
 };
 
 export type BranchInput = {

@@ -105,7 +105,12 @@ export default function RateChatWidget() {
                             <div key={carrier} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs">
                               <div className="flex flex-col">
                                 <span className="font-semibold text-slate-700">{best.carrier} · {best.serviceLabel}</span>
-                                <span className="text-slate-400">Acc: {best.username}</span>
+                                <span className="text-slate-400">
+                                  Acc: {best.username}
+                                  {best.zone && ` · Zone ${best.zone}`}
+                                  {best.transitDays != null && ` · ${best.transitDays} วัน`}
+                                  {best.estimatedDelivery && ` · ถึง ${best.estimatedDelivery}`}
+                                </span>
                               </div>
                               <span className="font-bold text-brand-navy-dark">
                                 {(best.negotiated ?? best.published ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} {best.currency}

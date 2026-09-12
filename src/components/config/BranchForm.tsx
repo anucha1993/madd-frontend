@@ -2,14 +2,19 @@
 
 import { useState, type FormEvent } from "react";
 import type { Branch, BranchInput } from "@/lib/branches";
+import type { AgentAccount } from "@/lib/agentAccounts";
+import type { BranchCarrierAccount, BranchCarrierAccountInput } from "@/lib/branchCarrierAccounts";
+import BranchCarrierAccountsFields from "@/components/config/BranchCarrierAccountsForm";
 
 type Props = {
   initial?: Branch | null;
-  onSubmit: (data: BranchInput) => Promise<void>;
+  agentAccounts: AgentAccount[];
+  initialCarrierAccounts: BranchCarrierAccount[];
+  onSubmit: (data: BranchInput, carrierAccounts: BranchCarrierAccountInput[]) => Promise<void>;
   onCancel: () => void;
 };
 
-export default function BranchForm({ initial, onSubmit, onCancel }: Props) {
+export default function BranchForm({ initial, agentAccounts, initialCarrierAccounts, onSubmit, onCancel }: Props) {
   const [name, setName] = useState(initial?.name ?? "");
   const [companyName, setCompanyName] = useState(initial?.company_name ?? "");
   const [code, setCode] = useState(initial?.code ?? "");
@@ -17,6 +22,9 @@ export default function BranchForm({ initial, onSubmit, onCancel }: Props) {
   const [address, setAddress] = useState(initial?.address ?? "");
   const [phone, setPhone] = useState(initial?.phone ?? "");
   const [status, setStatus] = useState(initial?.status ?? true);
+  const [carrierAccounts, setCarrierAccounts] = useState<BranchCarrierAccountInput[]>(
+    initialCarrierAccounts.map((row) => ({ agent_account_id: row.agent_account_id }))
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -39,15 +47,18 @@ export default function BranchForm({ initial, onSubmit, onCancel }: Props) {
 
     setSubmitting(true);
     try {
-      await onSubmit({
-        name: name.trim(),
-        company_name: companyName.trim(),
-        code: code.trim(),
-        tax_id: taxId.trim(),
-        address: address.trim() || undefined,
-        phone: phone.trim() || undefined,
-        status,
-      });
+      await onSubmit(
+        {
+          name: name.trim(),
+          company_name: companyName.trim(),
+          code: code.trim(),
+          tax_id: taxId.trim(),
+          address: address.trim() || undefined,
+          phone: phone.trim() || undefined,
+          status,
+        },
+        carrierAccounts
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
     } finally {
@@ -117,6 +128,13 @@ export default function BranchForm({ initial, onSubmit, onCancel }: Props) {
         />
         เปิดใช้งานสาขานี้
       </label>
+
+      <div className="border-t border-slate-100 pt-4">
+        <span className="text-sm font-medium text-slate-600">บัญชี Agent (UPS/DHL)</span>
+        <div className="mt-2">
+          <BranchCarrierAccountsFields agentAccounts={agentAccounts} value={carrierAccounts} onChange={setCarrierAccounts} />
+        </div>
+      </div>
 
       {error && (
         <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600" role="alert">

@@ -14,19 +14,33 @@ import {
   type Branch,
   type BranchInput,
 } from "@/lib/branches";
+import { listAgentAccounts, type AgentAccount } from "@/lib/agentAccounts";
+import {
+  listBranchCarrierAccounts,
+  syncBranchCarrierAccounts,
+  type BranchCarrierAccount,
+  type BranchCarrierAccountInput,
+} from "@/lib/branchCarrierAccounts";
 
 export default function BranchPage() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [modalBranch, setModalBranch] = useState<Branch | "new" | null>(null);
   const [togglingId, setTogglingId] = useState<number | null>(null);
+
+  const [agentAccounts, setAgentAccounts] = useState<AgentAccount[]>([]);
+  const [modalBranch, setModalBranch] = useState<Branch | "new" | null>(null);
+  const [modalCarrierAccounts, setModalCarrierAccounts] = useState<BranchCarrierAccount[]>([]);
+  const [modalLoading, setModalLoading] = useState(false);
+  const [modalError, setModalError] = useState("");
 
   async function loadAll() {
     setLoading(true);
     setError("");
     try {
-      setBranches(await listBranches());
+      const [branchList, accounts] = await Promise.all([listBranches(), listAgentAccounts()]);
+      setBranches(branchList);
+      setAgentAccounts(accounts);
     } catch (err) {
       setError(err instanceof Error ? err.message : "โหลดข้อมูลไม่สำเร็จ");
     } finally {
@@ -38,12 +52,25 @@ export default function BranchPage() {
     loadAll();
   }, []);
 
-  async function handleSubmit(data: BranchInput) {
-    if (modalBranch && modalBranch !== "new") {
-      await updateBranch(modalBranch.id, data);
-    } else {
-      await createBranch(data);
+  async function openModal(branch: Branch | "new") {
+    setModalBranch(branch);
+    setModalCarrierAccounts([]);
+    setModalError("");
+    if (branch === "new") return;
+
+    setModalLoading(true);
+    try {
+      setModalCarrierAccounts(await listBranchCarrierAccounts(branch.id));
+    } catch (err) {
+      setModalError(err instanceof Error ? err.message : "โหลดข้อมูลบัญชี Agent ไม่สำเร็จ");
+    } finally {
+      setModalLoading(false);
     }
+  }
+
+  async function handleSubmit(data: BranchInput, carrierAccounts: BranchCarrierAccountInput[]) {
+    const branch = modalBranch && modalBranch !== "new" ? await updateBranch(modalBranch.id, data) : await createBranch(data);
+    await syncBranchCarrierAccounts(branch.id, carrierAccounts);
     setModalBranch(null);
     await loadAll();
   }
@@ -73,7 +100,7 @@ export default function BranchPage() {
         <PageHeader title="สาขา" description="จัดการข้อมูลสาขาของบริษัท" />
         <button
           type="button"
-          onClick={() => setModalBranch("new")}
+          onClick={() => openModal("new")}
           className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
         >
           <Plus className="h-4 w-4" />
@@ -100,6 +127,7 @@ export default function BranchPage() {
                 <th className="px-5 py-2.5 font-medium">เลขประจำตัวผู้เสียภาษี</th>
                 <th className="px-5 py-2.5 font-medium">ที่อยู่</th>
                 <th className="px-5 py-2.5 font-medium">เบอร์โทร</th>
+                <th className="px-5 py-2.5 font-medium">บัญชี Agent</th>
                 <th className="px-5 py-2.5 font-medium">สถานะ</th>
                 <th className="px-5 py-2.5 font-medium text-right">จัดการ</th>
               </tr>
@@ -120,6 +148,15 @@ export default function BranchPage() {
                   <td className="px-5 py-3">
                     <button
                       type="button"
+                      onClick={() => openModal(branch)}
+                      className="rounded-full bg-brand-navy/5 px-2.5 py-0.5 text-xs font-medium text-brand-navy-dark hover:bg-brand-navy/10"
+                    >
+                      {branch.carrier_accounts_count ? `${branch.carrier_accounts_count} บัญชี` : "ทั้งหมด (ค่าเริ่มต้น)"}
+                    </button>
+                  </td>
+                  <td className="px-5 py-3">
+                    <button
+                      type="button"
                       onClick={() => handleToggleStatus(branch)}
                       disabled={togglingId === branch.id}
                       className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition disabled:opacity-50 ${
@@ -135,7 +172,7 @@ export default function BranchPage() {
                   <td className="px-5 py-3 text-right">
                     <button
                       type="button"
-                      onClick={() => setModalBranch(branch)}
+                      onClick={() => openModal(branch)}
                       className="mr-2 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
                       aria-label="แก้ไข"
                     >
@@ -162,11 +199,19 @@ export default function BranchPage() {
           title={modalBranch === "new" ? "เพิ่มสาขา" : `แก้ไขสาขา ${modalBranch.name}`}
           onClose={() => setModalBranch(null)}
         >
-          <BranchForm
-            initial={modalBranch === "new" ? null : modalBranch}
-            onSubmit={handleSubmit}
-            onCancel={() => setModalBranch(null)}
-          />
+          {modalLoading ? (
+            <PageLoading label="กำลังโหลดข้อมูล..." />
+          ) : modalError ? (
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{modalError}</p>
+          ) : (
+            <BranchForm
+              initial={modalBranch === "new" ? null : modalBranch}
+              agentAccounts={agentAccounts}
+              initialCarrierAccounts={modalCarrierAccounts}
+              onSubmit={handleSubmit}
+              onCancel={() => setModalBranch(null)}
+            />
+          )}
         </Modal>
       )}
     </div>
