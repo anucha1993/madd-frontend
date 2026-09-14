@@ -910,10 +910,11 @@ export default function ShipmentCreatePage() {
   const insuranceThirdPartyOption = insuranceCategoryItems.find((i) => isThirdPartyInsuranceItem(i)) ?? null;
 
   // POS-style order summary (Step 3) — itemized freight + insurance + add-ons, mirroring a checkout receipt.
+  // Note: stockSupplyId (Common Sizes in the Packages step) is only a dimension-filling guide — it
+  // is NOT a purchase and must never be charged here. Packaging only costs money once it's
+  // explicitly added as an Add-on row (see addAddonFromSupply), which already flows through addonLines below.
   const selectedQuoteLogo = selectedQuote ? agents.find((a) => a.agent_code === selectedQuote.carrier)?.logo_url : undefined;
-  const selectedSupply = stockSupplyId ? supplies.find((s) => s.id === stockSupplyId) : undefined;
   const freightAmount = selectedQuote ? selectedQuote.negotiated ?? selectedQuote.published ?? 0 : 0;
-  const supplyAmount = selectedSupply ? Number(selectedSupply.sale_price) || 0 : 0;
   const addonLines = addonRows.map((row) => ({
     row,
     amount: row.quantity * (Number(row.unitPrice) || 0),
@@ -933,7 +934,7 @@ export default function ShipmentCreatePage() {
     // Only the currently active tab's section renders — switching tabs shouldn't dump every
     // category's items on screen at once.
     .filter((section) => section.category === activeAddonCategoryName);
-  const orderTotal = freightAmount + supplyAmount + addonTotal;
+  const orderTotal = freightAmount + addonTotal;
 
   // Shared between the Payment Info and Add On steps so the running total stays visible on both.
   const orderSummaryPanel = (
@@ -1032,12 +1033,6 @@ export default function ShipmentCreatePage() {
             </span>
             <span className="font-medium text-slate-700">{freightAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} THB</span>
           </div>
-          {selectedSupply && (
-            <div className="flex items-center justify-between">
-              <span className="text-slate-500">Packaging: {selectedSupply.name}</span>
-              <span className="font-medium text-slate-700">{supplyAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} THB</span>
-            </div>
-          )}
           {addonLines.map(({ row, amount }) => (
             <div key={row.key} className="flex items-center justify-between">
               <span className="text-slate-500">
@@ -1047,9 +1042,7 @@ export default function ShipmentCreatePage() {
               <span className="font-medium text-slate-700">{amount.toLocaleString(undefined, { maximumFractionDigits: 2 })} THB</span>
             </div>
           ))}
-          {freightAmount === 0 && !selectedSupply && addonLines.length === 0 && (
-            <p className="text-xs text-slate-400">ยังไม่มีรายการ</p>
-          )}
+          {freightAmount === 0 && addonLines.length === 0 && <p className="text-xs text-slate-400">ยังไม่มีรายการ</p>}
         </div>
 
         <div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-3">
