@@ -20,6 +20,8 @@ export type ParsedAddress = {
   company: string | null;
   address1: string | null;
   address2: string | null;
+  subdistrict: string | null;
+  district: string | null;
   city: string | null;
   province: string | null;
   postal_code: string | null;

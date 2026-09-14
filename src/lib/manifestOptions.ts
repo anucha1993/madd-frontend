@@ -7,7 +7,9 @@ export type ManifestOptionGroup =
   | "destination"
   | "charge_code"
   | "insurance_code"
-  | "form_charge";
+  | "form_charge"
+  | "bill_transportation_to"
+  | "bill_duty_tax_to";
 
 export type ManifestOptionProvider = "UPS" | "DHL";
 

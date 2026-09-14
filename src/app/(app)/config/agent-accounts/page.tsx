@@ -33,6 +33,13 @@ export default function AgentAccountsPage() {
   const [logoUrlInput, setLogoUrlInput] = useState("");
   const [logoSaving, setLogoSaving] = useState(false);
 
+  const [bulkEditMode, setBulkEditMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkStatus, setBulkStatus] = useState<"" | "enable" | "disable">("");
+  const [bulkAccountMode, setBulkAccountMode] = useState<"" | "test" | "production">("");
+  const [bulkApplying, setBulkApplying] = useState(false);
+  const [bulkError, setBulkError] = useState("");
+
   async function loadAll() {
     setLoading(true);
     setError("");
@@ -114,21 +121,116 @@ export default function AgentAccountsPage() {
     }
   }
 
+  function toggleBulkEditMode() {
+    setBulkEditMode((prev) => !prev);
+    setSelectedIds(new Set());
+    setBulkStatus("");
+    setBulkAccountMode("");
+    setBulkError("");
+  }
+
+  function toggleSelected(id: number) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    setSelectedIds((prev) => (prev.size === accounts.length ? new Set() : new Set(accounts.map((a) => a.id))));
+  }
+
+  function toggleSelectGroup(group: AgentAccount[]) {
+    setSelectedIds((prev) => {
+      const allSelected = group.length > 0 && group.every((a) => prev.has(a.id));
+      const next = new Set(prev);
+      group.forEach((a) => (allSelected ? next.delete(a.id) : next.add(a.id)));
+      return next;
+    });
+  }
+
+  async function handleBulkApply() {
+    if (selectedIds.size === 0 || (!bulkStatus && !bulkAccountMode)) return;
+    setBulkApplying(true);
+    setBulkError("");
+    try {
+      const patch: Partial<AgentAccountInput> = {};
+      if (bulkStatus) patch.status = bulkStatus === "enable";
+      if (bulkAccountMode) patch.mode = bulkAccountMode;
+      await Promise.all(Array.from(selectedIds).map((id) => updateAgentAccount(id, patch)));
+      await loadAll();
+      setSelectedIds(new Set());
+      setBulkStatus("");
+      setBulkAccountMode("");
+    } catch (err) {
+      setBulkError(err instanceof Error ? err.message : "อัปเดตหลายรายการไม่สำเร็จ");
+    } finally {
+      setBulkApplying(false);
+    }
+  }
+
   return (
     <div className="relative min-h-[360px]">
       <div className="mb-6 flex items-start justify-between">
         <PageHeader title="บัญชี Agent (UPS/DHL)" description="จัดการบัญชีขนส่งที่ใช้สำหรับเช็คราคาและสร้างพัสดุ" />
-        <button
-          type="button"
-          onClick={() => setModalAccount("new")}
-          className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
-        >
-          <Plus className="h-4 w-4" />
-          เพิ่มบัญชี
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={toggleBulkEditMode}
+            className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition ${
+              bulkEditMode
+                ? "bg-brand-amber text-brand-navy-dark"
+                : "border border-slate-300 text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            {bulkEditMode ? "ออกจาก Mass Update Mode" : "Mass Update Mode"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setModalAccount("new")}
+            className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
+          >
+            <Plus className="h-4 w-4" />
+            เพิ่มบัญชี
+          </button>
+        </div>
       </div>
 
       {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
+
+      {bulkEditMode && (
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-brand-amber bg-amber-50/60 px-4 py-3">
+          <button type="button" onClick={toggleSelectAll} className="text-sm font-medium text-brand-navy-dark hover:underline">
+            {selectedIds.size === accounts.length && accounts.length > 0 ? "ยกเลิกเลือกทั้งหมด" : "เลือกทั้งหมด"}
+          </button>
+          <span className="text-sm text-slate-600">เลือกแล้ว {selectedIds.size} บัญชี</span>
+          <select value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value as typeof bulkStatus)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15">
+            <option value="">-- สถานะ --</option>
+            <option value="enable">เปิดใช้งาน</option>
+            <option value="disable">ปิดใช้งาน</option>
+          </select>
+          <select
+            value={bulkAccountMode}
+            onChange={(e) => setBulkAccountMode(e.target.value as typeof bulkAccountMode)}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
+          >
+            <option value="">-- Mode --</option>
+            <option value="production">Production</option>
+            <option value="test">Test</option>
+          </select>
+          <button
+            type="button"
+            onClick={handleBulkApply}
+            disabled={bulkApplying || selectedIds.size === 0 || (!bulkStatus && !bulkAccountMode)}
+            className="rounded-lg bg-brand-navy-dark px-4 py-1.5 text-sm font-semibold text-white hover:bg-brand-navy-dark/90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {bulkApplying ? "กำลังอัปเดต..." : "Apply"}
+          </button>
+          {bulkError && <p className="w-full text-sm text-red-600">{bulkError}</p>}
+        </div>
+      )}
 
       {loading ? (
         <PageLoading label="กำลังโหลดข้อมูลบัญชี Agent..." />
@@ -172,6 +274,16 @@ export default function AgentAccountsPage() {
                   <table className="w-full text-left text-sm">
                     <thead className="bg-gradient-to-r from-brand-navy-dark to-brand-navy text-xs uppercase text-white/90">
                       <tr>
+                        {bulkEditMode && (
+                          <th className="w-10 px-5 py-2.5 font-medium">
+                            <input
+                              type="checkbox"
+                              checked={agentAccounts.length > 0 && agentAccounts.every((a) => selectedIds.has(a.id))}
+                              onChange={() => toggleSelectGroup(agentAccounts)}
+                              className="h-4 w-4 rounded border-slate-300 accent-brand-amber"
+                            />
+                          </th>
+                        )}
                         <th className="px-5 py-2.5 font-medium">ชื่อบัญชี</th>
                         <th className="px-5 py-2.5 font-medium">Client ID</th>
                         <th className="px-5 py-2.5 font-medium">Credentials</th>
@@ -184,6 +296,16 @@ export default function AgentAccountsPage() {
                     <tbody>
                       {agentAccounts.map((account) => (
                         <tr key={account.id} className="border-b border-slate-200 last:border-0">
+                          {bulkEditMode && (
+                            <td className="px-5 py-3">
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.has(account.id)}
+                                onChange={() => toggleSelected(account.id)}
+                                className="h-4 w-4 rounded border-slate-300 accent-brand-amber"
+                              />
+                            </td>
+                          )}
                           <td className="px-5 py-3 font-medium text-slate-700">{account.username_acc}</td>
                           <td className="px-5 py-3 text-slate-500">{account.client_id ?? "-"}</td>
                           <td className="px-5 py-3">

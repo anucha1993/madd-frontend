@@ -8,6 +8,7 @@ import {
   Package,
   Settings,
   Truck,
+  Users,
 } from "lucide-react";
 
 export type NavLeaf = {
@@ -59,6 +60,11 @@ export const NAV_SECTIONS: NavItem[] = [
     label: "Branches",
     icon: Building2,
     href: "/branch",
+  },
+  {
+    label: "Customers",
+    icon: Users,
+    href: "/customer",
   },
   {
     label: "Management",

@@ -6,6 +6,7 @@ import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import ThaiAddressSearch from "@/components/shipment/ThaiAddressSearch";
 import CountrySelect from "@/components/shipment/CountrySelect";
+import CustomerAddressPicker from "@/components/shipment/CustomerAddressPicker";
 import { listCountries, type Country } from "@/lib/countries";
 import { listAgents, type Agent } from "@/lib/agentAccounts";
 import { listSupplies, type Supply } from "@/lib/supplies";
@@ -17,6 +18,36 @@ import { listManifestOptions, type ManifestOption } from "@/lib/manifestOptions"
 import { getThaiSubdistrictsByZipCode } from "@/lib/thaiSubdistricts";
 import { checkRate, type CheckRateInput, type RateQuote, type ShipmentPackageInput } from "@/lib/shipping";
 import { lookupInsuranceCountryCap, type InsuranceCountryCap } from "@/lib/insuranceCountryCaps";
+import { getUser } from "@/lib/auth";
+import {
+  listCustomers,
+  createCustomer,
+  createCustomerAddress,
+  listCustomerAddresses,
+  type CustomerAddressType,
+  type CustomerAddressWithCustomer,
+} from "@/lib/customers";
+
+// Loose text match helper for reconciling AI-parsed Thai subdistrict/district names (which
+// often have inconsistent romanization, e.g. "Phlabphla" vs the DB's "Phlapphla") against the
+// thai_subdistricts lookup table — see handleAiFillApply.
+function levenshteinDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const dp = new Array(b.length + 1);
+  for (let j = 0; j <= b.length; j++) dp[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const temp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
+      prev = temp;
+    }
+  }
+  return dp[b.length];
+}
 
 const STEPS = [
   { number: 1 as const, label: "Ship Info" },
@@ -50,7 +81,8 @@ const newRow = (): PackageRow => ({
   is_document: false,
   declared_value: 0,
   insured: false,
-  productType: null,
+  // Non Silver is the default Product Type for every new box (see selectPackageInsurance / renderInsurancePicker).
+  productType: "NON_SILVER",
   productTypeOther: "",
   forcedWeightBandId: null,
 });
@@ -107,14 +139,26 @@ export default function ShipmentCreatePage() {
   const { enabled: aiEnabled } = useAiEnabled();
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
+  // Staff creating this shipment / their branch — shown in Order Summary as a final review.
+  const currentUser = getUser();
+  const currentUserBranchLabel = currentUser?.can_access_all_branches
+    ? "ทุกสาขา"
+    : currentUser?.branches?.map((b) => b.name).join(", ") || "-";
+
   const [originContactName, setOriginContactName] = useState("");
+  // Set when a saved address is picked via CustomerAddressPicker — lets auto-save reuse the
+  // exact same customer even if that address had blank phone/tax_id (so it can't be re-matched
+  // by those fields alone). Cleared if the contact name is retyped (treated as a different person).
+  const [originCustomerId, setOriginCustomerId] = useState<number | null>(null);
   const [originCompany, setOriginCompany] = useState("");
+  const [originTaxId, setOriginTaxId] = useState("");
   const [originPostcode, setOriginPostcode] = useState("");
   const [originCity, setOriginCity] = useState("");
   const [originAddress, setOriginAddress] = useState("");
   const [originAddress2, setOriginAddress2] = useState("");
   const [originAddress3, setOriginAddress3] = useState("");
   const [originPhone, setOriginPhone] = useState("");
+  const [originNotes, setOriginNotes] = useState("");
   const [originSearchValue, setOriginSearchValue] = useState("");
   const [originLookup, setOriginLookup] = useState<{ status: "idle" | "loading" | "found" | "not-found"; label?: string }>({
     status: "idle",
@@ -129,7 +173,9 @@ export default function ShipmentCreatePage() {
   const [aiFillError, setAiFillError] = useState("");
 
   const [destinationContactName, setDestinationContactName] = useState("");
+  const [destinationCustomerId, setDestinationCustomerId] = useState<number | null>(null);
   const [destinationCompany, setDestinationCompany] = useState("");
+  const [destinationTaxId, setDestinationTaxId] = useState("");
   const [destinationCountry, setDestinationCountry] = useState("");
   const [destinationCity, setDestinationCity] = useState("");
   const [destinationPostcode, setDestinationPostcode] = useState("");
@@ -138,6 +184,7 @@ export default function ShipmentCreatePage() {
   const [destinationAddress3, setDestinationAddress3] = useState("");
   const [destinationPhone, setDestinationPhone] = useState("");
   const [destinationEmail, setDestinationEmail] = useState("");
+  const [destinationNotes, setDestinationNotes] = useState("");
 
   const [packages, setPackages] = useState<PackageRow[]>([newRow()]);
   // Which package row Common Sizes / dimension edits apply to — only one row is "unlocked" at a time.
@@ -152,6 +199,13 @@ export default function ShipmentCreatePage() {
   const [entityType, setEntityType] = useState<"INDIVIDUAL" | "COMPANY">("INDIVIDUAL");
   const [paymentOptions, setPaymentOptions] = useState<ManifestOption[]>([]);
   const [paymentMethod, setPaymentMethod] = useState("");
+  const [billTransportationOptions, setBillTransportationOptions] = useState<ManifestOption[]>([]);
+  const [billTransportationTo, setBillTransportationTo] = useState("");
+  const [billDutyTaxOptions, setBillDutyTaxOptions] = useState<ManifestOption[]>([]);
+  const [billDutyTaxTo, setBillDutyTaxTo] = useState("");
+  const [refInvoiceNo, setRefInvoiceNo] = useState("");
+  const [refInsuranceNo, setRefInsuranceNo] = useState("");
+  const [refPurchaseNo, setRefPurchaseNo] = useState("");
 
   // Third-party insurance coverage cap / sanction note for the destination country — see /config/insurance-caps.
   const [insuranceCap, setInsuranceCap] = useState<InsuranceCountryCap | null>(null);
@@ -201,6 +255,20 @@ export default function ShipmentCreatePage() {
         const active = all.filter((o) => o.status);
         setPaymentOptions(active);
         setPaymentMethod((current) => current || active[0]?.code || "");
+      })
+      .catch(() => {});
+    listManifestOptions("bill_transportation_to")
+      .then((all) => {
+        const active = all.filter((o) => o.status);
+        setBillTransportationOptions(active);
+        setBillTransportationTo((current) => current || (active.some((o) => o.code === "SHIPPER") ? "SHIPPER" : active[0]?.code ?? ""));
+      })
+      .catch(() => {});
+    listManifestOptions("bill_duty_tax_to")
+      .then((all) => {
+        const active = all.filter((o) => o.status);
+        setBillDutyTaxOptions(active);
+        setBillDutyTaxTo((current) => current || (active.some((o) => o.code === "RECEIVER") ? "RECEIVER" : active[0]?.code ?? ""));
       })
       .catch(() => {});
   }, []);
@@ -350,6 +418,26 @@ export default function ShipmentCreatePage() {
         prev.filter((r) => !(r.packageKey === key && r.category === "Insurance" && !isThirdPartyInsuranceItem({ name: r.name }))),
       );
     }
+    // Silver forces UPSC; Other just defaults to UPSC (staff may still switch to carrier-own after).
+    if (productType === "SILVER" || productType === "OTHER") {
+      const pkg = packages.find((p) => p.key === key);
+      if (pkg?.insured && insuranceThirdPartyOption) {
+        selectPackageInsurance(pkg, insuranceThirdPartyOption);
+      }
+    }
+  }
+
+  // A checked "Insurance" box must never end up with no insurer/charge actually selected —
+  // Silver/Other are forced onto UPSC (see selectPackageInsurance), everything else defaults to
+  // the carrier's own insurance (falling back to UPSC if that carrier has no own-insurance item).
+  function autoSelectPackageInsurer(pkg: PackageRow) {
+    if (pkg.productType === "SILVER" || pkg.productType === "OTHER") {
+      if (insuranceThirdPartyOption) selectPackageInsurance(pkg, insuranceThirdPartyOption);
+    } else if (insuranceCarrierOption) {
+      selectPackageInsurance(pkg, insuranceCarrierOption);
+    } else if (insuranceThirdPartyOption) {
+      selectPackageInsurance(pkg, insuranceThirdPartyOption);
+    }
   }
 
   function addAddonFromSupply(supply: Supply) {
@@ -418,19 +506,93 @@ export default function ShipmentCreatePage() {
     try {
       const fields = await parseAddressWithAi(aiFillText.trim());
       if (aiFillTarget === "from") {
-        if (fields.contact_name) setOriginContactName(fields.contact_name);
+        if (fields.contact_name) {
+          setOriginContactName(fields.contact_name);
+          setOriginCustomerId(null);
+        }
         if (fields.company) setOriginCompany(fields.company);
         if (fields.address1) setOriginAddress(fields.address1);
         if (fields.address2) setOriginAddress2(fields.address2);
-        const cityLabel = fields.city || fields.province;
-        if (cityLabel) {
-          setOriginCity(cityLabel);
-          setOriginSearchValue([cityLabel, fields.province, fields.postal_code].filter(Boolean).join(", "));
+
+        // Ship From is always a Thai domestic address, so resolve the real
+        // subdistrict/district/province record for the postcode (like the manual
+        // ThaiAddressSearch picker does) instead of just echoing the AI's city/province guess,
+        // which drops the subdistrict/district entirely.
+        let matchedSubdistrict = false;
+        const zip = fields.postal_code?.replace(/\D/g, "");
+        if (zip && zip.length === 5) {
+          try {
+            const matches = await getThaiSubdistrictsByZipCode(zip);
+            if (matches.length > 0) {
+              // The DB's English names carry an admin-level prefix (e.g. "Khwaeng Phlapphla",
+              // "Khet Wang Thonglang") the AI's bare "Phlapphla"/"Wang Thonglang" doesn't have —
+              // strip it before comparing, otherwise it skews substring/fuzzy matching.
+              const stripAdminPrefix = (s: string) =>
+                s.replace(/^(khwaeng|tambon|khet|amphoe|king amphoe|changwat)\s+/i, "").replace(/^(แขวง|ตำบล|เขต|อำเภอ|จังหวัด)/, "");
+              const normalize = (s: string) => stripAdminPrefix(s).toLowerCase().replace(/[^a-z0-9ก-๙]/g, "");
+              const subHint = normalize(fields.subdistrict ?? "");
+              const districtHint = normalize(fields.district ?? "");
+
+              // Narrow to the matching district first (several subdistricts can share a
+              // postcode), then find the closest subdistrict within that pool — falling back
+              // to a fuzzy (edit-distance) match to tolerate romanization spelling variance.
+              const districtPool = districtHint
+                ? matches.filter((m) => {
+                    const dist = normalize(m.district_name_en ?? m.district_name_th);
+                    return dist !== "" && (districtHint.includes(dist) || dist.includes(districtHint));
+                  })
+                : [];
+              const pool = districtPool.length > 0 ? districtPool : matches;
+
+              let row = subHint
+                ? pool.find((m) => {
+                    const sub = normalize(m.name_en ?? m.name_th);
+                    return sub !== "" && (subHint.includes(sub) || sub.includes(subHint));
+                  })
+                : undefined;
+
+              if (!row && subHint) {
+                let bestDistance = Infinity;
+                for (const candidate of pool) {
+                  const sub = normalize(candidate.name_en ?? candidate.name_th);
+                  if (!sub) continue;
+                  const distance = levenshteinDistance(subHint, sub);
+                  if (distance < bestDistance) {
+                    bestDistance = distance;
+                    row = candidate;
+                  }
+                }
+                if (bestDistance > Math.max(2, Math.ceil(subHint.length * 0.3))) row = undefined;
+              }
+
+              row = row ?? pool[0];
+              setOriginPostcode(row.zip_code);
+              setOriginCity(row.district_name_en ?? row.district_name_th);
+              setOriginSearchValue(`${row.name_en}, ${row.district_name_en}, ${row.province_name_en} - ${row.zip_code}`);
+              setOriginLookup({
+                status: "found",
+                label: `${row.name_en}, ${row.district_name_en}, ${row.province_name_en}`,
+              });
+              matchedSubdistrict = true;
+            }
+          } catch {
+            // fall through to the plain city/province fallback below
+          }
         }
-        if (fields.postal_code) setOriginPostcode(fields.postal_code);
+        if (!matchedSubdistrict) {
+          const cityLabel = fields.city || fields.province;
+          if (cityLabel) {
+            setOriginCity(cityLabel);
+            setOriginSearchValue([cityLabel, fields.province, fields.postal_code].filter(Boolean).join(", "));
+          }
+          if (fields.postal_code) setOriginPostcode(fields.postal_code);
+        }
         if (fields.phone) setOriginPhone(fields.phone);
       } else {
-        if (fields.contact_name) setDestinationContactName(fields.contact_name);
+        if (fields.contact_name) {
+          setDestinationContactName(fields.contact_name);
+          setDestinationCustomerId(null);
+        }
         if (fields.company) setDestinationCompany(fields.company);
         if (fields.address1) setDestinationAddress(fields.address1);
         if (fields.address2) setDestinationAddress2(fields.address2);
@@ -449,6 +611,128 @@ export default function ShipmentCreatePage() {
       setAiFillError(err instanceof Error ? err.message : "AI parsing failed. Please try again.");
     } finally {
       setAiFillLoading(false);
+    }
+  }
+
+  // Saves the currently-typed Ship From/Ship To fields as a reusable customer address — finds
+  // an existing customer by phone (best-effort match) so repeat customers don't get duplicated,
+  // otherwise creates a new one. Does NOT block/alter the shipment form itself.
+  //
+  // Rules: (1) the same customer may have several addresses, but never an exact duplicate
+  // (all fields equal) — silently skip saving if one already matches; (2) if the user picked a
+  // saved address from the picker and then edited any field, that no longer matches an existing
+  // record, so it's saved as a brand-new address instead of overwriting the original; (3) saved
+  // addresses can only ever be EDITED from the Customers menu — this flow only ever creates.
+  async function autoSaveAddress(target: "from" | "to") {
+    const contactName = (target === "from" ? originContactName : destinationContactName).trim();
+    if (!contactName) return;
+
+    const type: CustomerAddressType = target === "from" ? "ship_from" : "ship_to";
+    const fields = {
+      contact_name: contactName,
+      company_name: (target === "from" ? originCompany : destinationCompany).trim(),
+      tax_id: (target === "from" ? originTaxId : destinationTaxId).trim(),
+      phone: (target === "from" ? originPhone : destinationPhone).trim(),
+      email: (target === "from" ? "" : destinationEmail).trim(),
+      country: (target === "from" ? "TH" : destinationCountry).trim(),
+      city: (target === "from" ? originCity : destinationCity).trim(),
+      postcode: (target === "from" ? originPostcode : destinationPostcode).trim(),
+      address1: (target === "from" ? originAddress : destinationAddress).trim(),
+      address2: (target === "from" ? originAddress2 : destinationAddress2).trim(),
+      address3: (target === "from" ? originAddress3 : destinationAddress3).trim(),
+      notes: (target === "from" ? originNotes : destinationNotes).trim(),
+    };
+
+    try {
+      // Prefer the customer the user actually picked from the saved-address search — matching
+      // by phone alone fails when the saved address itself had a blank phone field. Only fall
+      // back to a phone lookup / new customer when nothing was explicitly selected.
+      let customerId: number | null = target === "from" ? originCustomerId : destinationCustomerId;
+      if (!customerId && fields.phone) {
+        const matches = await listCustomers(fields.phone);
+        customerId = matches.find((c) => c.phone === fields.phone)?.id ?? null;
+      }
+      if (!customerId) {
+        const customer = await createCustomer({
+          name: fields.contact_name,
+          company_name: fields.company_name || undefined,
+          tax_id: fields.tax_id || undefined,
+          phone: fields.phone || undefined,
+          email: fields.email || undefined,
+        });
+        customerId = customer.id;
+      }
+
+      const existing = await listCustomerAddresses(customerId, type);
+      const norm = (v: string | null) => (v ?? "").trim().toLowerCase();
+      const isDuplicate = existing.some(
+        (addr) =>
+          norm(addr.contact_name) === norm(fields.contact_name) &&
+          norm(addr.company_name) === norm(fields.company_name) &&
+          norm(addr.tax_id) === norm(fields.tax_id) &&
+          norm(addr.phone) === norm(fields.phone) &&
+          norm(addr.email) === norm(fields.email) &&
+          norm(addr.country) === norm(fields.country) &&
+          norm(addr.city) === norm(fields.city) &&
+          norm(addr.postcode) === norm(fields.postcode) &&
+          norm(addr.address1) === norm(fields.address1) &&
+          norm(addr.address2) === norm(fields.address2) &&
+          norm(addr.address3) === norm(fields.address3) &&
+          norm(addr.notes) === norm(fields.notes),
+      );
+      if (isDuplicate) return;
+
+      await createCustomerAddress(customerId, {
+        type,
+        contact_name: fields.contact_name,
+        company_name: fields.company_name || undefined,
+        tax_id: fields.tax_id || undefined,
+        phone: fields.phone || undefined,
+        email: fields.email || undefined,
+        country: fields.country || undefined,
+        city: fields.city || undefined,
+        postcode: fields.postcode || undefined,
+        address1: fields.address1 || undefined,
+        address2: fields.address2 || undefined,
+        address3: fields.address3 || undefined,
+        notes: fields.notes || undefined,
+      });
+    } catch {
+      // Best-effort background save — never block or surface errors on the shipment flow.
+    }
+  }
+
+  // Fills the Ship From/Ship To form from a picked saved customer address.
+  function applyCustomerAddress(target: "from" | "to", addr: CustomerAddressWithCustomer) {
+    if (target === "from") {
+      setOriginContactName(addr.contact_name);
+      setOriginCustomerId(addr.customer_id);
+      setOriginCompany(addr.company_name ?? "");
+      setOriginTaxId(addr.tax_id ?? "");
+      setOriginPhone(addr.phone ?? "");
+      setOriginCity(addr.city ?? "");
+      setOriginPostcode(addr.postcode ?? "");
+      setOriginAddress(addr.address1 ?? "");
+      setOriginAddress2(addr.address2 ?? "");
+      setOriginAddress3(addr.address3 ?? "");
+      setOriginNotes(addr.notes ?? "");
+      setOriginSearchValue(
+        [addr.city, addr.postcode].filter(Boolean).join(" - "),
+      );
+    } else {
+      setDestinationContactName(addr.contact_name);
+      setDestinationCustomerId(addr.customer_id);
+      setDestinationCompany(addr.company_name ?? "");
+      setDestinationTaxId(addr.tax_id ?? "");
+      setDestinationPhone(addr.phone ?? "");
+      setDestinationEmail(addr.email ?? "");
+      if (addr.country) setDestinationCountry(addr.country);
+      setDestinationCity(addr.city ?? "");
+      setDestinationPostcode(addr.postcode ?? "");
+      setDestinationAddress(addr.address1 ?? "");
+      setDestinationAddress2(addr.address2 ?? "");
+      setDestinationAddress3(addr.address3 ?? "");
+      setDestinationNotes(addr.notes ?? "");
     }
   }
 
@@ -507,6 +791,12 @@ export default function ShipmentCreatePage() {
       setError("Please fill in the destination city.");
       return;
     }
+
+    // Auto-save Ship From/Ship To as reusable customer addresses — fire-and-forget so a slow
+    // or failed save never blocks/delays the rate check itself (see autoSaveAddress for the
+    // dedup rules: never overwrites, only creates a new address when something doesn't match).
+    void autoSaveAddress("from");
+    void autoSaveAddress("to");
 
     const effectivePackages: ShipmentPackageInput[] = packages.map((p) =>
       p.is_document
@@ -579,9 +869,9 @@ export default function ShipmentCreatePage() {
     return acc;
   }, {});
   const addonCategoryNames = Object.keys(addonByCategory);
-  // Product Type (Silver/Non Silver) is selected in the Packages section (Step 2), not the
-  // Add-on catalog tabs — hide its tab from the Add-on tab bar to avoid a second, redundant control.
-  const addonTabCategoryNames = addonCategoryNames.filter((c) => c !== "Product Type");
+  // Product Type (Silver/Non Silver) and Insurance are both selected in the Packages section
+  // (Step 2), not the Add-on catalog tabs — hide their tabs to avoid a second, redundant control.
+  const addonTabCategoryNames = addonCategoryNames.filter((c) => c !== "Product Type" && c !== "Insurance");
   // Suggestions are capped to 4 per tab so the list stays compact — searching (any text) lifts the cap.
   const MAX_SUGGESTIONS = 4;
   const isAddonSearching = addonSearch.trim().length > 0;
@@ -640,8 +930,9 @@ export default function ShipmentCreatePage() {
         .filter((category) => !addonRowCategoryOrder.includes(category))
         .map((category) => ({ category, lines: addonLines.filter((l) => (l.row.category || "Other") === category) })),
     )
-    // The active tab's section always renders (even with no rows yet) so its "+ Add row" button has a home.
-    .filter((section) => section.lines.length > 0 || section.category === activeAddonCategoryName);
+    // Only the currently active tab's section renders — switching tabs shouldn't dump every
+    // category's items on screen at once.
+    .filter((section) => section.category === activeAddonCategoryName);
   const orderTotal = freightAmount + supplyAmount + addonTotal;
 
   // Shared between the Payment Info and Add On steps so the running total stays visible on both.
@@ -653,6 +944,11 @@ export default function ShipmentCreatePage() {
         </h2>
 
         <div className="mb-3 grid grid-cols-1 gap-2 text-xs">
+          <div>
+            <span className="font-medium uppercase tracking-wide text-slate-400">Staff / Branch</span>
+            <p className="text-slate-600">{currentUser?.name || "-"}</p>
+            <p className="text-slate-400">{currentUserBranchLabel}</p>
+          </div>
           <div>
             <span className="font-medium uppercase tracking-wide text-slate-400">Ship From</span>
             <p className="text-slate-600">{originContactName || "-"}</p>
@@ -666,6 +962,23 @@ export default function ShipmentCreatePage() {
                 .filter(Boolean)
                 .join(", ") || "-"}
             </p>
+          </div>
+          <div>
+            <span className="font-medium uppercase tracking-wide text-slate-400">Packages</span>
+            {packages.map((p, idx) => (
+              <p key={p.key} className="text-slate-600">
+                #{idx + 1} {p.is_document ? "Document" : `${p.length}x${p.width}x${p.height} cm`}, {p.weight}kg x{p.quantity}
+                {" — "}
+                {p.productType === "SILVER"
+                  ? "Silver"
+                  : p.productType === "NON_SILVER"
+                    ? "Non Silver"
+                    : p.productType === "OTHER"
+                      ? `Other${p.productTypeOther ? `: ${p.productTypeOther}` : ""}`
+                      : "-"}
+                {p.insured && <span className="text-emerald-600"> · Insured</span>}
+              </p>
+            ))}
           </div>
         </div>
 
@@ -686,6 +999,21 @@ export default function ShipmentCreatePage() {
               </span>
             </div>
             <p className="text-xs text-slate-500">{selectedQuote.serviceLabel}</p>
+            {selectedQuote.chargeBreakdown && selectedQuote.chargeBreakdown.length > 0 && (
+              <div className="mt-2 flex flex-col gap-0.5 border-t border-amber-100 pt-2">
+                {selectedQuote.chargeBreakdown.map((line, li) => (
+                  <div key={li} className="flex items-center justify-between text-xs">
+                    <span className="text-slate-500">
+                      {line.description}
+                      {line.code ? <span className="text-slate-300"> ({line.code})</span> : null}
+                    </span>
+                    <span className="font-medium text-slate-600">
+                      {line.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {line.currency}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         ) : (
           <p className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-400">
@@ -729,6 +1057,42 @@ export default function ShipmentCreatePage() {
           <span className="text-lg font-bold text-brand-navy-dark">
             {orderTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })} THB
           </span>
+        </div>
+
+        <div className="mt-3 flex flex-col gap-1 border-t border-dashed border-slate-200 pt-3 text-xs">
+          <span className="font-medium uppercase tracking-wide text-slate-400">Payment / Reference</span>
+          <div className="flex items-center justify-between">
+            <span className="text-slate-500">Payment Method</span>
+            <span className="font-medium text-slate-700">{paymentOptions.find((o) => o.code === paymentMethod)?.name || "-"}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-slate-500">Bill Transportation to</span>
+            <span className="font-medium text-slate-700">
+              {billTransportationOptions.find((o) => o.code === billTransportationTo)?.name || "-"}
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-slate-500">Bill Duty and Tax to</span>
+            <span className="font-medium text-slate-700">{billDutyTaxOptions.find((o) => o.code === billDutyTaxTo)?.name || "-"}</span>
+          </div>
+          {refInvoiceNo && (
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500">Ref. Invoice No.</span>
+              <span className="font-medium text-slate-700">{refInvoiceNo}</span>
+            </div>
+          )}
+          {refInsuranceNo && (
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500">Ref. Insurance No.</span>
+              <span className="font-medium text-slate-700">{refInsuranceNo}</span>
+            </div>
+          )}
+          {refPurchaseNo && (
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500">Ref. Purchase No.</span>
+              <span className="font-medium text-slate-700">{refPurchaseNo}</span>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -898,12 +1262,22 @@ export default function ShipmentCreatePage() {
               )}
             </div>
           </div>
-          <div className="flex flex-col gap-2.5">
+          <CustomerAddressPicker type="ship_from" onSelect={(addr) => applyCustomerAddress("from", addr)} />
+          <div className="mt-2.5 flex flex-col gap-2.5">
             <div className="grid grid-cols-2 gap-2.5">
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>Contact Name</span>
                 <div className="relative">
-                  <input type="text" value={originContactName} onChange={(e) => setOriginContactName(e.target.value)} placeholder="e.g. John Smith" className={`${inputClass} ${originContactName ? "pr-8" : ""}`} />
+                  <input
+                    type="text"
+                    value={originContactName}
+                    onChange={(e) => {
+                      setOriginContactName(e.target.value);
+                      setOriginCustomerId(null);
+                    }}
+                    placeholder="e.g. John Smith"
+                    className={`${inputClass} ${originContactName ? "pr-8" : ""}`}
+                  />
                   {originContactName && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
                 </div>
               </label>
@@ -915,6 +1289,13 @@ export default function ShipmentCreatePage() {
                 </div>
               </label>
             </div>
+            <label className="flex flex-col gap-1">
+              <span className={labelClass}>Tax ID No.</span>
+              <div className="relative">
+                <input type="text" value={originTaxId} onChange={(e) => setOriginTaxId(e.target.value)} placeholder="Tax ID / เลขประจำตัวผู้เสียภาษี (optional)" className={`${inputClass} ${originTaxId ? "pr-8" : ""}`} />
+                {originTaxId && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
+              </div>
+            </label>
             <label className="flex flex-col gap-1">
               <span className={labelClass}>Subdistrict / District / Province / Postcode</span>
               <ThaiAddressSearch
@@ -961,6 +1342,16 @@ export default function ShipmentCreatePage() {
                 {originPhone && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
               </div>
             </label>
+            <label className="flex flex-col gap-1">
+              <span className={labelClass}>Notes</span>
+              <textarea
+                value={originNotes}
+                onChange={(e) => setOriginNotes(e.target.value)}
+                placeholder="บันทึกเพิ่มเติม (optional)"
+                rows={2}
+                className={`${inputClass} resize-y`}
+              />
+            </label>
           </div>
         </div>
 
@@ -977,7 +1368,8 @@ export default function ShipmentCreatePage() {
               </button>
             )}
           </div>
-          <div className="flex flex-col gap-2.5">
+          <CustomerAddressPicker type="ship_to" onSelect={(addr) => applyCustomerAddress("to", addr)} />
+          <div className="mt-2.5 flex flex-col gap-2.5">
             <div className="grid grid-cols-2 gap-2.5">
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>Contact Name</span>
@@ -985,7 +1377,10 @@ export default function ShipmentCreatePage() {
                   <input
                     type="text"
                     value={destinationContactName}
-                    onChange={(e) => setDestinationContactName(e.target.value)}
+                    onChange={(e) => {
+                      setDestinationContactName(e.target.value);
+                      setDestinationCustomerId(null);
+                    }}
                     placeholder="e.g. Jane Doe"
                     className={`${inputClass} ${destinationContactName ? "pr-8" : ""}`}
                   />
@@ -1010,6 +1405,21 @@ export default function ShipmentCreatePage() {
                 </div>
               </label>
             </div>
+            <label className="flex flex-col gap-1">
+              <span className={labelClass}>Tax ID No.</span>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={destinationTaxId}
+                  onChange={(e) => setDestinationTaxId(e.target.value)}
+                  placeholder="Tax ID (optional)"
+                  className={`${inputClass} ${destinationTaxId ? "pr-8" : ""}`}
+                />
+                {destinationTaxId && (
+                  <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />
+                )}
+              </div>
+            </label>
             <label className="flex flex-col gap-1">
               <span className={labelClass}>Country</span>
               <CountrySelect value={destinationCountry} onChange={setDestinationCountry} />
@@ -1117,6 +1527,16 @@ export default function ShipmentCreatePage() {
                 </div>
               </label>
             </div>
+            <label className="flex flex-col gap-1">
+              <span className={labelClass}>Notes</span>
+              <textarea
+                value={destinationNotes}
+                onChange={(e) => setDestinationNotes(e.target.value)}
+                placeholder="บันทึกเพิ่มเติม (optional)"
+                rows={2}
+                className={`${inputClass} resize-y`}
+              />
+            </label>
           </div>
         </div>
       </div>
@@ -1409,21 +1829,27 @@ export default function ShipmentCreatePage() {
                   <div className="flex items-end gap-3">
                   <div className="flex w-24 flex-col gap-1">
                     {/* <span className={labelClass}>Insurance</span> */}
-                    <label className="flex h-[34px] items-center gap-1.5">
+                    <label
+                      className="flex h-[34px] items-center gap-1.5"
+                      title={!selectedQuote ? "กรุณาเลือก Rate Quote ก่อน จึงจะเลือกทำประกันสินค้าได้" : undefined}
+                    >
                       <input
                         type="checkbox"
                         checked={pkg.insured}
-                        disabled={!isActive}
+                        disabled={!isActive || !selectedQuote}
                         onChange={(e) => {
                           const insured = e.target.checked;
                           updatePackage(pkg.key, { insured });
                           if (!insured) {
                             setAddonRows((prev) => prev.filter((r) => !(r.category === "Insurance" && r.packageKey === pkg.key)));
+                          } else {
+                            // Never leave "Insurance" checked with no insurer actually picked (and thus no charge).
+                            autoSelectPackageInsurer(pkg);
                           }
                         }}
                         className="h-3.5 w-3.5 rounded border-slate-300 text-brand-navy focus:ring-brand-navy/30"
                       />
-                      <span className="text-xs text-slate-500">ประกันสินค้า</span>
+                      <span className="text-xs text-slate-500">Insurance</span>
                     </label>
                   </div>
                   {pkg.insured && (
@@ -1625,9 +2051,9 @@ export default function ShipmentCreatePage() {
         </div>
       </div>
 
-      {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
+      {error && <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
-      <div className="flex items-center justify-between">
+      <div className="mt-4 flex items-center justify-between">
         <button
           type="button"
           onClick={() => setStep(1)}
@@ -1654,16 +2080,68 @@ export default function ShipmentCreatePage() {
         <div className="flex flex-col gap-4 lg:col-span-2">
       <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Payment Method</h2>
-        <label className="flex max-w-xs flex-col gap-1">
-          <span className={labelClass}>Payment Method</span>
-          <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={inputClass}>
-            {paymentOptions.map((opt) => (
-              <option key={opt.id} value={opt.code}>
-                {opt.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <label className="flex flex-col gap-1">
+            <span className={labelClass}>Payment Method</span>
+            <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={inputClass}>
+              {paymentOptions.map((opt) => (
+                <option key={opt.id} value={opt.code}>
+                  {opt.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className={labelClass}>Bill Transportation to</span>
+            <select value={billTransportationTo} onChange={(e) => setBillTransportationTo(e.target.value)} className={inputClass}>
+              {billTransportationOptions.map((opt) => (
+                <option key={opt.id} value={opt.code}>
+                  {opt.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className={labelClass}>Bill Duty and Tax to</span>
+            <select value={billDutyTaxTo} onChange={(e) => setBillDutyTaxTo(e.target.value)} className={inputClass}>
+              {billDutyTaxOptions.map((opt) => (
+                <option key={opt.id} value={opt.code}>
+                  {opt.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className={labelClass}>Ref. Invoice No.</span>
+            <input
+              type="text"
+              value={refInvoiceNo}
+              onChange={(e) => setRefInvoiceNo(e.target.value)}
+              placeholder="e.g. INV-2026-00123"
+              className={inputClass}
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className={labelClass}>Ref. Insurance No.</span>
+            <input
+              type="text"
+              value={refInsuranceNo}
+              onChange={(e) => setRefInsuranceNo(e.target.value)}
+              placeholder="e.g. INS-2026-00123"
+              className={inputClass}
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className={labelClass}>Ref. Purchase No.</span>
+            <input
+              type="text"
+              value={refPurchaseNo}
+              onChange={(e) => setRefPurchaseNo(e.target.value)}
+              placeholder="e.g. PO-2026-00123"
+              className={inputClass}
+            />
+          </label>
+        </div>
       </div>
 
       <div className="flex justify-start">

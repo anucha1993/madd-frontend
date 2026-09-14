@@ -7,12 +7,15 @@ type Props = {
   title: string;
   onClose: () => void;
   children: ReactNode;
+  // Tailwind max-width class for the modal card — defaults to the compact size used by simple
+  // forms (Branch/Customer edit); pass a wider one (e.g. "max-w-3xl") for content-heavy modals.
+  maxWidthClassName?: string;
 };
 
-export default function Modal({ title, onClose, children }: Props) {
+export default function Modal({ title, onClose, children, maxWidthClassName = "max-w-lg" }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-black/10 bg-white shadow-2xl">
+      <div className={`w-full ${maxWidthClassName} overflow-hidden rounded-2xl border border-black/10 bg-white shadow-2xl`}>
         <div className="flex items-center justify-between border-b border-black/5 bg-slate-100 px-4 py-3">
           <h2 className="text-sm font-semibold text-slate-700">{title}</h2>
           <button

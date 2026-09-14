@@ -3,6 +3,8 @@ export type AuthUser = {
   name: string;
   username: string;
   email: string;
+  can_access_all_branches?: boolean;
+  branches?: { id: number; name: string }[];
 };
 
 const TOKEN_KEY = "access_token";

@@ -57,6 +57,18 @@ const GROUPS: { value: ManifestOptionGroup; label: string; description: string; 
     description: "ค่าธรรมเนียม Form/OT แบบราคาคงที่ต่อรายการ (บาท) ของแต่ละ carrier",
     usedIn: "ยังไม่ได้ใช้งาน",
   },
+  {
+    value: "bill_transportation_to",
+    label: "Bill Transportation to",
+    description: "ผู้รับผิดชอบค่าขนส่ง เช่น Shipper, Receiver, Third Party",
+    usedIn: "Create Shipment",
+  },
+  {
+    value: "bill_duty_tax_to",
+    label: "Bill Duty and Tax to",
+    description: "ผู้รับผิดชอบค่าภาษี/อากร เช่น Shipper, Receiver, Third Party",
+    usedIn: "Create Shipment",
+  },
 ];
 
 type OptionForm = {
