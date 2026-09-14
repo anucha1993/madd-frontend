@@ -8,6 +8,9 @@ export type ShipmentPackageInput = {
   quantity?: number;
   description?: string;
   is_document?: boolean;
+  // Declared value must be set PER PACKAGE (UPS insurance is a package-level field) —
+  // not a single shipment-wide total.
+  declared_value?: number;
 };
 
 export type CheckRateInput = {
@@ -30,6 +33,9 @@ export type CheckRateInput = {
   destination_phone?: string;
   destination_email?: string;
   packages: ShipmentPackageInput[];
+  // Sum of packages[].declared_value — UPS/DHL quote back their own actual insurance charge
+  // in chargeBreakdown instead of it being estimated client-side.
+  declared_value_currency?: string;
   agent_account_ids?: number[];
 };
 

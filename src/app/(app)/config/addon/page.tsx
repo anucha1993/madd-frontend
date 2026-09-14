@@ -17,6 +17,7 @@ import {
   type AddonItem,
   type AddonItemInput,
 } from "@/lib/addonItems";
+import { listManifestOptions, type ManifestOption } from "@/lib/manifestOptions";
 
 const inputClass =
   "rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15";
@@ -26,7 +27,8 @@ const CARRIER_OPTIONS: ("UPS" | "DHL")[] = ["UPS", "DHL"];
 type ItemForm = {
   name: string;
   carriers: ("UPS" | "DHL")[];
-  price_type: "FIXED" | "MANUAL";
+  customer_types: string[];
+  price_type: "FIXED" | "MANUAL" | "PERCENT";
   price: string;
   trigger_type: "MANUAL" | "AUTO";
   status: boolean;
@@ -36,6 +38,7 @@ type ItemForm = {
 const emptyForm: ItemForm = {
   name: "",
   carriers: ["UPS", "DHL"],
+  customer_types: [],
   price_type: "MANUAL",
   price: "",
   trigger_type: "MANUAL",
@@ -46,6 +49,7 @@ const emptyForm: ItemForm = {
 export default function AddonSettingsPage() {
   const [categories, setCategories] = useState<AddonCategory[]>([]);
   const [items, setItems] = useState<AddonItem[]>([]);
+  const [customerTypeOptions, setCustomerTypeOptions] = useState<ManifestOption[]>([]);
   const [activeCategoryId, setActiveCategoryId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -69,9 +73,14 @@ export default function AddonSettingsPage() {
     setLoading(true);
     setError("");
     try {
-      const [cats, its] = await Promise.all([listAddonCategories(), listAddonItems()]);
+      const [cats, its, customerTypes] = await Promise.all([
+        listAddonCategories(),
+        listAddonItems(),
+        listManifestOptions("customer_type"),
+      ]);
       setCategories(cats);
       setItems(its);
+      setCustomerTypeOptions(customerTypes.filter((o) => o.status));
       setActiveCategoryId((current) => current ?? cats[0]?.id ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load add-on data");
@@ -123,6 +132,7 @@ export default function AddonSettingsPage() {
     setForm({
       name: item.name,
       carriers: item.carriers,
+      customer_types: item.customer_types ?? [],
       price_type: item.price_type,
       price: item.price != null ? String(item.price) : "",
       trigger_type: item.trigger_type,
@@ -142,9 +152,18 @@ export default function AddonSettingsPage() {
     }));
   }
 
+  function toggleCustomerType(code: string) {
+    setForm((prev) => ({
+      ...prev,
+      customer_types: prev.customer_types.includes(code)
+        ? prev.customer_types.filter((c) => c !== code)
+        : [...prev.customer_types, code],
+    }));
+  }
+
   async function handleSaveItem() {
     if (!activeCategoryId || !form.name.trim() || form.carriers.length === 0) return;
-    if (form.price_type === "FIXED" && !form.price) return;
+    if ((form.price_type === "FIXED" || form.price_type === "PERCENT") && !form.price) return;
 
     setSavingItem(true);
     setItemError("");
@@ -153,6 +172,7 @@ export default function AddonSettingsPage() {
         addon_category_id: activeCategoryId,
         name: form.name.trim(),
         carriers: form.carriers,
+        customer_types: form.customer_types.length > 0 ? form.customer_types : null,
         price_type: form.price_type,
         price: form.price ? Number(form.price) : null,
         trigger_type: form.trigger_type,
@@ -278,10 +298,18 @@ export default function AddonSettingsPage() {
                           </td>
                           <td className="px-5 py-3 text-slate-500">{item.carriers.join(" / ")}</td>
                           <td className="px-5 py-3 text-slate-500">
-                            {item.price_type === "FIXED" ? "Fixed" : "Manual (per shipment)"}
+                            {item.price_type === "FIXED"
+                              ? "Fixed"
+                              : item.price_type === "PERCENT"
+                                ? "Percent of Declared Value"
+                                : "Manual (per shipment)"}
                           </td>
                           <td className="px-5 py-3 text-right text-slate-500">
-                            {item.price != null ? Number(item.price).toLocaleString() : "-"}
+                            {item.price != null
+                              ? item.price_type === "PERCENT"
+                                ? `${Number(item.price).toLocaleString()}%`
+                                : Number(item.price).toLocaleString()
+                              : "-"}
                           </td>
                           <td className="px-5 py-3 text-slate-500">{item.trigger_type === "AUTO" ? "Auto" : "Manual"}</td>
                           <td className="px-5 py-3">
@@ -386,29 +414,51 @@ export default function AddonSettingsPage() {
                   </div>
                 </div>
 
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-sm font-medium text-slate-600">
+                    Customer Type <span className="font-normal text-slate-400">(ว่าง = ใช้ได้ทุกประเภท)</span>
+                  </span>
+                  <div className="flex flex-wrap gap-3">
+                    {customerTypeOptions.map((opt) => (
+                      <label key={opt.id} className="flex items-center gap-1.5 text-sm text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={form.customer_types.includes(opt.code)}
+                          onChange={() => toggleCustomerType(opt.code)}
+                        />
+                        {opt.name} ({opt.code})
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-2 gap-3">
                   <label className="flex flex-col gap-1.5">
                     <span className="text-sm font-medium text-slate-600">Price Type</span>
                     <select
                       value={form.price_type}
                       onChange={(e) =>
-                        setForm((prev) => ({ ...prev, price_type: e.target.value as "FIXED" | "MANUAL" }))
+                        setForm((prev) => ({ ...prev, price_type: e.target.value as "FIXED" | "MANUAL" | "PERCENT" }))
                       }
                       className={inputClass}
                     >
                       <option value="MANUAL">Manual (entered per shipment)</option>
                       <option value="FIXED">Fixed</option>
+                      <option value="PERCENT">Percent of Declared Value (e.g. Insurance)</option>
                     </select>
                   </label>
                   <label className="flex flex-col gap-1.5">
                     <span className="text-sm font-medium text-slate-600">
-                      Price {form.price_type === "MANUAL" && "(default, optional)"}
+                      {form.price_type === "PERCENT"
+                        ? "Rate (%)"
+                        : `Price ${form.price_type === "MANUAL" ? "(default, optional)" : ""}`}
                     </span>
                     <input
                       type="number"
                       step="0.01"
                       value={form.price}
                       onChange={(e) => setForm((prev) => ({ ...prev, price: e.target.value }))}
+                      placeholder={form.price_type === "PERCENT" ? "e.g. 1.1 for 1.1%" : undefined}
                       className={inputClass}
                     />
                   </label>
@@ -466,7 +516,7 @@ export default function AddonSettingsPage() {
                     onClick={handleSaveItem}
                     disabled={
                       savingItem || !form.name.trim() || form.carriers.length === 0 ||
-                      (form.price_type === "FIXED" && !form.price)
+                      ((form.price_type === "FIXED" || form.price_type === "PERCENT") && !form.price)
                     }
                     className="flex items-center gap-2 rounded-lg bg-brand-amber px-4 py-2 text-sm font-semibold text-brand-navy-dark hover:bg-brand-amber/90 disabled:opacity-60"
                   >

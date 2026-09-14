@@ -11,7 +11,8 @@ export type AddonItem = {
   addon_category_id: number;
   name: string;
   carriers: ("UPS" | "DHL")[];
-  price_type: "FIXED" | "MANUAL";
+  customer_types: string[] | null;
+  price_type: "FIXED" | "MANUAL" | "PERCENT";
   price: string | number | null;
   trigger_type: "MANUAL" | "AUTO";
   status: boolean;
@@ -37,7 +38,8 @@ export type AddonItemInput = {
   addon_category_id: number;
   name: string;
   carriers: ("UPS" | "DHL")[];
-  price_type: "FIXED" | "MANUAL";
+  customer_types?: string[] | null;
+  price_type: "FIXED" | "MANUAL" | "PERCENT";
   price?: number | null;
   trigger_type: "MANUAL" | "AUTO";
   status?: boolean;

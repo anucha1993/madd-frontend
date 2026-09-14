@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, ChevronLeft, ChevronRight, FileText, Loader2, Lock, Package, Plus, Search, ShieldCheck, Sparkles, Tag, Trash2 } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, Loader2, Lock, Package, Plus, Receipt, Search, ShieldCheck, Sparkles, Tag, Trash2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import ThaiAddressSearch from "@/components/shipment/ThaiAddressSearch";
@@ -16,14 +16,27 @@ import { listProductWeightBands, matchProductWeightBand, pickForcedWeightBand, t
 import { listManifestOptions, type ManifestOption } from "@/lib/manifestOptions";
 import { getThaiSubdistrictsByZipCode } from "@/lib/thaiSubdistricts";
 import { checkRate, type CheckRateInput, type RateQuote, type ShipmentPackageInput } from "@/lib/shipping";
+import { lookupInsuranceCountryCap, type InsuranceCountryCap } from "@/lib/insuranceCountryCaps";
 
 const STEPS = [
   { number: 1 as const, label: "Ship Info" },
   { number: 2 as const, label: "Product & Rate" },
-  { number: 3 as const, label: "Payment & Add-on" },
+  { number: 3 as const, label: "Add On" },
+  { number: 4 as const, label: "Payment Info" },
 ];
 
-type PackageRow = ShipmentPackageInput & { key: number; forcedWeightBandId: number | null };
+// Product Type is per-box (each package can be a different classification) — Silver forces
+// that box's insurance to be third-party (UPSC) only, see selectPackageInsurance below.
+// "OTHER" lets staff type a free-text classification (productTypeOther) not covered by the two presets.
+type ProductType = "SILVER" | "NON_SILVER" | "OTHER" | null;
+
+type PackageRow = ShipmentPackageInput & {
+  key: number;
+  forcedWeightBandId: number | null;
+  insured: boolean;
+  productType: ProductType;
+  productTypeOther: string;
+};
 
 let rowKeySeq = 1;
 const newRow = (): PackageRow => ({
@@ -35,39 +48,64 @@ const newRow = (): PackageRow => ({
   quantity: 1,
   description: "",
   is_document: false,
+  declared_value: 0,
+  insured: false,
+  productType: null,
+  productTypeOther: "",
   forcedWeightBandId: null,
 });
 
-type GoodsRow = { key: number; name: string; hsCode: string; quantity: number; value: number };
-let goodsKeySeq = 1;
-const newGoodsRow = (): GoodsRow => ({ key: goodsKeySeq++, name: "", hsCode: "", quantity: 1, value: 0 });
+// A free-form Add-on order line (POS-style row) — can be quick-filled from a catalog suggestion
+// or added blank and typed in manually.
+type AddonRow = {
+  key: number;
+  addonItemId: number | null;
+  name: string;
+  nameLocked: boolean;
+  category: string;
+  carriers: string;
+  quantity: number;
+  unitPrice: string;
+  priceLocked: boolean;
+  // Real carrier API charge (e.g. UPS chargeBreakdown code "400") for carrier-own insurance —
+  // kept only as an internal cost reference, never shown to or charged to the customer.
+  costPrice?: string;
+  // Insurance rows are scoped to ONE package (see selectPackageInsurance) — each box may use a
+  // different insurer. Undefined for every other (shipment-wide) Add-on category.
+  packageKey?: number;
+};
+let addonRowKeySeq = 1;
+const newAddonRow = (init?: Partial<AddonRow>): AddonRow => ({
+  key: addonRowKeySeq++,
+  addonItemId: null,
+  name: "",
+  nameLocked: false,
+  category: "Other",
+  carriers: "",
+  quantity: 1,
+  unitPrice: "",
+  priceLocked: false,
+  costPrice: undefined,
+  ...init,
+});
+
+// Sentinel value for the first Add-on tab, which lists Packing Supplies (from /config/supplies)
+// as quick-add suggestions instead of the configured Add-on catalog.
+const SUPPLIES_TAB = "__supplies__";
+
+// Only "UPSC"-coded items are the third-party insurer product governed by /config/insurance-caps
+// (country coverage caps / sanctions). Carrier-own insurance (ICDV, DHL) is priced by that
+// carrier's own API and must NOT be capped/blocked by our third-party country caps data.
+const isThirdPartyInsuranceItem = (item: Pick<AddonItem, "name">) => item.name.toUpperCase().startsWith("UPSC");
 
 const ENTITY_TYPE_OPTIONS: { value: "INDIVIDUAL" | "COMPANY"; label: string; description: string }[] = [
   { value: "INDIVIDUAL", label: "INDIVIDUAL", description: "การจัดส่งเพื่อการใช้งานส่วนตัว ของขวัญ หรือของใช้ในบ้าน" },
   { value: "COMPANY", label: "COMPANY", description: "การจัดส่งเพื่อวัตถุประสงค์ทางการค้าด้วย VAT/ID ภาษี" },
 ];
 
-const INSURANCE_SERVICES: Record<string, { code: string; label: string; multiplier: number }[]> = {
-  DAILY: [
-    { code: "UPSC", label: "UPS Shipment Care", multiplier: 0.011 },
-    { code: "ICDV", label: "International Carriage of Dangerous Goods", multiplier: 0.011 },
-  ],
-  WI: [
-    { code: "UPSC", label: "UPS Shipment Care", multiplier: 0.011 },
-    { code: "ICDV", label: "International Carriage of Dangerous Goods", multiplier: 0.011 },
-  ],
-  CR: [
-    { code: "UPSC", label: "UPS Shipment Care", multiplier: 0.004 },
-    { code: "ICDV", label: "International Carriage of Dangerous Goods", multiplier: 0.004 },
-  ],
-};
-// Fallback multiplier set used for any Customer Type code loaded from the Manifest Options
-// admin config that doesn't match one of the multiplier sets hardcoded above.
-const DEFAULT_INSURANCE_SERVICES = INSURANCE_SERVICES.WI;
-
 export default function ShipmentCreatePage() {
   const { enabled: aiEnabled } = useAiEnabled();
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
   const [originContactName, setOriginContactName] = useState("");
   const [originCompany, setOriginCompany] = useState("");
@@ -105,25 +143,28 @@ export default function ShipmentCreatePage() {
   // Which package row Common Sizes / dimension edits apply to — only one row is "unlocked" at a time.
   const [activePackageKey, setActivePackageKey] = useState<number | null>(packages[0]?.key ?? null);
 
+  // Declared Value is set PER PACKAGE (UPS insurance is a package-level field) — this total feeds
+  // any Add-on catalog item priced as "Percent of Declared Value" (e.g. Insurance).
+  const totalDeclaredValue = packages.reduce((sum, p) => sum + (p.insured ? Number(p.declared_value) || 0 : 0), 0);
+
   const [customerTypeOptions, setCustomerTypeOptions] = useState<ManifestOption[]>([]);
   const [customerType, setCustomerType] = useState("DAILY");
   const [entityType, setEntityType] = useState<"INDIVIDUAL" | "COMPANY">("INDIVIDUAL");
   const [paymentOptions, setPaymentOptions] = useState<ManifestOption[]>([]);
   const [paymentMethod, setPaymentMethod] = useState("");
 
-  const [insuranceEnabled, setInsuranceEnabled] = useState(false);
-  const [insuranceService, setInsuranceService] = useState(INSURANCE_SERVICES.DAILY[0].code);
-  const [declaredValue, setDeclaredValue] = useState("1000");
+  // Third-party insurance coverage cap / sanction note for the destination country — see /config/insurance-caps.
+  const [insuranceCap, setInsuranceCap] = useState<InsuranceCountryCap | null>(null);
 
   const [supplies, setSupplies] = useState<Supply[]>([]);
   const [stockSupplyId, setStockSupplyId] = useState<number | null>(null);
   const [supplySearch, setSupplySearch] = useState("");
 
   const [addonItems, setAddonItems] = useState<AddonItem[]>([]);
-  const [selectedAddonIds, setSelectedAddonIds] = useState<number[]>([]);
-  const [addonPrices, setAddonPrices] = useState<Record<number, string>>({});
+  const [addonRows, setAddonRows] = useState<AddonRow[]>([]);
+  const [addonSearch, setAddonSearch] = useState("");
+  const [activeAddonCategory, setActiveAddonCategory] = useState(SUPPLIES_TAB);
 
-  const [goods, setGoods] = useState<GoodsRow[]>([newGoodsRow()]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [weightBands, setWeightBands] = useState<ProductWeightBand[]>([]);
   const [countries, setCountries] = useState<Country[]>([]);
@@ -167,6 +208,25 @@ export default function ShipmentCreatePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [results, setResults] = useState<RateQuote[] | null>(null);
+  const [selectedQuote, setSelectedQuote] = useState<RateQuote | null>(null);
+
+  useEffect(() => {
+    if (!destinationCountry) {
+      setInsuranceCap(null);
+      return;
+    }
+    let cancelled = false;
+    lookupInsuranceCountryCap(destinationCountry)
+      .then((cap) => {
+        if (!cancelled) setInsuranceCap(cap);
+      })
+      .catch(() => {
+        if (!cancelled) setInsuranceCap(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [destinationCountry]);
 
   function updatePackage(key: number, patch: Partial<PackageRow>) {
     setPackages((prev) => prev.map((p) => (p.key === key ? { ...p, ...patch } : p)));
@@ -185,22 +245,138 @@ export default function ShipmentCreatePage() {
       if (activePackageKey === key) setActivePackageKey(next[next.length - 1].key);
       return next;
     });
+    // Drop any insurance row that was scoped to this package so it doesn't linger orphaned.
+    setAddonRows((prev) => prev.filter((r) => r.packageKey !== key));
   }
 
-  function updateGoods(key: number, patch: Partial<GoodsRow>) {
-    setGoods((prev) => prev.map((g) => (g.key === key ? { ...g, ...patch } : g)));
+  // Clicking a suggested catalog item quick-fills a new row — its name comes from the catalog
+  // and is locked (not editable); only fully blank/custom rows (see addAddonRow) have a free-text name.
+  // Insurance is never added through here — it's selected per package via selectPackageInsurance.
+  function addAddonFromSuggestion(item: AddonItem) {
+    // PERCENT items snapshot their price as Declared Value × rate at the moment they're added —
+    // editing Declared Value afterwards does not retroactively change the row.
+    const unitPrice =
+      item.price_type === "FIXED"
+        ? String(item.price ?? 0)
+        : item.price_type === "PERCENT"
+          ? (totalDeclaredValue * ((Number(item.price) || 0) / 100)).toFixed(2)
+          : "";
+    setAddonRows((prev) => [
+      ...prev,
+      newAddonRow({
+        addonItemId: item.id,
+        name: item.name,
+        nameLocked: true,
+        category: item.category?.name ?? "Other",
+        carriers: item.carriers.join("/"),
+        unitPrice,
+        priceLocked: item.price_type === "FIXED" || item.price_type === "PERCENT",
+      }),
+    ]);
   }
 
-  function addGoods() {
-    setGoods((prev) => [...prev, newGoodsRow()]);
+  // Insurance is chosen PER PACKAGE (not shipment-wide) — different boxes in the same shipment
+  // may use different insurers (e.g. one Silver box must use UPSC while another box uses the
+  // carrier's own ICDV/DHL insurance). Each package may have at most one Insurance addon row,
+  // tagged with packageKey; picking one clears that package's previous choice, picking the same
+  // one again deselects it.
+  function selectPackageInsurance(pkg: PackageRow, item: AddonItem) {
+    const alreadySelected = addonRows.some((r) => r.packageKey === pkg.key && r.addonItemId === item.id);
+    if (alreadySelected) {
+      setAddonRows((prev) => prev.filter((r) => !(r.packageKey === pkg.key && r.addonItemId === item.id)));
+      return;
+    }
+    const isThirdParty = isThirdPartyInsuranceItem(item);
+    if (isThirdParty && insuranceCap?.note) {
+      alert(`ไม่สามารถขายประกันบุคคลที่สามสำหรับปลายทาง ${insuranceCap.country_name} ได้: ${insuranceCap.note}`);
+      return;
+    }
+    // Product Type = Silver forces third-party (UPSC) insurance only, for THIS box.
+    if (!isThirdParty && pkg.productType === "SILVER") {
+      alert("กล่องนี้ตั้ง Product Type = Silver ต้องซื้อประกันบุคคลที่สาม (UPSC) เท่านั้น ไม่สามารถเลือกประกันของผู้ให้บริการขนส่งเองได้");
+      return;
+    }
+
+    // Third-party insurance (UPSC) is clamped to the destination country's max declared value
+    // cap (per carrier), per /config/insurance-caps — see InsuranceCountryCap. Carrier-own
+    // insurance (ICDV, DHL) is unaffected — its real price comes from that carrier's own API.
+    const carrierMaxDeclared =
+      selectedQuote?.carrier === "DHL"
+        ? insuranceCap?.dhl_max_declared
+        : selectedQuote?.carrier === "UPS"
+          ? insuranceCap?.ups_max_declared
+          : null;
+    const rawDeclaredValue = Number(pkg.declared_value) || 0;
+    const effectiveDeclaredValue =
+      isThirdParty && carrierMaxDeclared != null ? Math.min(rawDeclaredValue, Number(carrierMaxDeclared)) : rawDeclaredValue;
+
+    // Carrier-own insurance (ICDV/DHL) SELLING price still follows whatever is configured for
+    // this item at /config/addon (FIXED/PERCENT/MANUAL). The real charge the carrier's own API
+    // returned (UPS: chargeBreakdown code "400") is kept separately as our internal cost,
+    // purely for margin reference — it does NOT set the price.
+    const carrierInsuranceCharge = !isThirdParty
+      ? selectedQuote?.chargeBreakdown?.find((c) => c.code === "400")?.amount
+      : undefined;
+
+    const unitPrice =
+      item.price_type === "FIXED"
+        ? String(item.price ?? 0)
+        : item.price_type === "PERCENT"
+          ? (effectiveDeclaredValue * ((Number(item.price) || 0) / 100)).toFixed(2)
+          : "";
+
+    setAddonRows((prev) => [
+      ...prev.filter((r) => !(r.category === "Insurance" && r.packageKey === pkg.key)),
+      newAddonRow({
+        addonItemId: item.id,
+        name: item.name,
+        nameLocked: true,
+        category: item.category?.name ?? "Insurance",
+        carriers: item.carriers.join("/"),
+        unitPrice,
+        priceLocked: item.price_type === "FIXED" || item.price_type === "PERCENT",
+        costPrice: carrierInsuranceCharge != null ? String(carrierInsuranceCharge) : undefined,
+        packageKey: pkg.key,
+      }),
+    ]);
   }
 
-  function removeGoods(key: number) {
-    setGoods((prev) => (prev.length > 1 ? prev.filter((g) => g.key !== key) : prev));
+  // Product Type is set per box; picking Silver on a box drops that SAME box's already-selected
+  // carrier-own insurance row, since a Silver box can only be insured via UPSC.
+  function setPackageProductType(key: number, productType: ProductType) {
+    updatePackage(key, { productType });
+    if (productType === "SILVER") {
+      setAddonRows((prev) =>
+        prev.filter((r) => !(r.packageKey === key && r.category === "Insurance" && !isThirdPartyInsuranceItem({ name: r.name }))),
+      );
+    }
   }
 
-  function toggleAddon(id: number) {
-    setSelectedAddonIds((prev) => (prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]));
+  function addAddonFromSupply(supply: Supply) {
+    setAddonRows((prev) => [
+      ...prev,
+      newAddonRow({
+        name: supply.name,
+        nameLocked: true,
+        category: "Packing Supplies",
+        unitPrice: String(supply.sale_price ?? 0),
+        priceLocked: true,
+      }),
+    ]);
+  }
+
+  function addAddonRow() {
+    // A blank custom row belongs to whichever tab is currently active, not a fixed "Other" bucket.
+    const category = activeAddonCategory === SUPPLIES_TAB ? "Packing Supplies" : activeAddonCategory;
+    setAddonRows((prev) => [...prev, newAddonRow({ category })]);
+  }
+
+  function updateAddonRow(key: number, patch: Partial<AddonRow>) {
+    setAddonRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  }
+
+  function removeAddonRow(key: number) {
+    setAddonRows((prev) => prev.filter((r) => r.key !== key));
   }
 
   // Finds a 5-digit Thai zip code in the pasted text and looks up its subdistrict/district/province.
@@ -276,10 +452,6 @@ export default function ShipmentCreatePage() {
     }
   }
 
-  const insuranceServiceOptions = INSURANCE_SERVICES[customerType] ?? DEFAULT_INSURANCE_SERVICES;
-  const selectedInsuranceService = insuranceServiceOptions.find((s) => s.code === insuranceService) ?? insuranceServiceOptions[0];
-  const estimatedPremium = insuranceEnabled ? (Number(declaredValue) || 0) * selectedInsuranceService.multiplier : 0;
-
   // The currently "active" (unlocked) package row — used to decide whether to show the
   // Common Sizes guide / dimension fields, since box vs document is now chosen per row.
   const activeRow = packages.find((p) => p.key === activePackageKey) ?? packages[0];
@@ -338,7 +510,13 @@ export default function ShipmentCreatePage() {
 
     const effectivePackages: ShipmentPackageInput[] = packages.map((p) =>
       p.is_document
-        ? { weight: p.weight, quantity: p.quantity, description: p.description, is_document: true }
+        ? {
+            weight: p.weight,
+            quantity: p.quantity,
+            description: p.description,
+            is_document: true,
+            declared_value: p.insured ? p.declared_value : undefined,
+          }
         : {
             weight: p.weight,
             length: p.length,
@@ -347,6 +525,7 @@ export default function ShipmentCreatePage() {
             quantity: p.quantity,
             description: p.description,
             is_document: false,
+            declared_value: p.insured ? p.declared_value : undefined,
           },
     );
 
@@ -370,12 +549,17 @@ export default function ShipmentCreatePage() {
       destination_phone: destinationPhone.trim() || undefined,
       destination_email: destinationEmail.trim() || undefined,
       packages: effectivePackages,
+      declared_value_currency: "THB",
     };
 
     setLoading(true);
     try {
       const res = await checkRate(payload);
       setResults(res.results);
+      const cheapest = res.results
+        .filter((r) => !r.error)
+        .sort((a, b) => (a.negotiated ?? a.published ?? Infinity) - (b.negotiated ?? b.published ?? Infinity))[0];
+      setSelectedQuote(cheapest ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to check rate. Please try again.");
     } finally {
@@ -394,6 +578,228 @@ export default function ShipmentCreatePage() {
     acc[key] = acc[key] ? [...acc[key], item] : [item];
     return acc;
   }, {});
+  const addonCategoryNames = Object.keys(addonByCategory);
+  // Product Type (Silver/Non Silver) is selected in the Packages section (Step 2), not the
+  // Add-on catalog tabs — hide its tab from the Add-on tab bar to avoid a second, redundant control.
+  const addonTabCategoryNames = addonCategoryNames.filter((c) => c !== "Product Type");
+  // Suggestions are capped to 4 per tab so the list stays compact — searching (any text) lifts the cap.
+  const MAX_SUGGESTIONS = 4;
+  const isAddonSearching = addonSearch.trim().length > 0;
+  const matchingSupplySuggestions = supplies.filter(
+    (s) => !isAddonSearching || s.name.toLowerCase().includes(addonSearch.trim().toLowerCase()),
+  );
+  const visibleSupplySuggestions = isAddonSearching ? matchingSupplySuggestions : matchingSupplySuggestions.slice(0, MAX_SUGGESTIONS);
+  const matchingAddonSuggestions =
+    activeAddonCategory === SUPPLIES_TAB
+      ? []
+      : (addonByCategory[activeAddonCategory] ?? []).filter((item) => {
+          // Silently limited to the selected Rate Quote's carrier — no items for a carrier the
+          // customer didn't book with (e.g. hide DHL-only add-ons once a UPS quote is selected).
+          const matchesCarrier = !selectedQuote || item.carriers.includes(selectedQuote.carrier);
+          // Some items (e.g. Insurance) have a different rate per Customer Type — only the
+          // variant configured for the currently selected Customer Type is shown.
+          const matchesCustomerType = !item.customer_types?.length || item.customer_types.includes(customerType);
+          const matchesSearch = !isAddonSearching || item.name.toLowerCase().includes(addonSearch.trim().toLowerCase());
+          return matchesCarrier && matchesCustomerType && matchesSearch;
+        });
+  const visibleAddonSuggestions = isAddonSearching ? matchingAddonSuggestions : matchingAddonSuggestions.slice(0, MAX_SUGGESTIONS);
+
+  // Insurance is rendered as a pick-one control, not a multi-add list — computed independent of
+  // the currently active Add-on tab so it can also surface in the Packages card (Step 2), before
+  // the customer ever visits the Add-on tab. Requires a selected Rate Quote so the carrier-own
+  // option always matches the booked carrier (UPS → ICDV, DHL → DHL API) — never an arbitrary pick.
+  const isInsuranceCategory = activeAddonCategory === "Insurance";
+  const insuranceCategoryItems = selectedQuote
+    ? (addonByCategory["Insurance"] ?? []).filter((item) => {
+        const matchesCarrier = item.carriers.includes(selectedQuote.carrier);
+        const matchesCustomerType = !item.customer_types?.length || item.customer_types.includes(customerType);
+        return matchesCarrier && matchesCustomerType;
+      })
+    : [];
+  const insuranceCarrierOption = insuranceCategoryItems.find((i) => !isThirdPartyInsuranceItem(i)) ?? null;
+  const insuranceThirdPartyOption = insuranceCategoryItems.find((i) => isThirdPartyInsuranceItem(i)) ?? null;
+
+  // POS-style order summary (Step 3) — itemized freight + insurance + add-ons, mirroring a checkout receipt.
+  const selectedQuoteLogo = selectedQuote ? agents.find((a) => a.agent_code === selectedQuote.carrier)?.logo_url : undefined;
+  const selectedSupply = stockSupplyId ? supplies.find((s) => s.id === stockSupplyId) : undefined;
+  const freightAmount = selectedQuote ? selectedQuote.negotiated ?? selectedQuote.published ?? 0 : 0;
+  const supplyAmount = selectedSupply ? Number(selectedSupply.sale_price) || 0 : 0;
+  const addonLines = addonRows.map((row) => ({
+    row,
+    amount: row.quantity * (Number(row.unitPrice) || 0),
+  }));
+  const addonTotal = addonLines.reduce((sum, l) => sum + l.amount, 0);
+  // Once added, order-table rows are grouped into sections by their category — Packing Supplies
+  // first, then catalog categories in their configured order, then any leftover category.
+  const addonRowCategoryOrder = ["Packing Supplies", ...addonCategoryNames.filter((c) => c !== "Packing Supplies")];
+  const activeAddonCategoryName = activeAddonCategory === SUPPLIES_TAB ? "Packing Supplies" : activeAddonCategory;
+  const addonLinesByCategory = addonRowCategoryOrder
+    .map((category) => ({ category, lines: addonLines.filter((l) => (l.row.category || "Other") === category) }))
+    .concat(
+      Array.from(new Set(addonLines.map((l) => l.row.category || "Other")))
+        .filter((category) => !addonRowCategoryOrder.includes(category))
+        .map((category) => ({ category, lines: addonLines.filter((l) => (l.row.category || "Other") === category) })),
+    )
+    // The active tab's section always renders (even with no rows yet) so its "+ Add row" button has a home.
+    .filter((section) => section.lines.length > 0 || section.category === activeAddonCategoryName);
+  const orderTotal = freightAmount + supplyAmount + addonTotal;
+
+  // Shared between the Payment Info and Add On steps so the running total stays visible on both.
+  const orderSummaryPanel = (
+    <div className="sticky top-4 flex flex-col gap-4">
+      <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
+        <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <Receipt className="h-4 w-4" /> Order Summary
+        </h2>
+
+        <div className="mb-3 grid grid-cols-1 gap-2 text-xs">
+          <div>
+            <span className="font-medium uppercase tracking-wide text-slate-400">Ship From</span>
+            <p className="text-slate-600">{originContactName || "-"}</p>
+            <p className="text-slate-400">{[originAddress, originCity].filter(Boolean).join(", ") || "-"}</p>
+          </div>
+          <div>
+            <span className="font-medium uppercase tracking-wide text-slate-400">Ship To</span>
+            <p className="text-slate-600">{destinationContactName || "-"}</p>
+            <p className="text-slate-400">
+              {[destinationAddress, destinationCity, countries.find((c) => c.iso2 === destinationCountry)?.name]
+                .filter(Boolean)
+                .join(", ") || "-"}
+            </p>
+          </div>
+        </div>
+
+        {selectedQuote ? (
+          <div className="rounded-xl border border-brand-amber bg-amber-50/60 p-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {selectedQuoteLogo ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={selectedQuoteLogo} alt={selectedQuote.carrier} className="h-5 w-auto object-contain" />
+                ) : (
+                  <Tag className="h-4 w-4 text-slate-300" />
+                )}
+                <span className="text-sm font-semibold text-slate-700">{selectedQuote.carrier}</span>
+              </div>
+              <span className="text-sm font-bold text-brand-navy-dark">
+                {freightAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {selectedQuote.currency}
+              </span>
+            </div>
+            <p className="text-xs text-slate-500">{selectedQuote.serviceLabel}</p>
+          </div>
+        ) : (
+          <p className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-400">
+            ยังไม่ได้เลือกบริการขนส่ง — กลับไปเลือกที่หน้า Product &amp; Rate
+          </p>
+        )}
+
+        <div className="mt-3 flex flex-col gap-1.5 border-t border-dashed border-slate-200 pt-3 text-sm">
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-1.5 text-slate-500">
+              {selectedQuoteLogo && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={selectedQuoteLogo} alt={selectedQuote?.carrier} className="h-4 w-auto object-contain" />
+              )}
+              Freight ({selectedQuote?.carrier ?? "-"})
+            </span>
+            <span className="font-medium text-slate-700">{freightAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} THB</span>
+          </div>
+          {selectedSupply && (
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500">Packaging: {selectedSupply.name}</span>
+              <span className="font-medium text-slate-700">{supplyAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} THB</span>
+            </div>
+          )}
+          {addonLines.map(({ row, amount }) => (
+            <div key={row.key} className="flex items-center justify-between">
+              <span className="text-slate-500">
+                Add-on: {row.name || "(unnamed)"}
+                {row.packageKey != null && ` (Package #${packages.findIndex((p) => p.key === row.packageKey) + 1})`}
+              </span>
+              <span className="font-medium text-slate-700">{amount.toLocaleString(undefined, { maximumFractionDigits: 2 })} THB</span>
+            </div>
+          ))}
+          {freightAmount === 0 && !selectedSupply && addonLines.length === 0 && (
+            <p className="text-xs text-slate-400">ยังไม่มีรายการ</p>
+          )}
+        </div>
+
+        <div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-3">
+          <span className="text-sm font-semibold text-slate-700">Total</span>
+          <span className="text-lg font-bold text-brand-navy-dark">
+            {orderTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })} THB
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Renders the two-option (carrier-own vs. UPSC) insurer picker for ONE package — reused in
+  // both the Packages card (Step 2) and the Add-on tab (Step 3), since insurance is now chosen
+  // per package rather than once for the whole shipment. Just two inline radio + label — details
+  // (price basis / block reason) are in the title tooltip, not on-screen, to stay compact.
+  function renderInsurancePicker(pkg: PackageRow) {
+    if (!insuranceCarrierOption && !insuranceThirdPartyOption) {
+      return <p className="text-sm text-slate-400">ไม่มีตัวเลือกประกันที่ตรงเงื่อนไข — กรุณาเลือก Rate Quote ก่อน</p>;
+    }
+    const radioName = `insurance-${pkg.key}`;
+    return (
+      <div className="flex flex-wrap items-center gap-4 text-sm">
+        {insuranceCarrierOption &&
+          (() => {
+            const selected = addonRows.some((r) => r.packageKey === pkg.key && r.addonItemId === insuranceCarrierOption.id);
+            const blocked = pkg.productType === "SILVER";
+            return (
+              <label
+                title={
+                  blocked
+                    ? "⚠ Product Type = Silver ต้องใช้ UPSC เท่านั้น"
+                    : `ประกันของผู้ให้บริการขนส่งเอง (${insuranceCarrierOption.carriers.join("/")}) — ราคาขายตามที่ตั้งค่าไว้ที่ Config`
+                }
+                className={`flex items-center gap-1.5 ${blocked ? "cursor-not-allowed text-slate-300" : "cursor-pointer text-slate-700"}`}
+              >
+                <input
+                  type="radio"
+                  name={radioName}
+                  checked={selected}
+                  disabled={blocked}
+                  onChange={() => selectPackageInsurance(pkg, insuranceCarrierOption)}
+                  className="h-3.5 w-3.5 text-brand-amber focus:ring-brand-amber/30"
+                />
+                {insuranceCarrierOption.name}
+              </label>
+            );
+          })()}
+        {insuranceThirdPartyOption &&
+          (() => {
+            const selected = addonRows.some((r) => r.packageKey === pkg.key && r.addonItemId === insuranceThirdPartyOption.id);
+            const blocked = !!insuranceCap?.note;
+            return (
+              <label
+                title={
+                  blocked
+                    ? `⚠ ไม่พร้อมขายสำหรับปลายทางนี้ (${insuranceCap?.note})`
+                    : `ประกันบุคคลที่สาม (${insuranceThirdPartyOption.carriers.join("/")}) — ${
+                        insuranceThirdPartyOption.price != null ? `${Number(insuranceThirdPartyOption.price).toLocaleString()}% ของมูลค่าสินค้า` : "-"
+                      }`
+                }
+                className={`flex items-center gap-1.5 ${blocked ? "cursor-not-allowed text-slate-300" : "cursor-pointer text-slate-700"}`}
+              >
+                <input
+                  type="radio"
+                  name={radioName}
+                  checked={selected}
+                  disabled={blocked}
+                  onChange={() => selectPackageInsurance(pkg, insuranceThirdPartyOption)}
+                  className="h-3.5 w-3.5 text-brand-amber focus:ring-brand-amber/30"
+                />
+                {insuranceThirdPartyOption.name}
+              </label>
+            );
+          })()}
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -770,6 +1176,31 @@ export default function ShipmentCreatePage() {
       </div>
       </div>
 
+      {/* <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
+        <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <ShieldCheck className="h-4 w-4" /> Declared Value
+        </h2>
+        <p className="text-sm text-slate-600">รวม {totalDeclaredValue.toLocaleString()} THB (กรอกมูลค่าต่อกล่องในหัวข้อ Packages ด้านล่าง)</p>
+        <p className="mt-2 text-xs text-slate-400">
+          ต้องกำหนดต่อกล่อง ไม่ใช่ยอดรวม เพราะ UPS ใช้ Declared Value ระดับกล่อง (Package Service Options) ในการคิดค่าประกันจริง — ส่งให้
+          UPS/DHL ตอน Check Rate เพื่อขอราคาค่าประกันจริงจากผู้ให้บริการขนส่ง (แสดงเป็นรายการ &quot;Declared Value (Insurance)&quot; ใน
+          Rate Quotes) และใช้คำนวณ Add-on ที่ตั้งเป็น &quot;Percent of Declared Value&quot; (เช่น ประกันบุคคลที่สาม UPSC) ในขั้นตอนถัดไป
+        </p>
+        {insuranceCap?.note ? (
+          <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-600">
+            ⚠ ปลายทาง {insuranceCap.country_name} ไม่สามารถขายประกันบุคคลที่สาม (UPSC) ได้ ({insuranceCap.note}) — ตาม Insurance Country Caps
+            (ไม่กระทบประกันของ UPS/DHL เอง เช่น ICDV/DHL API)
+          </p>
+        ) : insuranceCap ? (
+          <p className="mt-2 text-xs text-slate-400">
+            วงเงินคุ้มครองสูงสุดของประกันบุคคลที่สาม (UPSC) ที่ {insuranceCap.country_name}: UPS{" "}
+            {insuranceCap.ups_max_declared != null ? Number(insuranceCap.ups_max_declared).toLocaleString() : "-"} THB / DHL{" "}
+            {insuranceCap.dhl_max_declared != null ? Number(insuranceCap.dhl_max_declared).toLocaleString() : "-"} THB
+            (ตาม Insurance Country Caps — มูลค่าที่เกินจะถูกจำกัดอัตโนมัติเมื่อคิดค่าประกัน UPSC เท่านั้น ไม่กระทบ ICDV/DHL API)
+          </p>
+        ) : null}
+      </div> */}
+
       <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Packages</h2>
@@ -794,6 +1225,19 @@ export default function ShipmentCreatePage() {
           <div className={activeRow.is_document ? "flex flex-col gap-2.5" : "flex flex-col gap-2.5 lg:flex-1"}>
             {packages.map((pkg) => {
               const isActive = pkg.key === activePackageKey;
+              // Preview only — actual carrier-own (ICDV/DHL) insurance price comes from the real
+              // Rate Quote API instead; this estimates the third-party (UPSC) premium so staff see
+              // roughly what this box's insurance will cost before running Check Rate.
+              const capValues = [insuranceCap?.ups_max_declared, insuranceCap?.dhl_max_declared]
+                .filter((v): v is number | string => v != null)
+                .map(Number);
+              const maxCap = capValues.length > 0 ? Math.min(...capValues) : null;
+              const declaredValueNum = Number(pkg.declared_value) || 0;
+              const coveredValue = maxCap != null ? Math.min(declaredValueNum, maxCap) : declaredValueNum;
+              const upscItem = addonItems.find(
+                (i) => isThirdPartyInsuranceItem(i) && (!i.customer_types?.length || i.customer_types.includes(customerType)),
+              );
+              const estimatedPremium = upscItem?.price != null ? coveredValue * (Number(upscItem.price) / 100) : null;
               return (
                 <div
                   key={pkg.key}
@@ -835,6 +1279,52 @@ export default function ShipmentCreatePage() {
                       <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
                         Fixed Weight Range: {weightBands.find((b) => b.id === pkg.forcedWeightBandId)?.label}
                       </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={labelClass}>Product Type</span>
+                    <button
+                      type="button"
+                      disabled={!isActive}
+                      onClick={() => setPackageProductType(pkg.key, pkg.productType === "SILVER" ? null : "SILVER")}
+                      className={`rounded-md px-2 py-0.5 text-xs font-semibold transition disabled:cursor-not-allowed ${
+                        pkg.productType === "SILVER" ? "bg-brand-navy-dark text-white" : "bg-slate-200 text-slate-500"
+                      }`}
+                    >
+                      Silver
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!isActive}
+                      onClick={() => setPackageProductType(pkg.key, pkg.productType === "NON_SILVER" ? null : "NON_SILVER")}
+                      className={`rounded-md px-2 py-0.5 text-xs font-semibold transition disabled:cursor-not-allowed ${
+                        pkg.productType === "NON_SILVER" ? "bg-brand-navy-dark text-white" : "bg-slate-200 text-slate-500"
+                      }`}
+                    >
+                      Non Silver
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!isActive}
+                      onClick={() => setPackageProductType(pkg.key, pkg.productType === "OTHER" ? null : "OTHER")}
+                      className={`rounded-md px-2 py-0.5 text-xs font-semibold transition disabled:cursor-not-allowed ${
+                        pkg.productType === "OTHER" ? "bg-brand-navy-dark text-white" : "bg-slate-200 text-slate-500"
+                      }`}
+                    >
+                      Other
+                    </button>
+                    {pkg.productType === "OTHER" && (
+                      <input
+                        type="text"
+                        value={pkg.productTypeOther}
+                        disabled={!isActive}
+                        onChange={(e) => updatePackage(pkg.key, { productTypeOther: e.target.value })}
+                        placeholder="Specify product type"
+                        className="w-40 rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15 disabled:bg-slate-100"
+                      />
+                    )}
+                    {pkg.productType === "SILVER" && (
+                      <span className="text-xs font-medium text-amber-700">⚠ กล่องนี้บังคับใช้ประกันบุคคลที่สาม (UPSC) เท่านั้นในหัวข้อ Add-on</span>
                     )}
                   </div>
                   <div className="flex items-end gap-3">
@@ -916,6 +1406,59 @@ export default function ShipmentCreatePage() {
                     <Trash2 className="h-4 w-4" />
                   </button>
                   </div>
+                  <div className="flex items-end gap-3">
+                  <div className="flex w-24 flex-col gap-1">
+                    {/* <span className={labelClass}>Insurance</span> */}
+                    <label className="flex h-[34px] items-center gap-1.5">
+                      <input
+                        type="checkbox"
+                        checked={pkg.insured}
+                        disabled={!isActive}
+                        onChange={(e) => {
+                          const insured = e.target.checked;
+                          updatePackage(pkg.key, { insured });
+                          if (!insured) {
+                            setAddonRows((prev) => prev.filter((r) => !(r.category === "Insurance" && r.packageKey === pkg.key)));
+                          }
+                        }}
+                        className="h-3.5 w-3.5 rounded border-slate-300 text-brand-navy focus:ring-brand-navy/30"
+                      />
+                      <span className="text-xs text-slate-500">ประกันสินค้า</span>
+                    </label>
+                  </div>
+                  {pkg.insured && (
+                    <label className="flex w-48 flex-col gap-1">
+                      <span className={labelClass}>Declared Value (THB)</span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={pkg.declared_value ?? 0}
+                        disabled={!isActive}
+                        onChange={(e) => updatePackage(pkg.key, { declared_value: Number(e.target.value) })}
+                        className={`w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15 disabled:bg-slate-100 ${
+                          !isActive ? "pointer-events-none" : ""
+                        }`}
+                      />
+                    </label>
+                  )}
+                  {pkg.insured && (
+                    <div className="flex flex-col justify-center gap-0.5 text-xs">
+                      <span className="text-slate-400" title="วงเงินประกันที่จะได้รับหากสินค้าเสียหาย (หลังจำกัดตาม Insurance Country Caps)">
+                        ราคาครอบคลุมสินค้า (THB)
+                      </span>
+                      <span className="font-semibold text-slate-700">{coveredValue.toLocaleString()}</span>
+                    </div>
+                  )}
+                  {pkg.insured && (
+                    <div className="flex flex-col justify-center gap-0.5 text-xs">
+                      <span className="text-slate-400">ราคาประกันสินค้า (ประมาณการ UPSC)</span>
+                      <span className="font-semibold text-slate-700">
+                        {estimatedPremium != null ? estimatedPremium.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "-"}
+                      </span>
+                    </div>
+                  )}
+                  </div>
+                  {pkg.insured && renderInsurancePicker(pkg)}
                   <label className="flex flex-col gap-1">
                     <span className={labelClass}>Description of Goods</span>
                     <input
@@ -942,12 +1485,12 @@ export default function ShipmentCreatePage() {
           </div>
 
           {!activeRow.is_document && (
-            <div className="flex-1 rounded-lg border border-slate-100 bg-slate-50 p-2.5 lg:border-0 lg:bg-transparent lg:p-0">
+            <div className="w-full shrink-0 rounded-lg border border-slate-100 bg-slate-50 p-2.5 lg:w-72">
               {supplies.length === 0 ? (
                 <p className="text-sm text-slate-400">No supplies available.</p>
               ) : (
                 <div className="flex flex-col gap-2.5">
-                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+                  <div className="grid grid-cols-2 gap-2 lg:grid-cols-1">
                     {visibleSupplies.length === 0 ? (
                       <p className="text-sm text-slate-400">No matching sizes found.</p>
                     ) : (
@@ -994,44 +1537,37 @@ export default function ShipmentCreatePage() {
           )}
         </div>
       </div>
-
-      {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
-
-      <div className="flex items-center justify-between">
-        <button
-          type="button"
-          onClick={() => setStep(1)}
-          className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
-        >
-          <ChevronLeft className="h-4 w-4" /> Back
-        </button>
-        <button
-          type="button"
-          onClick={handleSubmit}
-          disabled={loading}
-          className="flex items-center gap-2 rounded-lg bg-brand-amber px-6 py-2.5 text-sm font-semibold text-brand-navy-dark shadow-sm hover:bg-brand-amber/90 disabled:opacity-60"
-        >
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Package className="h-4 w-4" />}
-          {loading ? "Checking rates..." : "Check Rate"}
-        </button>
-      </div>
         </div>
 
         <div className="lg:col-span-1">
           <div className="sticky top-4 flex flex-col gap-4">
             <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Rate Quotes</h2>
+            <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500">Rate Quotes</h2>
             {!results ? (
               <p className="text-sm text-slate-400">Fill in package details and click &quot;Check Rate&quot; to see live quotes from UPS/DHL here.</p>
             ) : (
               <>
-                <div className="flex flex-col gap-2.5">
+                <p className="mb-2 text-xs text-slate-400">เลือก 1 รายการที่ต้องการใช้ (คลิกที่การ์ด)</p>
+                <div className="flex max-h-[28rem] flex-col gap-2.5 overflow-y-auto pr-1">
                   {okResults.map((r, i) => {
                     const agentLogo = agents.find((a) => a.agent_code === r.carrier)?.logo_url;
+                    const isSelected =
+                      selectedQuote != null &&
+                      selectedQuote.carrier === r.carrier &&
+                      selectedQuote.accountId === r.accountId &&
+                      selectedQuote.serviceCode === r.serviceCode;
                     return (
-                      <div key={`${r.carrier}-${r.accountId}-${r.serviceCode}-${i}`} className="rounded-xl border border-slate-200 p-3">
+                      <button
+                        type="button"
+                        key={`${r.carrier}-${r.accountId}-${r.serviceCode}-${i}`}
+                        onClick={() => setSelectedQuote(r)}
+                        className={`w-full rounded-xl border p-3 text-left transition ${
+                          isSelected ? "border-brand-amber bg-amber-50/60 ring-1 ring-brand-amber" : "border-slate-200 hover:border-slate-300"
+                        }`}
+                      >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
+                            {isSelected && <CheckCircle2 className="h-4 w-4 shrink-0 text-brand-amber" />}
                             {agentLogo ? (
                               // eslint-disable-next-line @next/next/no-img-element
                               <img src={agentLogo} alt={r.carrier} className="h-5 w-auto object-contain" />
@@ -1067,7 +1603,7 @@ export default function ShipmentCreatePage() {
                             ))}
                           </div>
                         )}
-                      </div>
+                      </button>
                     );
                   })}
                   {okResults.length === 0 && <p className="text-sm text-slate-400">No valid quotes returned.</p>}
@@ -1076,7 +1612,8 @@ export default function ShipmentCreatePage() {
                   <button
                     type="button"
                     onClick={() => setStep(3)}
-                    className="flex items-center gap-2 rounded-lg bg-brand-amber px-6 py-2.5 text-sm font-semibold text-brand-navy-dark shadow-sm hover:bg-brand-amber/90"
+                    disabled={!selectedQuote}
+                    className="flex items-center gap-2 rounded-lg bg-brand-amber px-6 py-2.5 text-sm font-semibold text-brand-navy-dark shadow-sm hover:bg-brand-amber/90 disabled:opacity-60"
                   >
                     Next <ChevronRight className="h-4 w-4" />
                   </button>
@@ -1086,199 +1623,350 @@ export default function ShipmentCreatePage() {
           </div>
           </div>
         </div>
+      </div>
 
+      {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => setStep(1)}
+          className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+        >
+          <ChevronLeft className="h-4 w-4" /> Back
+        </button>
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={loading}
+          className="flex items-center gap-2 rounded-lg bg-brand-amber px-6 py-2.5 text-sm font-semibold text-brand-navy-dark shadow-sm hover:bg-brand-amber/90 disabled:opacity-60"
+        >
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Package className="h-4 w-4" />}
+          {loading ? "Checking rates..." : "Check Rate"}
+        </button>
+      </div>
+        </>
+      )}
+
+      {step === 4 && (
+        <>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="flex flex-col gap-4 lg:col-span-2">
+      <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Payment Method</h2>
+        <label className="flex max-w-xs flex-col gap-1">
+          <span className={labelClass}>Payment Method</span>
+          <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={inputClass}>
+            {paymentOptions.map((opt) => (
+              <option key={opt.id} value={opt.code}>
+                {opt.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="flex justify-start">
+        <button
+          type="button"
+          onClick={() => setStep(3)}
+          className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+        >
+          <ChevronLeft className="h-4 w-4" /> Back
+        </button>
+      </div>
+        </div>
+
+        <div className="lg:col-span-1">{orderSummaryPanel}</div>
       </div>
         </>
       )}
 
       {step === 3 && (
         <>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Payment Method</h2>
-          <label className="flex max-w-xs flex-col gap-1">
-            <span className={labelClass}>Payment Method</span>
-            <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={inputClass}>
-              {paymentOptions.map((opt) => (
-                <option key={opt.id} value={opt.code}>
-                  {opt.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Insurance</h2>
-            <label className="flex items-center gap-2 text-sm text-slate-600">
-              <input
-                type="checkbox"
-                checked={insuranceEnabled}
-                onChange={(e) => setInsuranceEnabled(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 accent-brand-amber"
-              />
-              Add insurance
-            </label>
-          </div>
-          {insuranceEnabled && (
-            <div className="grid grid-cols-2 gap-3">
-              <label className="flex flex-col gap-1">
-                <span className={labelClass}>Service</span>
-                <select value={insuranceService} onChange={(e) => setInsuranceService(e.target.value)} className={inputClass}>
-                  {insuranceServiceOptions.map((s) => (
-                    <option key={s.code} value={s.code}>
-                      {s.label} ({(s.multiplier * 100).toFixed(1)}%)
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className={labelClass}>Declared Value (THB)</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={declaredValue}
-                  onChange={(e) => setDeclaredValue(e.target.value)}
-                  className={inputClass}
-                />
-              </label>
-              <p className="col-span-2 flex items-center gap-1 text-xs text-slate-500">
-                <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
-                Estimated premium: {estimatedPremium.toLocaleString(undefined, { maximumFractionDigits: 2 })} THB
-              </p>
-            </div>
-          )}
-        </div>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="flex flex-col gap-4 lg:col-span-2">
+      <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
+        <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <ShieldCheck className="h-4 w-4" /> Declared Value
+        </h2>
+        <p className="text-sm text-slate-600">
+          รวม {totalDeclaredValue.toLocaleString()} THB{" "}
+          <button type="button" onClick={() => setStep(2)} className="ml-1 text-xs font-medium text-amber-600 hover:underline">
+            (แก้ไขต่อกล่องที่ Product &amp; Rate)
+          </button>
+        </p>
+        <p className="mt-2 text-xs text-slate-400">
+          ใช้คำนวณราคาของ Add-on ที่ตั้งเป็น &quot;Percent of Declared Value&quot; (เช่น ประกันบุคคลที่สาม UPSC) — ตั้งค่าที่ Add-on Settings
+        </p>
+        {insuranceCap?.note ? (
+          <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-600">
+            ⚠ ปลายทาง {insuranceCap.country_name} ไม่สามารถขายประกันบุคคลที่สาม (UPSC) ได้ ({insuranceCap.note}) — ตาม Insurance Country Caps
+            (ไม่กระทบประกันของ UPS/DHL เอง เช่น ICDV/DHL API)
+          </p>
+        ) : insuranceCap ? (
+          <p className="mt-2 text-xs text-slate-400">
+            วงเงินคุ้มครองสูงสุดของประกันบุคคลที่สาม (UPSC) ที่ {insuranceCap.country_name}: UPS{" "}
+            {insuranceCap.ups_max_declared != null ? Number(insuranceCap.ups_max_declared).toLocaleString() : "-"} THB / DHL{" "}
+            {insuranceCap.dhl_max_declared != null ? Number(insuranceCap.dhl_max_declared).toLocaleString() : "-"} THB
+            (ตาม Insurance Country Caps — มูลค่าที่เกินจะถูกจำกัดอัตโนมัติเมื่อคิดค่าประกัน UPSC เท่านั้น ไม่กระทบ ICDV/DHL API)
+          </p>
+        ) : null}
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
+      <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
         <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
           <Tag className="h-4 w-4" /> Add-on
         </h2>
-        {addonItems.length === 0 ? (
-          <p className="text-sm text-slate-400">No add-on items configured.</p>
-        ) : (
-          <div className="flex flex-col gap-4">
-            {Object.entries(addonByCategory).map(([category, catItems]) => (
-              <div key={category}>
-                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{category}</h3>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {catItems.map((item) => {
-                    const checked = selectedAddonIds.includes(item.id);
-                    return (
-                      <label
-                        key={item.id}
-                        className={`flex items-center justify-between gap-2 rounded-lg border p-2.5 text-sm ${
-                          checked ? "border-brand-amber bg-amber-50" : "border-slate-200 bg-slate-50"
-                        }`}
-                      >
-                        <span className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggleAddon(item.id)}
-                            className="h-4 w-4 rounded border-slate-300 accent-brand-amber"
-                          />
-                          <span>
-                            {item.name}
-                            <span className="ml-1 text-xs text-slate-400">({item.carriers.join("/")})</span>
-                          </span>
-                        </span>
-                        {item.price_type === "FIXED" ? (
-                          <span className="text-xs font-medium text-slate-500">
-                            {item.price != null ? Number(item.price).toLocaleString() : "-"} THB
-                          </span>
-                        ) : (
-                          checked && (
-                            <input
-                              type="number"
-                              min={0}
-                              placeholder="Price"
-                              value={addonPrices[item.id] ?? ""}
-                              onChange={(e) => setAddonPrices((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                              className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
-                            />
-                          )
-                        )}
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
+
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-1 border-b border-slate-200">
+            <button
+              type="button"
+              onClick={() => setActiveAddonCategory(SUPPLIES_TAB)}
+              className={`rounded-t-lg px-3 py-1.5 text-xs font-semibold transition ${
+                activeAddonCategory === SUPPLIES_TAB
+                  ? "border-b-2 border-brand-amber text-brand-navy-dark"
+                  : "text-slate-400 hover:text-slate-600"
+              }`}
+            >
+              Packing Supplies
+            </button>
+            {addonTabCategoryNames.map((category) => (
+              <button
+                key={category}
+                type="button"
+                onClick={() => setActiveAddonCategory(category)}
+                className={`rounded-t-lg px-3 py-1.5 text-xs font-semibold transition ${
+                  activeAddonCategory === category
+                    ? "border-b-2 border-brand-amber text-brand-navy-dark"
+                    : "text-slate-400 hover:text-slate-600"
+                }`}
+              >
+                {category}
+              </button>
             ))}
+          </div>
+          <div className="relative w-56 shrink-0">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              value={addonSearch}
+              onChange={(e) => setAddonSearch(e.target.value)}
+              placeholder="Search..."
+              className="w-full rounded-lg border border-slate-300 bg-white py-1.5 pl-8 pr-3 text-xs outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
+            />
+          </div>
+        </div>
+
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">รายการแนะนำ (คลิกเพื่อเพิ่ม)</p>
+
+        <div className="mb-4 flex flex-col gap-1">
+          {activeAddonCategory === SUPPLIES_TAB ? (
+            visibleSupplySuggestions.length === 0 ? (
+              <p className="text-sm text-slate-400">No matching supplies.</p>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4">
+                  {visibleSupplySuggestions.map((supply) => (
+                    <button
+                      type="button"
+                      key={supply.id}
+                      onClick={() => addAddonFromSupply(supply)}
+                      className="flex min-w-0 flex-col items-center gap-1 rounded-xl border-2 border-slate-200 bg-white p-2 text-center transition hover:border-brand-amber hover:bg-amber-50"
+                    >
+                      {supply.icon_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={supply.icon_url} alt={supply.name} className="h-7 w-7 shrink-0 object-contain" />
+                      ) : (
+                        <Package className="h-7 w-7 shrink-0 text-slate-300" />
+                      )}
+                      <span className="w-full truncate text-xs font-semibold leading-tight text-slate-700">{supply.name}</span>
+                      <span className="text-[10px] font-semibold leading-tight text-brand-navy-dark">
+                        {Number(supply.sale_price).toLocaleString()} THB
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                {!isAddonSearching && matchingSupplySuggestions.length > MAX_SUGGESTIONS && (
+                  <p className="mt-1 text-xs text-slate-400">พิมพ์ค้นหาเพื่อดูรายการอื่นเพิ่มเติม ({matchingSupplySuggestions.length} รายการทั้งหมด)</p>
+                )}
+              </>
+            )
+          ) : isInsuranceCategory ? (
+            packages.filter((p) => p.insured).length === 0 ? (
+              <p className="text-sm text-slate-400">ยังไม่มีกล่องที่เลือกทำประกันสินค้า — กลับไปที่ Packages (Step 2) เพื่อเลือก</p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {packages
+                  .filter((p) => p.insured)
+                  .map((pkg) => (
+                    <div key={pkg.key} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <p className="mb-2 text-xs font-semibold text-slate-500">
+                        Package #{packages.findIndex((p) => p.key === pkg.key) + 1}
+                        {pkg.description ? ` — ${pkg.description}` : ""}
+                      </p>
+                      {renderInsurancePicker(pkg)}
+                    </div>
+                  ))}
+              </div>
+            )
+          ) : visibleAddonSuggestions.length === 0 ? (
+            <p className="text-sm text-slate-400">No matching add-on items.</p>
+          ) : (
+            <>
+              {visibleAddonSuggestions.map((item) => (
+                <button
+                  type="button"
+                  key={item.id}
+                  onClick={() => addAddonFromSuggestion(item)}
+                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left text-sm transition hover:border-brand-amber hover:bg-amber-50"
+                >
+                  <span className="flex items-center gap-2 font-medium text-slate-700">
+                    <Plus className="h-3.5 w-3.5 shrink-0 text-brand-amber" />
+                    {item.name}
+                    <span className="text-xs font-normal text-slate-400">({item.carriers.join("/")})</span>
+                  </span>
+                  <span className="shrink-0 text-xs font-semibold text-slate-600">
+                    {item.price_type === "FIXED"
+                      ? item.price != null
+                        ? `${Number(item.price).toLocaleString()} THB`
+                        : "-"
+                      : item.price_type === "PERCENT"
+                        ? item.price != null
+                          ? `${Number(item.price).toLocaleString()}% of Declared Value`
+                          : "-"
+                        : "Manual price"}
+                  </span>
+                </button>
+              ))}
+              {!isAddonSearching && matchingAddonSuggestions.length > MAX_SUGGESTIONS && (
+                <p className="mt-1 text-xs text-slate-400">พิมพ์ค้นหาเพื่อดูรายการอื่นเพิ่มเติม ({matchingAddonSuggestions.length} รายการทั้งหมด)</p>
+              )}
+            </>
+          )}
+        </div>
+
+        {addonLinesByCategory.length > 0 && (
+          <div className="mb-3 flex flex-col gap-3">
+            {addonLinesByCategory.map(({ category, lines }) => {
+              const sectionTotal = lines.reduce((sum, l) => sum + l.amount, 0);
+              const isActiveCategory = category === activeAddonCategoryName;
+              return (
+                <div key={category} className="overflow-x-auto rounded-xl border border-slate-200">
+                  <div className="border-b border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    {category}
+                  </div>
+                  {lines.length === 0 ? (
+                    <p className="px-3 py-3 text-sm text-slate-400">ยังไม่มีรายการในหมวดนี้</p>
+                  ) : (
+                    <table className="w-full min-w-[480px] text-left text-sm">
+                      <thead className="bg-gradient-to-r from-brand-navy-dark to-brand-navy text-xs uppercase text-white/90">
+                        <tr>
+                          <th className="px-3 py-2 font-medium">รายการ</th>
+                          <th className="px-3 py-2 font-medium text-right">จำนวน</th>
+                          <th className="px-3 py-2 font-medium text-right">ราคา/@</th>
+                          <th className="px-3 py-2 font-medium text-right">รวมเงิน</th>
+                          <th className="px-3 py-2 font-medium text-right"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {lines.map(({ row, amount }) => (
+                          <tr key={row.key} className="border-b border-slate-100 last:border-0">
+                            <td className="px-3 py-2">
+                              <input
+                                type="text"
+                                value={row.name}
+                                disabled={row.nameLocked}
+                                onChange={(e) => updateAddonRow(row.key, { name: e.target.value })}
+                                placeholder="e.g. Bubble wrap"
+                                className="w-full min-w-[160px] rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15 disabled:bg-slate-100"
+                              />
+                              {row.packageKey != null && (
+                                <p className="mt-1 text-[11px] text-slate-400">
+                                  Package #{packages.findIndex((p) => p.key === row.packageKey) + 1}
+                                </p>
+                              )}
+                              {row.costPrice != null && (
+                                <p className="mt-1 text-[11px] text-slate-400">
+                                  ต้นทุนจาก API: {Number(row.costPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} THB
+                                </p>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <input
+                                type="number"
+                                min={1}
+                                value={row.quantity}
+                                onChange={(e) => updateAddonRow(row.key, { quantity: Number(e.target.value) })}
+                                className="ml-auto w-16 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-right text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
+                              />
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.01}
+                                disabled={row.priceLocked}
+                                value={row.unitPrice}
+                                onChange={(e) => updateAddonRow(row.key, { unitPrice: e.target.value })}
+                                className="ml-auto w-24 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-right text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15 disabled:bg-slate-100"
+                              />
+                            </td>
+                            <td className="px-3 py-2 text-right font-medium text-slate-700">
+                              {amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <button
+                                type="button"
+                                onClick={() => removeAddonRow(row.key)}
+                                className="rounded-lg p-1.5 text-red-500 hover:bg-red-50"
+                                aria-label="Remove add-on"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr>
+                          <td colSpan={3} className="px-3 py-2 text-right text-xs font-semibold text-slate-500">
+                            รวม {category}
+                          </td>
+                          <td className="px-3 py-2 text-right text-sm font-bold text-brand-navy-dark">
+                            {sectionTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                          <td />
+                        </tr>
+                      </tfoot>
+                    </table>
+                  )}
+                  {isActiveCategory && (
+                    <div className="border-t border-slate-200 px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={addAddonRow}
+                        className="flex items-center gap-1 text-sm font-medium text-amber-600 hover:underline"
+                      >
+                        <Plus className="h-4 w-4" /> เพิ่มแถวรายการ ({category})
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            <div className="flex items-center justify-end gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2">
+              <span className="text-sm font-semibold text-slate-500">รวมเป็นเงินทั้งหมด</span>
+              <span className="text-sm font-bold text-brand-navy-dark">
+                {addonTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
           </div>
         )}
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
-        <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
-          <FileText className="h-4 w-4" /> Description of Goods (Customs Declaration)
-        </h2>
-        <div className="flex flex-col gap-2.5">
-          {goods.map((g) => (
-            <div key={g.key} className="flex flex-wrap items-end gap-3 rounded-lg border border-slate-100 bg-slate-50 p-2.5">
-              <label className="flex flex-col gap-1">
-                <span className={labelClass}>Item Name</span>
-                <input
-                  type="text"
-                  value={g.name}
-                  onChange={(e) => updateGoods(g.key, { name: e.target.value })}
-                  className="w-48 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className={labelClass}>HS Code</span>
-                <input
-                  type="text"
-                  value={g.hsCode}
-                  onChange={(e) => updateGoods(g.key, { hsCode: e.target.value })}
-                  className="w-32 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className={labelClass}>Qty</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={g.quantity}
-                  onChange={(e) => updateGoods(g.key, { quantity: Number(e.target.value) })}
-                  className="w-20 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className={labelClass}>Value (THB)</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={g.value}
-                  onChange={(e) => updateGoods(g.key, { value: Number(e.target.value) })}
-                  className="w-28 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
-                />
-              </label>
-              <button
-                type="button"
-                onClick={() => removeGoods(g.key)}
-                disabled={goods.length <= 1}
-                className="rounded-lg p-2 text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-30"
-                aria-label="Remove item"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </div>
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={addGoods}
-          className="mt-3 flex items-center gap-1 text-sm font-medium text-amber-600 hover:underline"
-        >
-          <Plus className="h-4 w-4" /> Add item
-        </button>
-      </div>
-
-      <div className="mt-4 flex justify-start">
+      <div className="flex items-center justify-between">
         <button
           type="button"
           onClick={() => setStep(2)}
@@ -1286,6 +1974,17 @@ export default function ShipmentCreatePage() {
         >
           <ChevronLeft className="h-4 w-4" /> Back
         </button>
+        <button
+          type="button"
+          onClick={() => setStep(4)}
+          className="flex items-center gap-2 rounded-lg bg-brand-amber px-6 py-2.5 text-sm font-semibold text-brand-navy-dark shadow-sm hover:bg-brand-amber/90"
+        >
+          Next <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+        </div>
+
+        <div className="lg:col-span-1">{orderSummaryPanel}</div>
       </div>
         </>
       )}

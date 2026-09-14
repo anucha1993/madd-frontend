@@ -38,6 +38,10 @@ export const listInsuranceCountryCaps = (params: { q?: string; page?: number; pe
   return apiClient.get<Paginated<InsuranceCountryCap>>(`/insurance-country-caps?${search.toString()}`);
 };
 
+// Exact-match lookup by country_code, used to apply coverage caps / sanction notes when selling insurance.
+export const lookupInsuranceCountryCap = (countryCode: string) =>
+  apiClient.get<InsuranceCountryCap | null>(`/insurance-country-caps/lookup?country_code=${encodeURIComponent(countryCode)}`);
+
 export const createInsuranceCountryCap = (data: InsuranceCountryCapInput) =>
   apiClient.post<InsuranceCountryCap>("/insurance-country-caps", data);
 
