@@ -12,7 +12,9 @@ export type AddonItem = {
   name: string;
   carriers: ("UPS" | "DHL")[];
   customer_types: string[] | null;
-  price_type: "FIXED" | "MANUAL" | "PERCENT";
+  // Which Create Shipment box Product Type(s) this item applies to — null/empty = all.
+  product_types: string[] | null;
+  price_type: "FIXED" | "MANUAL" | "PERCENT" | "API_COST";
   price: string | number | null;
   trigger_type: "MANUAL" | "AUTO";
   status: boolean;
@@ -39,7 +41,8 @@ export type AddonItemInput = {
   name: string;
   carriers: ("UPS" | "DHL")[];
   customer_types?: string[] | null;
-  price_type: "FIXED" | "MANUAL" | "PERCENT";
+  product_types?: string[] | null;
+  price_type: "FIXED" | "MANUAL" | "PERCENT" | "API_COST";
   price?: number | null;
   trigger_type: "MANUAL" | "AUTO";
   status?: boolean;

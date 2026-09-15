@@ -72,7 +72,7 @@ export const NAV_SECTIONS: NavItem[] = [
     children: [
       { label: "Mark-up Settings", href: "/config/markup" },
       { label: "Add-on Settings", href: "/config/addon" },
-      { label: "Insurance Country Caps", href: "/config/insurance-caps" },
+      { label: "Insurance UPSC", href: "/config/insurance-caps" },
       { label: "Packaging Supplies", href: "/config/supplies" },
       { label: "Shipment Weight Bands", href: "/config/weight-bands" },
       { label: "Manifest Form Options", href: "/config/manifest-options" },

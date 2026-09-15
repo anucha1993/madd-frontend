@@ -57,3 +57,13 @@ export type TestResult = {
 };
 
 export const testAgentAccount = (id: number) => apiClient.post<TestResult>(`/agent-accounts/${id}/test`, {});
+
+export type DhlProduct = {
+  code: string;
+  name: string;
+};
+
+// Fetches this DHL account's real available product codes/names (via a lightweight reference
+// rate call server-side) — used so admins picking allowed_service_codes see actual product
+// names instead of guessing codes, since DHL (unlike UPS) has no fixed product list.
+export const listDhlProducts = (id: number) => apiClient.get<DhlProduct[]>(`/agent-accounts/${id}/dhl-products`);

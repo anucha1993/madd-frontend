@@ -23,7 +23,13 @@ export default function BranchForm({ initial, agentAccounts, initialCarrierAccou
   const [phone, setPhone] = useState(initial?.phone ?? "");
   const [status, setStatus] = useState(initial?.status ?? true);
   const [carrierAccounts, setCarrierAccounts] = useState<BranchCarrierAccountInput[]>(
-    initialCarrierAccounts.map((row) => ({ agent_account_id: row.agent_account_id }))
+    initialCarrierAccounts.map((row) => ({
+      agent_account_id: row.agent_account_id,
+      label: row.label,
+      tracking_prefix: row.tracking_prefix,
+      is_default: row.is_default,
+      allowed_service_codes: row.allowed_service_codes,
+    }))
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");

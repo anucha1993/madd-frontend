@@ -56,8 +56,9 @@ const STEPS = [
   { number: 4 as const, label: "Payment Info" },
 ];
 
-// Product Type is per-box (each package can be a different classification) — Silver forces
-// that box's insurance to be third-party (UPSC) only, see selectPackageInsurance below.
+// Product Type is per-box (each package can be a different classification) — which Insurance
+// items apply and at what rate is driven by each AddonItem's product_types config (see
+// getInsuranceOptionsForPackage), e.g. UPSC is configured to only apply to Silver boxes.
 // "OTHER" lets staff type a free-text classification (productTypeOther) not covered by the two presets.
 type ProductType = "SILVER" | "NON_SILVER" | "OTHER" | null;
 
@@ -277,6 +278,36 @@ export default function ShipmentCreatePage() {
   const [error, setError] = useState("");
   const [results, setResults] = useState<RateQuote[] | null>(null);
   const [selectedQuote, setSelectedQuote] = useState<RateQuote | null>(null);
+  // Declared Value actually SENT for each package on the last successful Check Rate — lets
+  // API_COST insurance (e.g. DHL's own) tell when its frozen price is stale (Declared Value
+  // edited since) even if the addon row itself was already cleared/reselected.
+  const [quotedDeclaredValues, setQuotedDeclaredValues] = useState<Record<number, number>>({});
+  // Which carrier(s) to check — lets staff narrow to just UPS or just DHL so the insurance
+  // picker (which needs a known carrier) can be driven right after Check Rate, without waiting
+  // to manually pick a quote card out of a mixed UPS+DHL results list.
+  const [selectedCarriers, setSelectedCarriers] = useState<("UPS" | "DHL")[]>(["UPS", "DHL"]);
+
+  function toggleCarrierFilter(carrier: "UPS" | "DHL") {
+    setSelectedCarriers((prev) => {
+      const next = prev.includes(carrier) ? prev.filter((c) => c !== carrier) : [...prev, carrier];
+      return next.length > 0 ? next : prev; // must always keep at least one carrier selected
+    });
+  }
+
+  // Rate Quotes reflect whatever the packages looked like at the moment "Check Rate" was
+  // clicked — if weight/dimensions/quantity/box-vs-document change afterwards, the old quotes no
+  // longer match and must be invalidated. Deliberately EXCLUDES insured/declared_value/productType —
+  // those are set AFTER picking a quote (to drive the Insurance picker), so changing them must not
+  // wipe out the just-selected quote; staff re-run Check Rate manually to fold the real declared
+  // value insurance charge into the quote once ready.
+  const rateAffectingSignature = JSON.stringify(
+    packages.map((p) => [p.weight, p.length, p.width, p.height, p.quantity, p.is_document]),
+  );
+  useEffect(() => {
+    setResults(null);
+    setSelectedQuote(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rateAffectingSignature, selectedCarriers.join(",")]);
 
   useEffect(() => {
     if (!destinationCountry) {
@@ -298,6 +329,20 @@ export default function ShipmentCreatePage() {
 
   function updatePackage(key: number, patch: Partial<PackageRow>) {
     setPackages((prev) => prev.map((p) => (p.key === key ? { ...p, ...patch } : p)));
+  }
+
+  // API_COST insurance (e.g. DHL's own) freezes its sell price from the LAST Check Rate's real
+  // chargeBreakdown — editing Declared Value after that makes that frozen price stale (it no
+  // longer reflects what the carrier would actually charge for the new value), so the selection
+  // is cleared and staff must re-run Check Rate + reselect to get an accurate price.
+  function updateDeclaredValue(pkg: PackageRow, declaredValue: number) {
+    updatePackage(pkg.key, { declared_value: declaredValue });
+    const selectedRow = addonRows.find((r) => r.packageKey === pkg.key && r.category === "Insurance");
+    const selectedItem = selectedRow ? addonItems.find((i) => i.id === selectedRow.addonItemId) : undefined;
+    if (selectedItem?.price_type === "API_COST" && quotedDeclaredValues[pkg.key] !== declaredValue) {
+      setAddonRows((prev) => prev.filter((r) => !(r.packageKey === pkg.key && r.category === "Insurance")));
+      alert("มูลค่าสินค้าที่แจ้งเปลี่ยนไป — ราคาประกันนี้อ้างอิงจากราคาจริงของ carrier ครั้งก่อน กรุณากด Check Rate ใหม่แล้วเลือกประกันอีกครั้งเพื่อราคาที่ถูกต้อง");
+    }
   }
 
   function addPackage() {
@@ -344,10 +389,10 @@ export default function ShipmentCreatePage() {
   }
 
   // Insurance is chosen PER PACKAGE (not shipment-wide) — different boxes in the same shipment
-  // may use different insurers (e.g. one Silver box must use UPSC while another box uses the
-  // carrier's own ICDV/DHL insurance). Each package may have at most one Insurance addon row,
-  // tagged with packageKey; picking one clears that package's previous choice, picking the same
-  // one again deselects it.
+  // may use different insurers, and which items are even selectable is driven entirely by each
+  // AddonItem's product_types/carriers/customer_types config (see getInsuranceOptionsForPackage) —
+  // not hardcoded here. Each package may have at most one Insurance addon row, tagged with
+  // packageKey; picking one clears that package's previous choice, picking the same one again deselects it.
   function selectPackageInsurance(pkg: PackageRow, item: AddonItem) {
     const alreadySelected = addonRows.some((r) => r.packageKey === pkg.key && r.addonItemId === item.id);
     if (alreadySelected) {
@@ -359,9 +404,11 @@ export default function ShipmentCreatePage() {
       alert(`ไม่สามารถขายประกันบุคคลที่สามสำหรับปลายทาง ${insuranceCap.country_name} ได้: ${insuranceCap.note}`);
       return;
     }
-    // Product Type = Silver forces third-party (UPSC) insurance only, for THIS box.
-    if (!isThirdParty && pkg.productType === "SILVER") {
-      alert("กล่องนี้ตั้ง Product Type = Silver ต้องซื้อประกันบุคคลที่สาม (UPSC) เท่านั้น ไม่สามารถเลือกประกันของผู้ให้บริการขนส่งเองได้");
+    // API_COST's price is frozen from the last Check Rate's real chargeBreakdown — refuse to
+    // (re)select it with a Declared Value that's changed since, instead of silently reusing a
+    // stale carrier cost that no longer matches what was actually sent to Check Rate.
+    if (item.price_type === "API_COST" && quotedDeclaredValues[pkg.key] !== (Number(pkg.declared_value) || 0)) {
+      alert("มูลค่าสินค้าเปลี่ยนไปตั้งแต่เช็ค Rate ล่าสุด — กรุณากด Check Rate ใหม่ก่อนเลือกประกันนี้ เพื่อราคาที่ถูกต้อง");
       return;
     }
 
@@ -380,10 +427,10 @@ export default function ShipmentCreatePage() {
 
     // Carrier-own insurance (ICDV/DHL) SELLING price still follows whatever is configured for
     // this item at /config/addon (FIXED/PERCENT/MANUAL). The real charge the carrier's own API
-    // returned (UPS: chargeBreakdown code "400") is kept separately as our internal cost,
+    // returned (UPS code "400", DHL code "II") is kept separately as our internal cost,
     // purely for margin reference — it does NOT set the price.
     const carrierInsuranceCharge = !isThirdParty
-      ? selectedQuote?.chargeBreakdown?.find((c) => c.code === "400")?.amount
+      ? selectedQuote?.chargeBreakdown?.find((c) => c.code === (selectedQuote.carrier === "DHL" ? "II" : "400"))?.amount
       : undefined;
 
     const unitPrice =
@@ -391,7 +438,9 @@ export default function ShipmentCreatePage() {
         ? String(item.price ?? 0)
         : item.price_type === "PERCENT"
           ? (effectiveDeclaredValue * ((Number(item.price) || 0) / 100)).toFixed(2)
-          : "";
+          : item.price_type === "API_COST"
+            ? String(carrierInsuranceCharge ?? 0)
+            : "";
 
     setAddonRows((prev) => [
       ...prev.filter((r) => !(r.category === "Insurance" && r.packageKey === pkg.key)),
@@ -402,42 +451,46 @@ export default function ShipmentCreatePage() {
         category: item.category?.name ?? "Insurance",
         carriers: item.carriers.join("/"),
         unitPrice,
-        priceLocked: item.price_type === "FIXED" || item.price_type === "PERCENT",
+        priceLocked: item.price_type === "FIXED" || item.price_type === "PERCENT" || item.price_type === "API_COST",
         costPrice: carrierInsuranceCharge != null ? String(carrierInsuranceCharge) : undefined,
         packageKey: pkg.key,
       }),
     ]);
   }
 
-  // Product Type is set per box; picking Silver on a box drops that SAME box's already-selected
-  // carrier-own insurance row, since a Silver box can only be insured via UPSC.
+  // Product Type is set per box; each Product Type has its own eligible Insurance items/rates
+  // (configured at /config/addon via product_types) — if the box is already insured and the
+  // currently-picked item no longer applies to the new Product Type (e.g. price differs between
+  // Silver/Non Silver), auto-replace it with whatever now applies instead of leaving it stale.
   function setPackageProductType(key: number, productType: ProductType) {
     updatePackage(key, { productType });
-    if (productType === "SILVER") {
-      setAddonRows((prev) =>
-        prev.filter((r) => !(r.packageKey === key && r.category === "Insurance" && !isThirdPartyInsuranceItem({ name: r.name }))),
-      );
-    }
-    // Silver forces UPSC; Other just defaults to UPSC (staff may still switch to carrier-own after).
-    if (productType === "SILVER" || productType === "OTHER") {
-      const pkg = packages.find((p) => p.key === key);
-      if (pkg?.insured && insuranceThirdPartyOption) {
-        selectPackageInsurance(pkg, insuranceThirdPartyOption);
-      }
-    }
+    const pkg = packages.find((p) => p.key === key);
+    if (!pkg?.insured) return;
+    const { carrierOption, thirdPartyOption } = getInsuranceOptionsForPackage(productType);
+    const selectedRow = addonRows.find((r) => r.packageKey === key && r.category === "Insurance");
+    const stillEligible =
+      !!selectedRow && (selectedRow.addonItemId === carrierOption?.id || selectedRow.addonItemId === thirdPartyOption?.id);
+    if (stillEligible) return;
+    applyDefaultInsurer(pkg, productType, carrierOption, thirdPartyOption);
   }
 
-  // A checked "Insurance" box must never end up with no insurer/charge actually selected —
-  // Silver/Other are forced onto UPSC (see selectPackageInsurance), everything else defaults to
-  // the carrier's own insurance (falling back to UPSC if that carrier has no own-insurance item).
+  // Silver defaults to UPSC (third-party) first; every other Product Type defaults to the
+  // carrier's own insurance — either way falls back to whichever option is actually available.
+  function applyDefaultInsurer(
+    pkg: PackageRow,
+    productType: ProductType,
+    carrierOption: ReturnType<typeof getInsuranceOptionsForPackage>["carrierOption"],
+    thirdPartyOption: ReturnType<typeof getInsuranceOptionsForPackage>["thirdPartyOption"],
+  ) {
+    const preferred = productType === "SILVER" ? thirdPartyOption ?? carrierOption : carrierOption ?? thirdPartyOption;
+    if (preferred) selectPackageInsurance(pkg, preferred);
+    else setAddonRows((prev) => prev.filter((r) => !(r.packageKey === pkg.key && r.category === "Insurance")));
+  }
+
+  // A checked "Insurance" box must never end up with no insurer/charge actually selected.
   function autoSelectPackageInsurer(pkg: PackageRow) {
-    if (pkg.productType === "SILVER" || pkg.productType === "OTHER") {
-      if (insuranceThirdPartyOption) selectPackageInsurance(pkg, insuranceThirdPartyOption);
-    } else if (insuranceCarrierOption) {
-      selectPackageInsurance(pkg, insuranceCarrierOption);
-    } else if (insuranceThirdPartyOption) {
-      selectPackageInsurance(pkg, insuranceThirdPartyOption);
-    }
+    const { carrierOption, thirdPartyOption } = getInsuranceOptionsForPackage(pkg.productType);
+    applyDefaultInsurer(pkg, pkg.productType, carrierOption, thirdPartyOption);
   }
 
   function addAddonFromSupply(supply: Supply) {
@@ -798,14 +851,18 @@ export default function ShipmentCreatePage() {
     void autoSaveAddress("from");
     void autoSaveAddress("to");
 
-    const effectivePackages: ShipmentPackageInput[] = packages.map((p) =>
-      p.is_document
+    const effectivePackages: ShipmentPackageInput[] = packages.map((p) => {
+      // The carrier's own Declared Value/insurance charge (baked into Freight) is only ever used
+      // as a COST reference now, never the actual sell price — so it's fine to send for every
+      // Product Type; the real sell price is computed separately from the Insurance Add-on item.
+      const sendDeclaredValue = p.insured;
+      return p.is_document
         ? {
             weight: p.weight,
             quantity: p.quantity,
             description: p.description,
             is_document: true,
-            declared_value: p.insured ? p.declared_value : undefined,
+            declared_value: sendDeclaredValue ? p.declared_value : undefined,
           }
         : {
             weight: p.weight,
@@ -815,9 +872,9 @@ export default function ShipmentCreatePage() {
             quantity: p.quantity,
             description: p.description,
             is_document: false,
-            declared_value: p.insured ? p.declared_value : undefined,
-          },
-    );
+            declared_value: sendDeclaredValue ? p.declared_value : undefined,
+          };
+    });
 
     const payload: CheckRateInput = {
       origin_contact_name: originContactName.trim() || undefined,
@@ -840,6 +897,7 @@ export default function ShipmentCreatePage() {
       destination_email: destinationEmail.trim() || undefined,
       packages: effectivePackages,
       declared_value_currency: "THB",
+      carriers: selectedCarriers,
     };
 
     setLoading(true);
@@ -850,6 +908,7 @@ export default function ShipmentCreatePage() {
         .filter((r) => !r.error)
         .sort((a, b) => (a.negotiated ?? a.published ?? Infinity) - (b.negotiated ?? b.published ?? Infinity))[0];
       setSelectedQuote(cheapest ?? null);
+      setQuotedDeclaredValues(Object.fromEntries(packages.map((p) => [p.key, Number(p.declared_value) || 0])));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to check rate. Please try again.");
     } finally {
@@ -899,22 +958,50 @@ export default function ShipmentCreatePage() {
   // the customer ever visits the Add-on tab. Requires a selected Rate Quote so the carrier-own
   // option always matches the booked carrier (UPS → ICDV, DHL → DHL API) — never an arbitrary pick.
   const isInsuranceCategory = activeAddonCategory === "Insurance";
-  const insuranceCategoryItems = selectedQuote
-    ? (addonByCategory["Insurance"] ?? []).filter((item) => {
-        const matchesCarrier = item.carriers.includes(selectedQuote.carrier);
-        const matchesCustomerType = !item.customer_types?.length || item.customer_types.includes(customerType);
-        return matchesCarrier && matchesCustomerType;
-      })
-    : [];
-  const insuranceCarrierOption = insuranceCategoryItems.find((i) => !isThirdPartyInsuranceItem(i)) ?? null;
-  const insuranceThirdPartyOption = insuranceCategoryItems.find((i) => isThirdPartyInsuranceItem(i)) ?? null;
+  // Scoped PER PACKAGE (not just carrier/customer type) — an Insurance item configured with
+  // product_types at /config/addon only shows up for boxes with a matching Product Type
+  // (Silver/Non Silver/Other), letting admins price/restrict insurance differently per type.
+  function getInsuranceOptionsForPackage(productType: ProductType) {
+    const items = selectedQuote
+      ? (addonByCategory["Insurance"] ?? []).filter((item) => {
+          const matchesCarrier = item.carriers.includes(selectedQuote.carrier);
+          const matchesCustomerType = !item.customer_types?.length || item.customer_types.includes(customerType);
+          const matchesProductType = !item.product_types?.length || (productType != null && item.product_types.includes(productType));
+          return matchesCarrier && matchesCustomerType && matchesProductType;
+        })
+      : [];
+    return {
+      carrierOption: items.find((i) => !isThirdPartyInsuranceItem(i)) ?? null,
+      thirdPartyOption: items.find((i) => isThirdPartyInsuranceItem(i)) ?? null,
+    };
+  }
 
   // POS-style order summary (Step 3) — itemized freight + insurance + add-ons, mirroring a checkout receipt.
   // Note: stockSupplyId (Common Sizes in the Packages step) is only a dimension-filling guide — it
   // is NOT a purchase and must never be charged here. Packaging only costs money once it's
   // explicitly added as an Add-on row (see addAddonFromSupply), which already flows through addonLines below.
   const selectedQuoteLogo = selectedQuote ? agents.find((a) => a.agent_code === selectedQuote.carrier)?.logo_url : undefined;
-  const freightAmount = selectedQuote ? selectedQuote.negotiated ?? selectedQuote.published ?? 0 : 0;
+  // The carrier's own quoted total includes ITS OWN real Declared Value/insurance charge
+  // (DHL code "II", UPS code "400") baked into Freight — that's cost-reference only (see
+  // selectPackageInsurance), the customer is billed for insurance ONLY via the separate
+  // Insurance Add-on line below, so it must be subtracted here to avoid double-charging.
+  function getSellFreightAmount(r: RateQuote) {
+    const carrierInsuranceChargeCode = r.carrier === "DHL" ? "II" : "400";
+    const carrierInsuranceChargeAmount = r.chargeBreakdown?.find((c) => c.code === carrierInsuranceChargeCode)?.amount ?? 0;
+    const rawTotal = r.negotiated ?? r.published ?? 0;
+    return { sellAmount: rawTotal - (Number(carrierInsuranceChargeAmount) || 0), carrierInsuranceChargeCode };
+  }
+  const { sellAmount: freightAmount, carrierInsuranceChargeCode } = selectedQuote
+    ? getSellFreightAmount(selectedQuote)
+    : { sellAmount: 0, carrierInsuranceChargeCode: null as string | null };
+  // Whether ANY package is actually selling the carrier's own insurance (API_COST, e.g. DHL
+  // Declared Value) — if every insured package uses third-party UPSC instead, the carrier's own
+  // insurance cost line in chargeBreakdown is pure noise (never charged, never "bought") and
+  // showing it next to an "excluded from sell total" note only invites confusion about whether
+  // it was purchased.
+  const sellingCarrierOwnInsurance = addonRows.some(
+    (row) => row.category === "Insurance" && addonItems.find((i) => i.id === row.addonItemId)?.price_type === "API_COST",
+  );
   const addonLines = addonRows.map((row) => ({
     row,
     amount: row.quantity * (Number(row.unitPrice) || 0),
@@ -1002,17 +1089,29 @@ export default function ShipmentCreatePage() {
             <p className="text-xs text-slate-500">{selectedQuote.serviceLabel}</p>
             {selectedQuote.chargeBreakdown && selectedQuote.chargeBreakdown.length > 0 && (
               <div className="mt-2 flex flex-col gap-0.5 border-t border-amber-100 pt-2">
-                {selectedQuote.chargeBreakdown.map((line, li) => (
-                  <div key={li} className="flex items-center justify-between text-xs">
-                    <span className="text-slate-500">
-                      {line.description}
-                      {line.code ? <span className="text-slate-300"> ({line.code})</span> : null}
-                    </span>
-                    <span className="font-medium text-slate-600">
-                      {line.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {line.currency}
-                    </span>
-                  </div>
-                ))}
+                <p className="text-[11px] text-slate-400">
+                  รายการด้านล่างคือค่าใช้จ่ายจริงที่ {selectedQuote.carrier} เรียกเก็บ (ต้นทุน) — ยอดด้านบนหักรายการ{" "}
+                  {carrierInsuranceChargeCode} ออกแล้ว เพราะประกันคิดแยกเป็น Insurance Add-on ต่างหาก ไม่คิดซ้ำในค่า Freight
+                </p>
+                {selectedQuote.chargeBreakdown
+                  .filter((line) => sellingCarrierOwnInsurance || line.code !== carrierInsuranceChargeCode)
+                  .map((line, li) => {
+                  const isCarrierInsuranceLine = line.code === carrierInsuranceChargeCode;
+                  return (
+                    <div key={li} className="flex items-center justify-between text-xs">
+                      <span className="text-slate-500">
+                        {line.description}
+                        {line.code ? <span className="text-slate-300"> ({line.code})</span> : null}
+                        {isCarrierInsuranceLine && (
+                          <span className="ml-1 text-amber-600">— ต้นทุน ไม่รวมในยอดขาย Freight ด้านบน</span>
+                        )}
+                      </span>
+                      <span className="font-medium text-slate-600">
+                        {line.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {line.currency}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1096,30 +1195,42 @@ export default function ShipmentCreatePage() {
   // per package rather than once for the whole shipment. Just two inline radio + label — details
   // (price basis / block reason) are in the title tooltip, not on-screen, to stay compact.
   function renderInsurancePicker(pkg: PackageRow) {
+    const { carrierOption: insuranceCarrierOption, thirdPartyOption: insuranceThirdPartyOption } = getInsuranceOptionsForPackage(
+      pkg.productType,
+    );
     if (!insuranceCarrierOption && !insuranceThirdPartyOption) {
       return <p className="text-sm text-slate-400">ไม่มีตัวเลือกประกันที่ตรงเงื่อนไข — กรุณาเลือก Rate Quote ก่อน</p>;
     }
     const radioName = `insurance-${pkg.key}`;
+    const isStaleApiCost =
+      insuranceCarrierOption?.price_type === "API_COST" &&
+      quotedDeclaredValues[pkg.key] !== (Number(pkg.declared_value) || 0);
     return (
-      <div className="flex flex-wrap items-center gap-4 text-sm">
+      <div className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-center gap-4 text-sm">
         {insuranceCarrierOption &&
           (() => {
             const selected = addonRows.some((r) => r.packageKey === pkg.key && r.addonItemId === insuranceCarrierOption.id);
-            const blocked = pkg.productType === "SILVER";
             return (
               <label
                 title={
-                  blocked
-                    ? "⚠ Product Type = Silver ต้องใช้ UPSC เท่านั้น"
-                    : `ประกันของผู้ให้บริการขนส่งเอง (${insuranceCarrierOption.carriers.join("/")}) — ราคาขายตามที่ตั้งค่าไว้ที่ Config`
+                  isStaleApiCost
+                    ? "⚠ มูลค่าสินค้าเปลี่ยนไปตั้งแต่เช็ค Rate ล่าสุด — กรุณากด Check Rate ใหม่ก่อนเลือกประกันนี้"
+                    : `ประกันของผู้ให้บริการขนส่งเอง (${insuranceCarrierOption.carriers.join("/")}) — ${
+                        insuranceCarrierOption.price_type === "API_COST"
+                          ? "ราคาขาย = ค่าประกันจริงที่ carrier เรียกเก็บ (ตาม API)"
+                          : "ราคาขายตามที่ตั้งค่าไว้ที่ Config"
+                      }`
                 }
-                className={`flex items-center gap-1.5 ${blocked ? "cursor-not-allowed text-slate-300" : "cursor-pointer text-slate-700"}`}
+                className={`flex items-center gap-1.5 ${
+                  isStaleApiCost ? "cursor-not-allowed text-slate-300" : "cursor-pointer text-slate-700"
+                }`}
               >
                 <input
                   type="radio"
                   name={radioName}
                   checked={selected}
-                  disabled={blocked}
+                  disabled={isStaleApiCost}
                   onChange={() => selectPackageInsurance(pkg, insuranceCarrierOption)}
                   className="h-3.5 w-3.5 text-brand-amber focus:ring-brand-amber/30"
                 />
@@ -1154,6 +1265,12 @@ export default function ShipmentCreatePage() {
               </label>
             );
           })()}
+        </div>
+        {isStaleApiCost && (
+          <p className="text-xs font-medium text-amber-600">
+            ⚠ มูลค่าสินค้าเปลี่ยนไปตั้งแต่เช็ค Rate ล่าสุด — กรุณากด Check Rate ใหม่ก่อนเลือก {insuranceCarrierOption?.name}
+          </p>
+        )}
       </div>
     );
   }
@@ -1639,18 +1756,31 @@ export default function ShipmentCreatePage() {
             {packages.map((pkg) => {
               const isActive = pkg.key === activePackageKey;
               // Preview only — actual carrier-own (ICDV/DHL) insurance price comes from the real
-              // Rate Quote API instead; this estimates the third-party (UPSC) premium so staff see
-              // roughly what this box's insurance will cost before running Check Rate.
+              // Rate Quote API instead; this estimates whichever insurer is ACTUALLY selected for
+              // this package (UPSC, ICDV, or DHL) so staff see roughly what it'll cost before
+              // running Check Rate. Third-party (UPSC) declared value is clamped to the
+              // destination's Insurance Country Cap; carrier-own items are not.
+              const selectedInsuranceRow = addonRows.find((r) => r.packageKey === pkg.key && r.category === "Insurance");
+              const selectedInsuranceItem = selectedInsuranceRow
+                ? addonItems.find((i) => i.id === selectedInsuranceRow.addonItemId)
+                : undefined;
+              const isSelectedThirdParty = selectedInsuranceItem ? isThirdPartyInsuranceItem(selectedInsuranceItem) : false;
               const capValues = [insuranceCap?.ups_max_declared, insuranceCap?.dhl_max_declared]
                 .filter((v): v is number | string => v != null)
                 .map(Number);
               const maxCap = capValues.length > 0 ? Math.min(...capValues) : null;
               const declaredValueNum = Number(pkg.declared_value) || 0;
-              const coveredValue = maxCap != null ? Math.min(declaredValueNum, maxCap) : declaredValueNum;
-              const upscItem = addonItems.find(
-                (i) => isThirdPartyInsuranceItem(i) && (!i.customer_types?.length || i.customer_types.includes(customerType)),
-              );
-              const estimatedPremium = upscItem?.price != null ? coveredValue * (Number(upscItem.price) / 100) : null;
+              const coveredValue = isSelectedThirdParty && maxCap != null ? Math.min(declaredValueNum, maxCap) : declaredValueNum;
+              // API_COST items (e.g. DHL's own insurance) already have their real sell price set
+              // on the row itself (from the carrier's actual API charge at selection time).
+              const estimatedPremium =
+                selectedInsuranceItem?.price_type === "API_COST"
+                  ? selectedInsuranceRow
+                    ? Number(selectedInsuranceRow.unitPrice) || null
+                    : null
+                  : selectedInsuranceItem?.price != null
+                    ? coveredValue * (Number(selectedInsuranceItem.price) / 100)
+                    : null;
               return (
                 <div
                   key={pkg.key}
@@ -1736,9 +1866,6 @@ export default function ShipmentCreatePage() {
                         className="w-40 rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15 disabled:bg-slate-100"
                       />
                     )}
-                    {pkg.productType === "SILVER" && (
-                      <span className="text-xs font-medium text-amber-700">⚠ กล่องนี้บังคับใช้ประกันบุคคลที่สาม (UPSC) เท่านั้นในหัวข้อ Add-on</span>
-                    )}
                   </div>
                   <div className="flex items-end gap-3">
                   <label className="flex w-24 flex-col gap-1">
@@ -1822,21 +1949,20 @@ export default function ShipmentCreatePage() {
                   <div className="flex items-end gap-3">
                   <div className="flex w-24 flex-col gap-1">
                     {/* <span className={labelClass}>Insurance</span> */}
-                    <label
-                      className="flex h-[34px] items-center gap-1.5"
-                      title={!selectedQuote ? "กรุณาเลือก Rate Quote ก่อน จึงจะเลือกทำประกันสินค้าได้" : undefined}
-                    >
+                    <label className="flex h-[34px] items-center gap-1.5">
                       <input
                         type="checkbox"
                         checked={pkg.insured}
-                        disabled={!isActive || !selectedQuote}
+                        disabled={!isActive}
                         onChange={(e) => {
                           const insured = e.target.checked;
                           updatePackage(pkg.key, { insured });
                           if (!insured) {
                             setAddonRows((prev) => prev.filter((r) => !(r.category === "Insurance" && r.packageKey === pkg.key)));
                           } else {
-                            // Never leave "Insurance" checked with no insurer actually picked (and thus no charge).
+                            // Only auto-picks an insurer once a Rate Quote is selected (need the
+                            // carrier to know which options apply) — otherwise just leaves Declared
+                            // Value ready to go so it's included the moment Check Rate runs.
                             autoSelectPackageInsurer(pkg);
                           }
                         }}
@@ -1853,7 +1979,7 @@ export default function ShipmentCreatePage() {
                         min={0}
                         value={pkg.declared_value ?? 0}
                         disabled={!isActive}
-                        onChange={(e) => updatePackage(pkg.key, { declared_value: Number(e.target.value) })}
+                        onChange={(e) => updateDeclaredValue(pkg, Number(e.target.value))}
                         className={`w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15 disabled:bg-slate-100 ${
                           !isActive ? "pointer-events-none" : ""
                         }`}
@@ -1865,18 +1991,27 @@ export default function ShipmentCreatePage() {
                       <span className="text-slate-400" title="วงเงินประกันที่จะได้รับหากสินค้าเสียหาย (หลังจำกัดตาม Insurance Country Caps)">
                         ราคาครอบคลุมสินค้า (THB)
                       </span>
-                      <span className="font-semibold text-slate-700">{coveredValue.toLocaleString()}</span>
+                      <span className={`font-semibold ${coveredValue < declaredValueNum ? "text-amber-600" : "text-slate-700"}`}>
+                        {coveredValue.toLocaleString()}
+                      </span>
                     </div>
                   )}
                   {pkg.insured && (
                     <div className="flex flex-col justify-center gap-0.5 text-xs">
-                      <span className="text-slate-400">ราคาประกันสินค้า (ประมาณการ UPSC)</span>
+                      <span className="text-slate-400">ราคาประกันสินค้า{selectedInsuranceItem ? ` (${selectedInsuranceItem.name})` : ""}</span>
                       <span className="font-semibold text-slate-700">
                         {estimatedPremium != null ? estimatedPremium.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "-"}
                       </span>
                     </div>
                   )}
                   </div>
+                  {pkg.insured && coveredValue < declaredValueNum && (
+                    <p className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-700">
+                      ⚠ มูลค่าสินค้าที่แจ้ง ({declaredValueNum.toLocaleString()} บาท) เกินวงเงินคุ้มครองสูงสุดของ{" "}
+                      {selectedInsuranceItem?.name ?? "ประกันนี้"} ที่ปลายทางนี้ — คุ้มครองได้สูงสุดแค่{" "}
+                      <strong>{coveredValue.toLocaleString()} บาท</strong> เท่านั้น (ส่วนเกินจะไม่ได้รับความคุ้มครอง)
+                    </p>
+                  )}
                   {pkg.insured && renderInsurancePicker(pkg)}
                   <label className="flex flex-col gap-1">
                     <span className={labelClass}>Description of Goods</span>
@@ -1962,6 +2097,19 @@ export default function ShipmentCreatePage() {
           <div className="sticky top-4 flex flex-col gap-4">
             <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
             <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500">Rate Quotes</h2>
+            <div className="mb-3 flex items-center gap-4 text-sm">
+              {(["UPS", "DHL"] as const).map((carrier) => (
+                <label key={carrier} className="flex cursor-pointer items-center gap-1.5 text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={selectedCarriers.includes(carrier)}
+                    onChange={() => toggleCarrierFilter(carrier)}
+                    className="h-3.5 w-3.5 rounded border-slate-300 text-brand-navy focus:ring-brand-navy/30"
+                  />
+                  {carrier}
+                </label>
+              ))}
+            </div>
             {!results ? (
               <p className="text-sm text-slate-400">Fill in package details and click &quot;Check Rate&quot; to see live quotes from UPS/DHL here.</p>
             ) : (
@@ -1975,6 +2123,7 @@ export default function ShipmentCreatePage() {
                       selectedQuote.carrier === r.carrier &&
                       selectedQuote.accountId === r.accountId &&
                       selectedQuote.serviceCode === r.serviceCode;
+                    const { sellAmount, carrierInsuranceChargeCode: rInsuranceCode } = getSellFreightAmount(r);
                     return (
                       <button
                         type="button"
@@ -1996,7 +2145,7 @@ export default function ShipmentCreatePage() {
                             <span className="text-sm font-semibold text-slate-700">{r.carrier}</span>
                           </div>
                           <span className="text-sm font-bold text-brand-navy-dark">
-                            {(r.negotiated ?? r.published ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} {r.currency}
+                            {sellAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {r.currency}
                           </span>
                         </div>
                         <p className="mt-0.5 text-xs text-slate-500">{r.serviceLabel}</p>
@@ -2009,11 +2158,16 @@ export default function ShipmentCreatePage() {
                         </div>
                         {r.chargeBreakdown && r.chargeBreakdown.length > 0 && (
                           <div className="mt-2 flex flex-col gap-0.5 border-t border-slate-100 pt-2">
-                            {r.chargeBreakdown.map((line, li) => (
+                            {r.chargeBreakdown
+                              .filter((line) => sellingCarrierOwnInsurance || line.code !== rInsuranceCode)
+                              .map((line, li) => (
                               <div key={li} className="flex items-center justify-between text-xs">
                                 <span className="text-slate-500">
                                   {line.description}
                                   {line.code ? <span className="text-slate-300"> ({line.code})</span> : null}
+                                  {line.code === rInsuranceCode && (
+                                    <span className="ml-1 text-amber-600">— ต้นทุน ไม่รวมในยอดขายด้านบน</span>
+                                  )}
                                 </span>
                                 <span className="font-medium text-slate-600">
                                   {line.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {line.currency}
@@ -2172,7 +2326,7 @@ export default function ShipmentCreatePage() {
         </p>
         {insuranceCap?.note ? (
           <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-600">
-            ⚠ ปลายทาง {insuranceCap.country_name} ไม่สามารถขายประกันบุคคลที่สาม (UPSC) ได้ ({insuranceCap.note}) — ตาม Insurance Country Caps
+            ⚠ ปลายทาง {insuranceCap.country_name} ไม่สามารถขายประกันบุคคลที่สาม (UPSC) ได้ ({insuranceCap.note}) — ตาม Insurance UPSC
             (ไม่กระทบประกันของ UPS/DHL เอง เช่น ICDV/DHL API)
           </p>
         ) : insuranceCap ? (
@@ -2180,7 +2334,7 @@ export default function ShipmentCreatePage() {
             วงเงินคุ้มครองสูงสุดของประกันบุคคลที่สาม (UPSC) ที่ {insuranceCap.country_name}: UPS{" "}
             {insuranceCap.ups_max_declared != null ? Number(insuranceCap.ups_max_declared).toLocaleString() : "-"} THB / DHL{" "}
             {insuranceCap.dhl_max_declared != null ? Number(insuranceCap.dhl_max_declared).toLocaleString() : "-"} THB
-            (ตาม Insurance Country Caps — มูลค่าที่เกินจะถูกจำกัดอัตโนมัติเมื่อคิดค่าประกัน UPSC เท่านั้น ไม่กระทบ ICDV/DHL API)
+            (ตาม Insurance UPSC — มูลค่าที่เกินจะถูกจำกัดอัตโนมัติเมื่อคิดค่าประกัน UPSC เท่านั้น ไม่กระทบ ICDV/DHL API)
           </p>
         ) : null}
       </div>

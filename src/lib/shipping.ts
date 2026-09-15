@@ -37,6 +37,8 @@ export type CheckRateInput = {
   // in chargeBreakdown instead of it being estimated client-side.
   declared_value_currency?: string;
   agent_account_ids?: number[];
+  // Which carrier(s) to check — omit/empty to check both UPS and DHL (default).
+  carriers?: ("UPS" | "DHL")[];
 };
 
 export type RateChargeLine = {

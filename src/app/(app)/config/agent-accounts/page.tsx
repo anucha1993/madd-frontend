@@ -1,11 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Image as ImageIcon, KeyRound, Loader2, Pencil, Plug, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { Banknote, Image as ImageIcon, KeyRound, Loader2, Pencil, Plug, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import PageLoading from "@/components/ui/PageLoading";
 import AgentAccountForm from "@/components/config/AgentAccountForm";
+import { listChargeCodes, type ChargeCode } from "@/lib/chargeCodes";
+import {
+  createChargeFixedOverride,
+  deleteChargeFixedOverride,
+  listChargeFixedOverrides,
+  updateChargeFixedOverride,
+  type ChargeFixedOverride,
+} from "@/lib/chargeFixedOverrides";
 import {
   createAgentAccount,
   deleteAgentAccount,
@@ -32,6 +40,15 @@ export default function AgentAccountsPage() {
   const [logoEditAgent, setLogoEditAgent] = useState<Agent | null>(null);
   const [logoUrlInput, setLogoUrlInput] = useState("");
   const [logoSaving, setLogoSaving] = useState(false);
+
+  const [fixedChargesAccount, setFixedChargesAccount] = useState<AgentAccount | null>(null);
+  const [fixedOverrides, setFixedOverrides] = useState<ChargeFixedOverride[]>([]);
+  const [fixedChargeCodes, setFixedChargeCodes] = useState<ChargeCode[]>([]);
+  const [fixedLoading, setFixedLoading] = useState(false);
+  const [fixedError, setFixedError] = useState("");
+  const [newFixedCodeId, setNewFixedCodeId] = useState<number | "">("");
+  const [newFixedAmount, setNewFixedAmount] = useState("");
+  const [fixedSaving, setFixedSaving] = useState(false);
 
   const [bulkEditMode, setBulkEditMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -119,6 +136,62 @@ export default function AgentAccountsPage() {
     } finally {
       setLogoSaving(false);
     }
+  }
+
+  async function openFixedCharges(account: AgentAccount) {
+    setFixedChargesAccount(account);
+    setNewFixedCodeId("");
+    setNewFixedAmount("");
+    setFixedError("");
+    setFixedLoading(true);
+    try {
+      const [overrides, codes] = await Promise.all([
+        listChargeFixedOverrides({ agent_account_id: account.id }),
+        listChargeCodes({ provider: account.agent?.agent_code as "UPS" | "DHL" }),
+      ]);
+      setFixedOverrides(overrides);
+      setFixedChargeCodes(codes);
+    } catch (err) {
+      setFixedError(err instanceof Error ? err.message : "โหลดข้อมูลไม่สำเร็จ");
+    } finally {
+      setFixedLoading(false);
+    }
+  }
+
+  async function reloadFixedOverrides() {
+    if (!fixedChargesAccount) return;
+    setFixedOverrides(await listChargeFixedOverrides({ agent_account_id: fixedChargesAccount.id }));
+  }
+
+  async function handleAddFixedOverride() {
+    if (!fixedChargesAccount || !newFixedCodeId || !newFixedAmount) return;
+    setFixedSaving(true);
+    setFixedError("");
+    try {
+      await createChargeFixedOverride({
+        agent_account_id: fixedChargesAccount.id,
+        charge_code_id: Number(newFixedCodeId),
+        fixed_amount: Number(newFixedAmount),
+      });
+      setNewFixedCodeId("");
+      setNewFixedAmount("");
+      await reloadFixedOverrides();
+    } catch (err) {
+      setFixedError(err instanceof Error ? err.message : "เพิ่มไม่สำเร็จ");
+    } finally {
+      setFixedSaving(false);
+    }
+  }
+
+  async function handleToggleFixedOverrideStatus(override: ChargeFixedOverride) {
+    await updateChargeFixedOverride(override.id, { status: !override.status });
+    await reloadFixedOverrides();
+  }
+
+  async function handleDeleteFixedOverride(override: ChargeFixedOverride) {
+    if (!confirm(`ลบ Fixed Amount ของ "${override.charge_code?.label}" ?`)) return;
+    await deleteChargeFixedOverride(override.id);
+    await reloadFixedOverrides();
   }
 
   function toggleBulkEditMode() {
@@ -385,6 +458,15 @@ export default function AgentAccountsPage() {
                             </button>
                             <button
                               type="button"
+                              onClick={() => openFixedCharges(account)}
+                              className="mr-2 rounded-lg p-1.5 text-amber-600 hover:bg-slate-100"
+                              aria-label="Fixed Charges"
+                              title="กำหนดราคาคงที่ต่อ Charge Code (ดักก่อน Markup)"
+                            >
+                              <Banknote className="h-4 w-4" />
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => setModalAccount(account)}
                               className="mr-2 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
                               aria-label="แก้ไข"
@@ -459,6 +541,130 @@ export default function AgentAccountsPage() {
                 className="rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90 disabled:opacity-60"
               >
                 {logoSaving ? "กำลังบันทึก..." : "บันทึก"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {fixedChargesAccount && (
+        <Modal
+          title={`Fixed Charges — ${fixedChargesAccount.username_acc}`}
+          onClose={() => setFixedChargesAccount(null)}
+          maxWidthClassName="max-w-2xl"
+        >
+          <div className="flex flex-col gap-3">
+            <p className="text-xs text-slate-400">
+              ราคาคงที่นี้จะดักแทนที่ราคาจริงจาก API ก่อน แล้วค่อยคำนวณ Markup (ถ้ามีตั้งไว้ที่หน้า Mark-up Settings) ต่อ
+            </p>
+
+            {fixedLoading ? (
+              <p className="text-sm text-slate-400">กำลังโหลด...</p>
+            ) : (
+              <>
+                {fixedOverrides.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-slate-200 p-3 text-center text-sm text-slate-400">
+                    ยังไม่มี Fixed Charge สำหรับบัญชีนี้
+                  </p>
+                ) : (
+                  <div className="overflow-hidden rounded-lg border border-slate-200">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                        <tr>
+                          <th className="px-3 py-2 font-medium">Charge Code</th>
+                          <th className="px-3 py-2 font-medium text-right">Fixed Amount</th>
+                          <th className="px-3 py-2 font-medium">Status</th>
+                          <th className="px-3 py-2 font-medium text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {fixedOverrides.map((o) => (
+                          <tr key={o.id} className="border-t border-slate-200">
+                            <td className="px-3 py-2 text-slate-700">
+                              {o.charge_code?.label}
+                              <div className="text-xs text-slate-400">{o.charge_code?.code}</div>
+                            </td>
+                            <td className="px-3 py-2 text-right text-slate-600">
+                              {Number(o.fixed_amount).toLocaleString()}
+                            </td>
+                            <td className="px-3 py-2">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleFixedOverrideStatus(o)}
+                                className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                                  o.status ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-500"
+                                }`}
+                              >
+                                {o.status ? "Active" : "Inactive"}
+                              </button>
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteFixedOverride(o)}
+                                className="rounded-lg p-1.5 text-red-500 hover:bg-red-50"
+                                aria-label="ลบ"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-[1fr_140px_auto] sm:items-end">
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs font-medium text-slate-600">Charge Code</span>
+                    <select
+                      value={newFixedCodeId}
+                      onChange={(e) => setNewFixedCodeId(e.target.value ? Number(e.target.value) : "")}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
+                    >
+                      <option value="">Select charge code...</option>
+                      {fixedChargeCodes
+                        .filter((c) => !fixedOverrides.some((o) => o.charge_code_id === c.id))
+                        .map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.label} ({c.code})
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs font-medium text-slate-600">Fixed Amount (THB)</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={newFixedAmount}
+                      onChange={(e) => setNewFixedAmount(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleAddFixedOverride}
+                    disabled={fixedSaving || !newFixedCodeId || !newFixedAmount}
+                    className="flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-brand-amber px-3 py-1.5 text-sm font-semibold text-brand-navy-dark hover:bg-brand-amber/90 disabled:opacity-60"
+                  >
+                    <Plus className="h-4 w-4" /> {fixedSaving ? "..." : "Add"}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {fixedError && <p className="text-sm text-red-600">{fixedError}</p>}
+
+            <div className="mt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setFixedChargesAccount(null)}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+              >
+                Close
               </button>
             </div>
           </div>

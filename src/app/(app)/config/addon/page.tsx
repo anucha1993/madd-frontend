@@ -24,11 +24,20 @@ const inputClass =
 
 const CARRIER_OPTIONS: ("UPS" | "DHL")[] = ["UPS", "DHL"];
 
+// Box Product Type set in Create Shipment (Packages step) — lets an Insurance item's price/
+// eligibility differ by classification (e.g. UPSC only applies to Silver boxes).
+const PRODUCT_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: "SILVER", label: "Silver" },
+  { value: "NON_SILVER", label: "Non Silver" },
+  { value: "OTHER", label: "Other" },
+];
+
 type ItemForm = {
   name: string;
   carriers: ("UPS" | "DHL")[];
   customer_types: string[];
-  price_type: "FIXED" | "MANUAL" | "PERCENT";
+  product_types: string[];
+  price_type: "FIXED" | "MANUAL" | "PERCENT" | "API_COST";
   price: string;
   trigger_type: "MANUAL" | "AUTO";
   status: boolean;
@@ -39,6 +48,7 @@ const emptyForm: ItemForm = {
   name: "",
   carriers: ["UPS", "DHL"],
   customer_types: [],
+  product_types: [],
   price_type: "MANUAL",
   price: "",
   trigger_type: "MANUAL",
@@ -133,6 +143,7 @@ export default function AddonSettingsPage() {
       name: item.name,
       carriers: item.carriers,
       customer_types: item.customer_types ?? [],
+      product_types: item.product_types ?? [],
       price_type: item.price_type,
       price: item.price != null ? String(item.price) : "",
       trigger_type: item.trigger_type,
@@ -161,6 +172,15 @@ export default function AddonSettingsPage() {
     }));
   }
 
+  function toggleProductType(value: string) {
+    setForm((prev) => ({
+      ...prev,
+      product_types: prev.product_types.includes(value)
+        ? prev.product_types.filter((v) => v !== value)
+        : [...prev.product_types, value],
+    }));
+  }
+
   async function handleSaveItem() {
     if (!activeCategoryId || !form.name.trim() || form.carriers.length === 0) return;
     if ((form.price_type === "FIXED" || form.price_type === "PERCENT") && !form.price) return;
@@ -173,6 +193,7 @@ export default function AddonSettingsPage() {
         name: form.name.trim(),
         carriers: form.carriers,
         customer_types: form.customer_types.length > 0 ? form.customer_types : null,
+        product_types: form.product_types.length > 0 ? form.product_types : null,
         price_type: form.price_type,
         price: form.price ? Number(form.price) : null,
         trigger_type: form.trigger_type,
@@ -302,14 +323,18 @@ export default function AddonSettingsPage() {
                               ? "Fixed"
                               : item.price_type === "PERCENT"
                                 ? "Percent of Declared Value"
-                                : "Manual (per shipment)"}
+                                : item.price_type === "API_COST"
+                                  ? "Carrier API Cost (as-is)"
+                                  : "Manual (per shipment)"}
                           </td>
                           <td className="px-5 py-3 text-right text-slate-500">
-                            {item.price != null
-                              ? item.price_type === "PERCENT"
-                                ? `${Number(item.price).toLocaleString()}%`
-                                : Number(item.price).toLocaleString()
-                              : "-"}
+                            {item.price_type === "API_COST"
+                              ? "— (from API)"
+                              : item.price != null
+                                ? item.price_type === "PERCENT"
+                                  ? `${Number(item.price).toLocaleString()}%`
+                                  : Number(item.price).toLocaleString()
+                                : "-"}
                           </td>
                           <td className="px-5 py-3 text-slate-500">{item.trigger_type === "AUTO" ? "Auto" : "Manual"}</td>
                           <td className="px-5 py-3">
@@ -432,34 +457,56 @@ export default function AddonSettingsPage() {
                   </div>
                 </div>
 
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-sm font-medium text-slate-600">
+                    Product Type <span className="font-normal text-slate-400">(ว่าง = ใช้ได้ทุก Product Type — สำหรับหมวด Insurance เพื่อกำหนดราคา/สิทธิ์ตาม Silver/Non Silver/Other)</span>
+                  </span>
+                  <div className="flex flex-wrap gap-3">
+                    {PRODUCT_TYPE_OPTIONS.map((opt) => (
+                      <label key={opt.value} className="flex items-center gap-1.5 text-sm text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={form.product_types.includes(opt.value)}
+                          onChange={() => toggleProductType(opt.value)}
+                        />
+                        {opt.label}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-2 gap-3">
                   <label className="flex flex-col gap-1.5">
                     <span className="text-sm font-medium text-slate-600">Price Type</span>
                     <select
                       value={form.price_type}
                       onChange={(e) =>
-                        setForm((prev) => ({ ...prev, price_type: e.target.value as "FIXED" | "MANUAL" | "PERCENT" }))
+                        setForm((prev) => ({ ...prev, price_type: e.target.value as "FIXED" | "MANUAL" | "PERCENT" | "API_COST" }))
                       }
                       className={inputClass}
                     >
                       <option value="MANUAL">Manual (entered per shipment)</option>
                       <option value="FIXED">Fixed</option>
                       <option value="PERCENT">Percent of Declared Value (e.g. Insurance)</option>
+                      <option value="API_COST">Carrier API Cost (as-is, e.g. DHL Declared Value)</option>
                     </select>
                   </label>
                   <label className="flex flex-col gap-1.5">
                     <span className="text-sm font-medium text-slate-600">
                       {form.price_type === "PERCENT"
                         ? "Rate (%)"
-                        : `Price ${form.price_type === "MANUAL" ? "(default, optional)" : ""}`}
+                        : form.price_type === "API_COST"
+                          ? "Price (n/a — taken from carrier API)"
+                          : `Price ${form.price_type === "MANUAL" ? "(default, optional)" : ""}`}
                     </span>
                     <input
                       type="number"
                       step="0.01"
                       value={form.price}
+                      disabled={form.price_type === "API_COST"}
                       onChange={(e) => setForm((prev) => ({ ...prev, price: e.target.value }))}
                       placeholder={form.price_type === "PERCENT" ? "e.g. 1.1 for 1.1%" : undefined}
-                      className={inputClass}
+                      className={`${inputClass} disabled:bg-slate-100 disabled:text-slate-400`}
                     />
                   </label>
                 </div>

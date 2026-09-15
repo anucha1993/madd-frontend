@@ -9,6 +9,8 @@ export type BranchCarrierAccount = {
   label: string | null;
   tracking_prefix: string | null;
   is_default: boolean;
+  // Which service/product codes this branch may use with this account — null/empty = all allowed.
+  allowed_service_codes: string[] | null;
 };
 
 export type BranchCarrierAccountInput = {
@@ -16,6 +18,7 @@ export type BranchCarrierAccountInput = {
   label?: string | null;
   tracking_prefix?: string | null;
   is_default?: boolean;
+  allowed_service_codes?: string[] | null;
 };
 
 export const listBranchCarrierAccounts = (branchId: number) =>

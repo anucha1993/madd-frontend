@@ -246,7 +246,7 @@ export default function InsuranceCountryCapsPage() {
     <div className="relative min-h-[360px]">
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <PageHeader
-          title="Insurance Country Caps"
+          title="Insurance UPSC"
           description={`Max insurance coverage per box, by country/carrier — ${total.toLocaleString()} countries`}
         />
         <div className="flex gap-2">
@@ -298,7 +298,7 @@ export default function InsuranceCountryCapsPage() {
       {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
       {loading ? (
-        <PageLoading label="กำลังโหลดข้อมูล Insurance Country Caps..." />
+        <PageLoading label="กำลังโหลดข้อมูล Insurance UPSC..." />
       ) : rows.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white py-20 text-center">
           <Globe2 className="h-10 w-10 text-brand-amber" />
