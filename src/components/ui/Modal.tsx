@@ -10,9 +10,18 @@ type Props = {
   // Tailwind max-width class for the modal card — defaults to the compact size used by simple
   // forms (Branch/Customer edit); pass a wider one (e.g. "max-w-3xl") for content-heavy modals.
   maxWidthClassName?: string;
+  // Tailwind max-height class for the scrollable body — defaults to 75vh; pass a taller value
+  // (e.g. "max-h-[92vh]") for content-heavy modals that should avoid scrolling where possible.
+  bodyMaxHeightClassName?: string;
 };
 
-export default function Modal({ title, onClose, children, maxWidthClassName = "max-w-lg" }: Props) {
+export default function Modal({
+  title,
+  onClose,
+  children,
+  maxWidthClassName = "max-w-lg",
+  bodyMaxHeightClassName = "max-h-[75vh]",
+}: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
       <div className={`w-full ${maxWidthClassName} overflow-hidden rounded-2xl border border-black/10 bg-white shadow-2xl`}>
@@ -27,7 +36,7 @@ export default function Modal({ title, onClose, children, maxWidthClassName = "m
             <X className="h-3 w-3 text-[#4d0000]" strokeWidth={3.5} />
           </button>
         </div>
-        <div className="max-h-[75vh] overflow-y-auto bg-white px-6 py-5">{children}</div>
+        <div className={`${bodyMaxHeightClassName} overflow-y-auto bg-white px-6 py-5`}>{children}</div>
       </div>
     </div>
   );

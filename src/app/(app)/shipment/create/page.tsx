@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, ChevronLeft, ChevronRight, Loader2, Lock, Package, Plus, Receipt, Search, ShieldCheck, Sparkles, Tag, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Code, Loader2, Lock, Package, Plus, Receipt, Search, ShieldCheck, Sparkles, Tag, Trash2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import ThaiAddressSearch from "@/components/shipment/ThaiAddressSearch";
@@ -18,6 +19,7 @@ import { listManifestOptions, type ManifestOption } from "@/lib/manifestOptions"
 import { getThaiSubdistrictsByZipCode } from "@/lib/thaiSubdistricts";
 import { checkRate, type CheckRateInput, type RateQuote, type ShipmentPackageInput } from "@/lib/shipping";
 import { lookupInsuranceCountryCap, type InsuranceCountryCap } from "@/lib/insuranceCountryCaps";
+import { bookShipment, openShipmentLabel, type BookShipmentInput, type Shipment } from "@/lib/shipments";
 import { getUser } from "@/lib/auth";
 import {
   listCustomers,
@@ -137,6 +139,7 @@ const ENTITY_TYPE_OPTIONS: { value: "INDIVIDUAL" | "COMPANY"; label: string; des
 ];
 
 export default function ShipmentCreatePage() {
+  const router = useRouter();
   const { enabled: aiEnabled } = useAiEnabled();
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
@@ -282,6 +285,14 @@ export default function ShipmentCreatePage() {
   // API_COST insurance (e.g. DHL's own) tell when its frozen price is stale (Declared Value
   // edited since) even if the addon row itself was already cleared/reselected.
   const [quotedDeclaredValues, setQuotedDeclaredValues] = useState<Record<number, number>>({});
+  // "Confirm & Book Shipment" (Step 4) — opens a review Modal first, actual booking only fires
+  // when staff clicks Confirm inside it (this hits the real UPS/DHL API, not reversible).
+  const [bookingModalOpen, setBookingModalOpen] = useState(false);
+  const [booking, setBooking] = useState(false);
+  const [bookingError, setBookingError] = useState("");
+  const [bookedShipment, setBookedShipment] = useState<Shipment | null>(null);
+  const [openingLabel, setOpeningLabel] = useState(false);
+  const [viewRawQuote, setViewRawQuote] = useState<RateQuote | null>(null);
   // Which carrier(s) to check — lets staff narrow to just UPS or just DHL so the insurance
   // picker (which needs a known carrier) can be driven right after Check Rate, without waiting
   // to manually pick a quote card out of a mixed UPS+DHL results list.
@@ -308,6 +319,24 @@ export default function ShipmentCreatePage() {
     setSelectedQuote(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rateAffectingSignature, selectedCarriers.join(",")]);
+
+  // UPS never covers Document packages with insurance at all — if the selected quote is UPS,
+  // force-clear "Insurance" (and any leftover addon rows) on every Document package so staff
+  // can't get stuck with a checked-but-unselectable Insurance state.
+  const insuredDocumentSignature = packages.map((p) => `${p.key}:${p.is_document ? 1 : 0}:${p.insured ? 1 : 0}`).join(",");
+  useEffect(() => {
+    if (selectedQuote?.carrier !== "UPS") return;
+    const blockedKeys = packages.filter((p) => p.is_document && p.insured).map((p) => p.key);
+    if (blockedKeys.length === 0) return;
+    setPackages((prev) => prev.map((p) => (blockedKeys.includes(p.key) ? { ...p, insured: false } : p)));
+    setAddonRows((prev) =>
+      prev.filter((r) => {
+        if (r.category !== "Insurance" || r.packageKey == null) return true;
+        return !blockedKeys.includes(r.packageKey);
+      }),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedQuote, insuredDocumentSignature]);
 
   useEffect(() => {
     if (!destinationCountry) {
@@ -404,6 +433,11 @@ export default function ShipmentCreatePage() {
       alert(`ไม่สามารถขายประกันบุคคลที่สามสำหรับปลายทาง ${insuranceCap.country_name} ได้: ${insuranceCap.note}`);
       return;
     }
+    // UPS does not cover Document shipments with its own insurance (ICDV) at all.
+    if (!isThirdParty && selectedQuote?.carrier === "UPS" && pkg.is_document) {
+      alert("UPS ไม่คุ้มครองพัสดุประเภทเอกสาร (Document) ด้วยประกันของ UPS เอง");
+      return;
+    }
     // API_COST's price is frozen from the last Check Rate's real chargeBreakdown — refuse to
     // (re)select it with a Declared Value that's changed since, instead of silently reusing a
     // stale carrier cost that no longer matches what was actually sent to Check Rate.
@@ -427,10 +461,11 @@ export default function ShipmentCreatePage() {
 
     // Carrier-own insurance (ICDV/DHL) SELLING price still follows whatever is configured for
     // this item at /config/addon (FIXED/PERCENT/MANUAL). The real charge the carrier's own API
-    // returned (UPS code "400", DHL code "II") is kept separately as our internal cost,
-    // purely for margin reference — it does NOT set the price.
+    // returned (UPS code "400", DHL code "II" for boxes / "IB" for documents) is kept separately
+    // as our internal cost, purely for margin reference — it does NOT set the price.
+    const dhlChargeCode = pkg.is_document ? "IB" : "II";
     const carrierInsuranceCharge = !isThirdParty
-      ? selectedQuote?.chargeBreakdown?.find((c) => c.code === (selectedQuote.carrier === "DHL" ? "II" : "400"))?.amount
+      ? selectedQuote?.chargeBreakdown?.find((c) => c.code === (selectedQuote.carrier === "DHL" ? dhlChargeCode : "400"))?.amount
       : undefined;
 
     const unitPrice =
@@ -916,6 +951,96 @@ export default function ShipmentCreatePage() {
     }
   }
 
+  // Builds the real booking payload from the currently selected quote + everything typed in the
+  // wizard so far — null if there's no selected quote yet (booking is impossible without one).
+  function buildBookingPayload(): BookShipmentInput | null {
+    if (!selectedQuote) return null;
+
+    return {
+      agent_account_id: selectedQuote.accountId,
+      carrier: selectedQuote.carrier,
+      service_code: selectedQuote.serviceCode ?? "",
+      service_label: selectedQuote.serviceLabel,
+      origin: {
+        contact_name: originContactName.trim() || undefined,
+        company: originCompany.trim() || undefined,
+        postcode: originPostcode.trim(),
+        city: originCity.trim(),
+        address: originAddress.trim(),
+        address2: originAddress2.trim() || undefined,
+        address3: originAddress3.trim() || undefined,
+        phone: originPhone.trim() || undefined,
+      },
+      destination: {
+        contact_name: destinationContactName.trim() || undefined,
+        company: destinationCompany.trim() || undefined,
+        country: destinationCountry,
+        city: destinationCity.trim(),
+        postcode: destinationPostcode.trim() || undefined,
+        address: destinationAddress.trim() || undefined,
+        address2: destinationAddress2.trim() || undefined,
+        address3: destinationAddress3.trim() || undefined,
+        phone: destinationPhone.trim() || undefined,
+        email: destinationEmail.trim() || undefined,
+      },
+      packages: packages.map((p) => {
+        // Which Insurance item was sold for THIS package — lets the backend tell the carrier
+        // apart from third-party UPSC (see ShipmentController::store's useCarrierInsurance).
+        const insuranceRow = addonRows.find((r) => r.packageKey === p.key && r.category === "Insurance");
+        return {
+          weight: p.weight,
+          length: p.is_document ? undefined : p.length,
+          width: p.is_document ? undefined : p.width,
+          height: p.is_document ? undefined : p.height,
+          quantity: p.quantity,
+          description: p.description || undefined,
+          is_document: p.is_document,
+          declared_value: p.insured ? Number(p.declared_value) || 0 : undefined,
+          insurance_addon_item_id: insuranceRow?.addonItemId ?? null,
+        };
+      }),
+      declared_value_currency: "THB",
+      addon_lines: addonRows.map((row) => ({
+        name: row.name,
+        category: row.category,
+        quantity: row.quantity,
+        unit_price: Number(row.unitPrice) || 0,
+      })),
+      freight_amount: freightAmount,
+      addon_total: addonTotal,
+      order_total: orderTotal,
+      currency: selectedQuote.currency ?? "THB",
+    };
+  }
+
+  async function handleConfirmBooking() {
+    const payload = buildBookingPayload();
+    if (!payload) return;
+
+    setBooking(true);
+    setBookingError("");
+    try {
+      const shipment = await bookShipment(payload);
+      setBookedShipment(shipment);
+    } catch (err) {
+      setBookingError(err instanceof Error ? err.message : "สร้าง Shipment ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+    } finally {
+      setBooking(false);
+    }
+  }
+
+  async function handleOpenLabel() {
+    if (!bookedShipment) return;
+    setOpeningLabel(true);
+    try {
+      await openShipmentLabel(bookedShipment.id);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "เปิด Label ไม่สำเร็จ");
+    } finally {
+      setOpeningLabel(false);
+    }
+  }
+
   const inputClass =
     "w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-sm text-slate-800 outline-none transition focus:border-brand-navy focus:bg-white focus:ring-2 focus:ring-brand-navy/15";
   const labelClass = "text-sm font-medium text-slate-600";
@@ -982,18 +1107,21 @@ export default function ShipmentCreatePage() {
   // explicitly added as an Add-on row (see addAddonFromSupply), which already flows through addonLines below.
   const selectedQuoteLogo = selectedQuote ? agents.find((a) => a.agent_code === selectedQuote.carrier)?.logo_url : undefined;
   // The carrier's own quoted total includes ITS OWN real Declared Value/insurance charge
-  // (DHL code "II", UPS code "400") baked into Freight — that's cost-reference only (see
-  // selectPackageInsurance), the customer is billed for insurance ONLY via the separate
-  // Insurance Add-on line below, so it must be subtracted here to avoid double-charging.
+  // (DHL codes "II" for boxes / "IB" for documents, UPS code "400") baked into Freight —
+  // that's cost-reference only (see selectPackageInsurance), the customer is billed for
+  // insurance ONLY via the separate Insurance Add-on line below, so it must be subtracted here
+  // to avoid double-charging.
   function getSellFreightAmount(r: RateQuote) {
-    const carrierInsuranceChargeCode = r.carrier === "DHL" ? "II" : "400";
-    const carrierInsuranceChargeAmount = r.chargeBreakdown?.find((c) => c.code === carrierInsuranceChargeCode)?.amount ?? 0;
+    const costOnlyCodes = r.carrier === "DHL" ? ["II", "IB"] : ["400"];
+    const costOnlyAmount = (r.chargeBreakdown ?? [])
+      .filter((c) => c.code && costOnlyCodes.includes(c.code))
+      .reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
     const rawTotal = r.negotiated ?? r.published ?? 0;
-    return { sellAmount: rawTotal - (Number(carrierInsuranceChargeAmount) || 0), carrierInsuranceChargeCode };
+    return { sellAmount: rawTotal - costOnlyAmount, costOnlyCodes };
   }
-  const { sellAmount: freightAmount, carrierInsuranceChargeCode } = selectedQuote
+  const { sellAmount: freightAmount, costOnlyCodes: carrierCostOnlyCodes } = selectedQuote
     ? getSellFreightAmount(selectedQuote)
-    : { sellAmount: 0, carrierInsuranceChargeCode: null as string | null };
+    : { sellAmount: 0, costOnlyCodes: [] as string[] };
   // Whether ANY package is actually selling the carrier's own insurance (API_COST, e.g. DHL
   // Declared Value) — if every insured package uses third-party UPSC instead, the carrier's own
   // insurance cost line in chargeBreakdown is pure noise (never charged, never "bought") and
@@ -1056,14 +1184,18 @@ export default function ShipmentCreatePage() {
             {packages.map((p, idx) => (
               <p key={p.key} className="text-slate-600">
                 #{idx + 1} {p.is_document ? "Document" : `${p.length}x${p.width}x${p.height} cm`}, {p.weight}kg x{p.quantity}
-                {" — "}
-                {p.productType === "SILVER"
-                  ? "Silver"
-                  : p.productType === "NON_SILVER"
-                    ? "Non Silver"
-                    : p.productType === "OTHER"
-                      ? `Other${p.productTypeOther ? `: ${p.productTypeOther}` : ""}`
-                      : "-"}
+                {!p.is_document && (
+                  <>
+                    {" — "}
+                    {p.productType === "SILVER"
+                      ? "Silver"
+                      : p.productType === "NON_SILVER"
+                        ? "Non Silver"
+                        : p.productType === "OTHER"
+                          ? `Other${p.productTypeOther ? `: ${p.productTypeOther}` : ""}`
+                          : "-"}
+                  </>
+                )}
                 {p.insured && <span className="text-emerald-600"> · Insured</span>}
               </p>
             ))}
@@ -1087,16 +1219,25 @@ export default function ShipmentCreatePage() {
               </span>
             </div>
             <p className="text-xs text-slate-500">{selectedQuote.serviceLabel}</p>
+            <p className="text-[11px] text-slate-400">
+              Account: <span className="font-medium text-slate-500">{selectedQuote.username}</span>
+              {selectedQuote.zone && (
+                <>
+                  {" "}
+                  · Zone <span className="font-medium text-slate-500">{selectedQuote.zone}</span>
+                </>
+              )}
+            </p>
             {selectedQuote.chargeBreakdown && selectedQuote.chargeBreakdown.length > 0 && (
               <div className="mt-2 flex flex-col gap-0.5 border-t border-amber-100 pt-2">
                 <p className="text-[11px] text-slate-400">
                   รายการด้านล่างคือค่าใช้จ่ายจริงที่ {selectedQuote.carrier} เรียกเก็บ (ต้นทุน) — ยอดด้านบนหักรายการ{" "}
-                  {carrierInsuranceChargeCode} ออกแล้ว เพราะประกันคิดแยกเป็น Insurance Add-on ต่างหาก ไม่คิดซ้ำในค่า Freight
+                  {carrierCostOnlyCodes.join(", ")} ออกแล้ว เพราะประกันคิดแยกเป็น Insurance Add-on ต่างหาก ไม่คิดซ้ำในค่า Freight
                 </p>
                 {selectedQuote.chargeBreakdown
-                  .filter((line) => sellingCarrierOwnInsurance || line.code !== carrierInsuranceChargeCode)
+                  .filter((line) => sellingCarrierOwnInsurance || !carrierCostOnlyCodes.includes(line.code ?? ""))
                   .map((line, li) => {
-                  const isCarrierInsuranceLine = line.code === carrierInsuranceChargeCode;
+                  const isCarrierInsuranceLine = carrierCostOnlyCodes.includes(line.code ?? "");
                   return (
                     <div key={li} className="flex items-center justify-between text-xs">
                       <span className="text-slate-500">
@@ -1205,6 +1346,10 @@ export default function ShipmentCreatePage() {
     const isStaleApiCost =
       insuranceCarrierOption?.price_type === "API_COST" &&
       quotedDeclaredValues[pkg.key] !== (Number(pkg.declared_value) || 0);
+    // UPS does not cover Document shipments with its own insurance (ICDV) at all — confirmed
+    // business rule, not a config-driven restriction like the insurance country caps below.
+    const upsDocumentNotCovered = selectedQuote?.carrier === "UPS" && !!pkg.is_document;
+    const carrierOptionDisabled = isStaleApiCost || upsDocumentNotCovered;
     return (
       <div className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center gap-4 text-sm">
@@ -1214,7 +1359,9 @@ export default function ShipmentCreatePage() {
             return (
               <label
                 title={
-                  isStaleApiCost
+                  upsDocumentNotCovered
+                    ? "⚠ UPS ไม่คุ้มครองพัสดุประเภทเอกสาร (Document) ด้วยประกันของ UPS เอง"
+                    : isStaleApiCost
                     ? "⚠ มูลค่าสินค้าเปลี่ยนไปตั้งแต่เช็ค Rate ล่าสุด — กรุณากด Check Rate ใหม่ก่อนเลือกประกันนี้"
                     : `ประกันของผู้ให้บริการขนส่งเอง (${insuranceCarrierOption.carriers.join("/")}) — ${
                         insuranceCarrierOption.price_type === "API_COST"
@@ -1223,14 +1370,14 @@ export default function ShipmentCreatePage() {
                       }`
                 }
                 className={`flex items-center gap-1.5 ${
-                  isStaleApiCost ? "cursor-not-allowed text-slate-300" : "cursor-pointer text-slate-700"
+                  carrierOptionDisabled ? "cursor-not-allowed text-slate-300" : "cursor-pointer text-slate-700"
                 }`}
               >
                 <input
                   type="radio"
                   name={radioName}
                   checked={selected}
-                  disabled={isStaleApiCost}
+                  disabled={carrierOptionDisabled}
                   onChange={() => selectPackageInsurance(pkg, insuranceCarrierOption)}
                   className="h-3.5 w-3.5 text-brand-amber focus:ring-brand-amber/30"
                 />
@@ -1266,7 +1413,10 @@ export default function ShipmentCreatePage() {
             );
           })()}
         </div>
-        {isStaleApiCost && (
+        {upsDocumentNotCovered && (
+          <p className="text-xs font-medium text-amber-600">⚠ UPS ไม่คุ้มครองพัสดุประเภทเอกสาร (Document) ด้วยประกันของ UPS เอง</p>
+        )}
+        {!upsDocumentNotCovered && isStaleApiCost && (
           <p className="text-xs font-medium text-amber-600">
             ⚠ มูลค่าสินค้าเปลี่ยนไปตั้งแต่เช็ค Rate ล่าสุด — กรุณากด Check Rate ใหม่ก่อนเลือก {insuranceCarrierOption?.name}
           </p>
@@ -1824,49 +1974,53 @@ export default function ShipmentCreatePage() {
                       </span>
                     )}
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={labelClass}>Product Type</span>
-                    <button
-                      type="button"
-                      disabled={!isActive}
-                      onClick={() => setPackageProductType(pkg.key, pkg.productType === "SILVER" ? null : "SILVER")}
-                      className={`rounded-md px-2 py-0.5 text-xs font-semibold transition disabled:cursor-not-allowed ${
-                        pkg.productType === "SILVER" ? "bg-brand-navy-dark text-white" : "bg-slate-200 text-slate-500"
-                      }`}
-                    >
-                      Silver
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!isActive}
-                      onClick={() => setPackageProductType(pkg.key, pkg.productType === "NON_SILVER" ? null : "NON_SILVER")}
-                      className={`rounded-md px-2 py-0.5 text-xs font-semibold transition disabled:cursor-not-allowed ${
-                        pkg.productType === "NON_SILVER" ? "bg-brand-navy-dark text-white" : "bg-slate-200 text-slate-500"
-                      }`}
-                    >
-                      Non Silver
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!isActive}
-                      onClick={() => setPackageProductType(pkg.key, pkg.productType === "OTHER" ? null : "OTHER")}
-                      className={`rounded-md px-2 py-0.5 text-xs font-semibold transition disabled:cursor-not-allowed ${
-                        pkg.productType === "OTHER" ? "bg-brand-navy-dark text-white" : "bg-slate-200 text-slate-500"
-                      }`}
-                    >
-                      Other
-                    </button>
-                    {pkg.productType === "OTHER" && (
-                      <input
-                        type="text"
-                        value={pkg.productTypeOther}
+                  {/* Product Type (Silver/Non Silver) only classifies Box insurance eligibility — a
+                      Document package has no such concept, so hide the picker entirely for it. */}
+                  {!pkg.is_document && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={labelClass}>Product Type</span>
+                      <button
+                        type="button"
                         disabled={!isActive}
-                        onChange={(e) => updatePackage(pkg.key, { productTypeOther: e.target.value })}
-                        placeholder="Specify product type"
-                        className="w-40 rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15 disabled:bg-slate-100"
-                      />
-                    )}
-                  </div>
+                        onClick={() => setPackageProductType(pkg.key, pkg.productType === "SILVER" ? null : "SILVER")}
+                        className={`rounded-md px-2 py-0.5 text-xs font-semibold transition disabled:cursor-not-allowed ${
+                          pkg.productType === "SILVER" ? "bg-brand-navy-dark text-white" : "bg-slate-200 text-slate-500"
+                        }`}
+                      >
+                        Silver
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!isActive}
+                        onClick={() => setPackageProductType(pkg.key, pkg.productType === "NON_SILVER" ? null : "NON_SILVER")}
+                        className={`rounded-md px-2 py-0.5 text-xs font-semibold transition disabled:cursor-not-allowed ${
+                          pkg.productType === "NON_SILVER" ? "bg-brand-navy-dark text-white" : "bg-slate-200 text-slate-500"
+                        }`}
+                      >
+                        Non Silver
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!isActive}
+                        onClick={() => setPackageProductType(pkg.key, pkg.productType === "OTHER" ? null : "OTHER")}
+                        className={`rounded-md px-2 py-0.5 text-xs font-semibold transition disabled:cursor-not-allowed ${
+                          pkg.productType === "OTHER" ? "bg-brand-navy-dark text-white" : "bg-slate-200 text-slate-500"
+                        }`}
+                      >
+                        Other
+                      </button>
+                      {pkg.productType === "OTHER" && (
+                        <input
+                          type="text"
+                          value={pkg.productTypeOther}
+                          disabled={!isActive}
+                          onChange={(e) => updatePackage(pkg.key, { productTypeOther: e.target.value })}
+                          placeholder="Specify product type"
+                          className="w-40 rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15 disabled:bg-slate-100"
+                        />
+                      )}
+                    </div>
+                  )}
                   <div className="flex items-end gap-3">
                   <label className="flex w-24 flex-col gap-1">
                     <span className={labelClass}>Weight (kg)</span>
@@ -1949,11 +2103,14 @@ export default function ShipmentCreatePage() {
                   <div className="flex items-end gap-3">
                   <div className="flex w-24 flex-col gap-1">
                     {/* <span className={labelClass}>Insurance</span> */}
-                    <label className="flex h-[34px] items-center gap-1.5">
+                    <label
+                      className="flex h-[34px] items-center gap-1.5"
+                      title={selectedQuote?.carrier === "UPS" && pkg.is_document ? "UPS ไม่คุ้มครองพัสดุประเภทเอกสาร (Document) ด้วยประกันของ UPS เอง" : undefined}
+                    >
                       <input
                         type="checkbox"
                         checked={pkg.insured}
-                        disabled={!isActive}
+                        disabled={!isActive || (selectedQuote?.carrier === "UPS" && !!pkg.is_document)}
                         onChange={(e) => {
                           const insured = e.target.checked;
                           updatePackage(pkg.key, { insured });
@@ -2123,13 +2280,17 @@ export default function ShipmentCreatePage() {
                       selectedQuote.carrier === r.carrier &&
                       selectedQuote.accountId === r.accountId &&
                       selectedQuote.serviceCode === r.serviceCode;
-                    const { sellAmount, carrierInsuranceChargeCode: rInsuranceCode } = getSellFreightAmount(r);
+                    const { sellAmount, costOnlyCodes: rCostOnlyCodes } = getSellFreightAmount(r);
                     return (
-                      <button
-                        type="button"
+                      <div
                         key={`${r.carrier}-${r.accountId}-${r.serviceCode}-${i}`}
                         onClick={() => setSelectedQuote(r)}
-                        className={`w-full rounded-xl border p-3 text-left transition ${
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") setSelectedQuote(r);
+                        }}
+                        className={`w-full cursor-pointer rounded-xl border p-3 text-left transition ${
                           isSelected ? "border-brand-amber bg-amber-50/60 ring-1 ring-brand-amber" : "border-slate-200 hover:border-slate-300"
                         }`}
                       >
@@ -2148,7 +2309,10 @@ export default function ShipmentCreatePage() {
                             {sellAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {r.currency}
                           </span>
                         </div>
-                        <p className="mt-0.5 text-xs text-slate-500">{r.serviceLabel}</p>
+                        <p className="mt-0.5 text-xs text-slate-500">
+                          {r.serviceLabel}
+                          {r.serviceCode && <span className="text-slate-300"> ({r.serviceCode})</span>}
+                        </p>
                         <div className="mt-1 flex items-center justify-between text-xs text-slate-400">
                           <span>
                             {r.username}
@@ -2156,16 +2320,24 @@ export default function ShipmentCreatePage() {
                           </span>
                           <span>{r.transitDays != null ? `${r.transitDays} days` : "-"}</span>
                         </div>
+                        {r.billedWeight != null && (
+                          <p className="mt-0.5 text-xs text-slate-400">
+                            Billed Weight: <span className="font-medium text-slate-500">{r.billedWeight} {r.billedWeightUnit}</span>
+                            {r.volumetricWeight != null && (
+                              <span> · Volumetric: <span className="font-medium text-slate-500">{r.volumetricWeight} {r.billedWeightUnit}</span></span>
+                            )}
+                          </p>
+                        )}
                         {r.chargeBreakdown && r.chargeBreakdown.length > 0 && (
                           <div className="mt-2 flex flex-col gap-0.5 border-t border-slate-100 pt-2">
                             {r.chargeBreakdown
-                              .filter((line) => sellingCarrierOwnInsurance || line.code !== rInsuranceCode)
+                              .filter((line) => sellingCarrierOwnInsurance || !rCostOnlyCodes.includes(line.code ?? ""))
                               .map((line, li) => (
                               <div key={li} className="flex items-center justify-between text-xs">
                                 <span className="text-slate-500">
                                   {line.description}
                                   {line.code ? <span className="text-slate-300"> ({line.code})</span> : null}
-                                  {line.code === rInsuranceCode && (
+                                  {rCostOnlyCodes.includes(line.code ?? "") && (
                                     <span className="ml-1 text-amber-600">— ต้นทุน ไม่รวมในยอดขายด้านบน</span>
                                   )}
                                 </span>
@@ -2176,7 +2348,21 @@ export default function ShipmentCreatePage() {
                             ))}
                           </div>
                         )}
-                      </button>
+                        {r.raw != null && (
+                          <div className="mt-2 flex justify-end border-t border-slate-100 pt-2">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setViewRawQuote(r);
+                              }}
+                              className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                            >
+                              <Code className="h-3 w-3" /> Raw
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                   {okResults.length === 0 && <p className="text-sm text-slate-400">No valid quotes returned.</p>}
@@ -2291,13 +2477,25 @@ export default function ShipmentCreatePage() {
         </div>
       </div>
 
-      <div className="flex justify-start">
+      <div className="flex items-center justify-between">
         <button
           type="button"
           onClick={() => setStep(3)}
           className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
         >
           <ChevronLeft className="h-4 w-4" /> Back
+        </button>
+        <button
+          type="button"
+          disabled={!selectedQuote}
+          onClick={() => {
+            setBookedShipment(null);
+            setBookingError("");
+            setBookingModalOpen(true);
+          }}
+          className="flex items-center gap-2 rounded-lg bg-brand-amber px-5 py-2.5 text-sm font-semibold text-brand-navy-dark shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          สร้าง Shipment <ChevronRight className="h-4 w-4" />
         </button>
       </div>
         </div>
@@ -2693,6 +2891,102 @@ export default function ShipmentCreatePage() {
               </button>
             </div>
           </div>
+        </Modal>
+      )}
+
+      {viewRawQuote && (
+        <Modal title={`Raw API Response — ${viewRawQuote.carrier} ${viewRawQuote.serviceLabel}`} onClose={() => setViewRawQuote(null)} maxWidthClassName="max-w-3xl">
+          <pre className="max-h-[65vh] overflow-auto rounded-lg bg-slate-900 p-4 text-xs text-slate-100">
+            {JSON.stringify(viewRawQuote.raw, null, 2)}
+          </pre>
+        </Modal>
+      )}
+
+      {bookingModalOpen && selectedQuote && (
+        <Modal
+          title={bookedShipment ? "สร้าง Shipment สำเร็จ" : "ยืนยันการสร้าง Shipment"}
+          onClose={() => {
+            if (booking) return;
+            if (bookedShipment) {
+              router.push("/shipment/list");
+              return;
+            }
+            setBookingModalOpen(false);
+          }}
+          maxWidthClassName="max-w-3xl"
+          bodyMaxHeightClassName="max-h-[92vh]"
+        >
+          {bookedShipment ? (
+            <div className="flex flex-col gap-5">
+              <div className="flex flex-col items-center gap-3 rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50 to-white px-6 py-8 text-center">
+                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500 shadow-lg shadow-emerald-200">
+                  <CheckCircle2 className="h-8 w-8 text-white" />
+                </div>
+                <div>
+                  <p className="text-base font-bold text-emerald-700">จอง Shipment กับ {bookedShipment.carrier} สำเร็จแล้ว</p>
+                  <p className="mt-1 text-sm text-slate-500">บันทึกเข้าระบบเรียบร้อย พร้อมติดตามสถานะได้ทันที</p>
+                </div>
+                <div className="mt-2 flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 shadow-sm">
+                  <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Tracking No.</span>
+                  <span className="font-mono text-lg font-bold text-brand-navy-dark">{bookedShipment.tracking_number ?? "-"}</span>
+                </div>
+              </div>
+              {bookedShipment.label_storage_key && (
+                <button
+                  type="button"
+                  onClick={handleOpenLabel}
+                  disabled={openingLabel}
+                  className="flex items-center justify-center gap-2 rounded-xl bg-brand-navy-dark px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:opacity-60"
+                >
+                  {openingLabel ? <Loader2 className="h-4 w-4 animate-spin" /> : <Receipt className="h-4 w-4" />}
+                  เปิด Label (พร้อมพิมพ์)
+                </button>
+              )}
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => router.push("/shipment/list")}
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                >
+                  ปิด
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2.5">
+              <div className="flex items-start gap-2.5 rounded-lg border border-amber-200 bg-gradient-to-r from-amber-50 to-white px-3 py-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                <p className="text-xs text-amber-800">
+                  <span className="font-bold">การกด Confirm จะสร้าง Shipment จริงกับ {selectedQuote.carrier}</span> ({selectedQuote.serviceLabel})
+                  — ไม่สามารถยกเลิกจากระบบนี้ได้ กรุณาตรวจสอบข้อมูลด้านล่างให้ถูกต้องก่อนยืนยัน
+                </p>
+              </div>
+
+              <div className="[&_.sticky]:!static">{orderSummaryPanel}</div>
+
+              {bookingError && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-600">{bookingError}</p>}
+
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setBookingModalOpen(false)}
+                  disabled={booking}
+                  className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmBooking}
+                  disabled={booking}
+                  className="flex items-center gap-2 rounded-lg bg-brand-amber px-6 py-2.5 text-sm font-bold text-brand-navy-dark shadow-md shadow-amber-200 transition hover:brightness-95 disabled:opacity-60"
+                >
+                  {booking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
+                  {booking ? "กำลังสร้าง Shipment..." : "Confirm"}
+                </button>
+              </div>
+            </div>
+          )}
         </Modal>
       )}
     </div>

@@ -57,6 +57,9 @@ export type RateQuote = {
   currency?: string;
   billedWeight?: string | number | null;
   billedWeightUnit?: string | null;
+  // DHL only — dimensional/volumetric weight it calculated from the package dims, shown
+  // alongside billedWeight since DHL bills whichever of the two is greater.
+  volumetricWeight?: number | null;
   zone?: string | null;
   published?: number | null;
   negotiated?: number | null;
@@ -65,6 +68,9 @@ export type RateQuote = {
   estimatedDelivery?: string | null;
   chargeBreakdown?: RateChargeLine[];
   error?: string | null;
+  // Raw carrier API response for this specific quote — only for staff-facing debugging (see
+  // "Raw" button on each Rate Quotes candidate card), never shown to customers.
+  raw?: unknown;
 };
 
 export type CheckRateResult = {
