@@ -292,7 +292,7 @@ export default function ShipmentViewPage() {
               </p>
             </div>
             <div className="flex min-w-0 items-center gap-2.5 text-[13px]">
-              <span className="truncate font-medium">{cityLine(s.origin)}</span>
+              <span className="truncate font-medium">{cityLine(s.origin as Party | undefined)}</span>
               <ArrowRight className="h-3.5 w-3.5 shrink-0 text-white/40" />
               <span className="truncate font-medium">{cityLine(s.destination as Party | undefined)}</span>
             </div>
@@ -337,7 +337,7 @@ export default function ShipmentViewPage() {
             </dl>
             {/* A hairline between the panels instead of a box inside a box. */}
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-6 lg:divide-x lg:divide-slate-100">
-              <PartyPanel heading="Ship From" party={s.origin} />
+              <PartyPanel heading="Ship From" party={s.origin as Party | undefined} />
               <div className="lg:pl-6">
                 <PartyPanel heading="Ship To" party={s.destination as Party | undefined} />
               </div>
