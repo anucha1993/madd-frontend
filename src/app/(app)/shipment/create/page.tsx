@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Code, Loader2, Lock, Package, Plus, Receipt, Search, ShieldCheck, Sparkles, Tag, Trash2 } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Code, Loader2, Lock, Package, Plus, Printer, Receipt, Search, ShieldCheck, Sparkles, Tag, Trash2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import ThaiAddressSearch from "@/components/shipment/ThaiAddressSearch";
@@ -19,7 +19,8 @@ import { listManifestOptions, type ManifestOption } from "@/lib/manifestOptions"
 import { getThaiSubdistrictsByZipCode } from "@/lib/thaiSubdistricts";
 import { checkRate, type CheckRateInput, type RateQuote, type ShipmentPackageInput } from "@/lib/shipping";
 import { lookupInsuranceCountryCap, type InsuranceCountryCap } from "@/lib/insuranceCountryCaps";
-import { bookShipment, openShipmentLabel, type BookShipmentInput, type Shipment } from "@/lib/shipments";
+import { bookShipment, openShipmentLabel, printShipmentReceipt, type BookShipmentInput, type Shipment } from "@/lib/shipments";
+import { getShipmentDraft, createShipmentDraft, updateShipmentDraft, deleteShipmentDraft } from "@/lib/shipmentDrafts";
 import { getUser } from "@/lib/auth";
 import {
   listCustomers,
@@ -33,6 +34,12 @@ import {
 // Loose text match helper for reconciling AI-parsed Thai subdistrict/district names (which
 // often have inconsistent romanization, e.g. "Phlabphla" vs the DB's "Phlapphla") against the
 // thai_subdistricts lookup table — see handleAiFillApply.
+
+// DHL insures Documents with a flat, non-value-based lump sum (its own "Extended Liability"
+// service, 'IB') rather than a percentage of a declared value — so Document insurance is just a
+// Yes/No toggle; this is the fixed compensation DHL states on its own MyDHL portal.
+const DHL_DOCUMENT_FIXED_COVERAGE_THB = 17000;
+
 function levenshteinDistance(a: string, b: string): number {
   if (a === b) return 0;
   if (!a.length) return b.length;
@@ -140,6 +147,7 @@ const ENTITY_TYPE_OPTIONS: { value: "INDIVIDUAL" | "COMPANY"; label: string; des
 
 export default function ShipmentCreatePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { enabled: aiEnabled } = useAiEnabled();
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
@@ -307,12 +315,13 @@ export default function ShipmentCreatePage() {
 
   // Rate Quotes reflect whatever the packages looked like at the moment "Check Rate" was
   // clicked — if weight/dimensions/quantity/box-vs-document change afterwards, the old quotes no
-  // longer match and must be invalidated. Deliberately EXCLUDES insured/declared_value/productType —
-  // those are set AFTER picking a quote (to drive the Insurance picker), so changing them must not
-  // wipe out the just-selected quote; staff re-run Check Rate manually to fold the real declared
-  // value insurance charge into the quote once ready.
+  // longer match and must be invalidated. Still deliberately EXCLUDES Box Declared Value (typing a
+  // new value must not wipe the just-selected quote — see the isStaleApiCost pattern instead) —
+  // but DOCUMENT insurance is a flat toggle (never typed) that changes the quoted total outright
+  // (DHL's IB charge), so flipping it always invalidates old quotes, forcing a guaranteed-fresh
+  // re-check instead of ever showing a quote whose price doesn't match the current Insurance state.
   const rateAffectingSignature = JSON.stringify(
-    packages.map((p) => [p.weight, p.length, p.width, p.height, p.quantity, p.is_document]),
+    packages.map((p) => [p.weight, p.length, p.width, p.height, p.quantity, p.is_document, p.is_document ? p.insured : false]),
   );
   useEffect(() => {
     setResults(null);
@@ -338,6 +347,52 @@ export default function ShipmentCreatePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedQuote, insuredDocumentSignature]);
 
+  // getInsuranceOptionsForPackage requires a selectedQuote to know which carrier's item applies
+  // — so checking "Insurance" BEFORE ever running Check Rate leaves NO addon row selected at all
+  // (autoSelectPackageInsurer has nothing to pick from yet). Backfill it now that a real quote
+  // exists, for every package still marked insured. MUST check stillEligible first (same as
+  // setPackageProductType) — selectPackageInsurance TOGGLES OFF an already-selected item, so
+  // calling autoSelectPackageInsurer unconditionally on every selectedQuote change (e.g. just
+  // switching between two DHL quote cards) would silently deselect/remove the existing row.
+  useEffect(() => {
+    if (!selectedQuote) return;
+    packages.forEach((pkg) => {
+      if (!pkg.insured || (selectedQuote.carrier === "UPS" && pkg.is_document)) return;
+      const { carrierOption, thirdPartyOption } = getInsuranceOptionsForPackage(pkg.productType);
+      const selectedRow = addonRows.find((r) => r.packageKey === pkg.key && r.category === "Insurance");
+      const stillEligible =
+        !!selectedRow && (selectedRow.addonItemId === carrierOption?.id || selectedRow.addonItemId === thirdPartyOption?.id);
+      if (!stillEligible) autoSelectPackageInsurer(pkg);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedQuote]);
+
+  // Carrier-own (API_COST) insurance rows are created with whatever real charge is available AT
+  // SELECTION TIME (see selectPackageInsurance) — often 0/stale if Insurance was checked before a
+  // Rate Quote existed yet. Re-sync every such row's price whenever the selected quote's real
+  // chargeBreakdown changes, so "ราคาประกันสินค้า" always reflects the actual API cost.
+  useEffect(() => {
+    if (!selectedQuote) return;
+    setAddonRows((prev) =>
+      prev.map((row) => {
+        if (row.category !== "Insurance" || row.packageKey == null) return row;
+        const item = addonItems.find((i) => i.id === row.addonItemId);
+        if (!item || item.price_type !== "API_COST" || isThirdPartyInsuranceItem(item)) return row;
+        const pkg = packages.find((p) => p.key === row.packageKey);
+        if (!pkg) return row;
+        const dhlChargeCode = pkg.is_document ? "IB" : "II";
+        const charge = selectedQuote.chargeBreakdown?.find(
+          (c) => c.code === (selectedQuote.carrier === "DHL" ? dhlChargeCode : "400"),
+        )?.amount;
+        const newUnitPrice = String(charge ?? 0);
+        const newCostPrice = charge != null ? String(charge) : undefined;
+        if (row.unitPrice === newUnitPrice && row.costPrice === newCostPrice) return row;
+        return { ...row, unitPrice: newUnitPrice, costPrice: newCostPrice };
+      }),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedQuote]);
+
   useEffect(() => {
     if (!destinationCountry) {
       setInsuranceCap(null);
@@ -355,6 +410,168 @@ export default function ShipmentCreatePage() {
       cancelled = true;
     };
   }, [destinationCountry]);
+
+  // Draft saving — lets staff save an in-progress shipment (any step) and resume it later via
+  // /shipment/create?draft=<id>. A draft can only be edited/deleted while it's still a draft —
+  // once successfully booked into a real Shipment, the draft is deleted (see handleConfirmBooking).
+  const [draftId, setDraftId] = useState<number | null>(null);
+  const [draftName, setDraftName] = useState("");
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [draftMessage, setDraftMessage] = useState("");
+  const [draftError, setDraftError] = useState("");
+  const [loadingDraft, setLoadingDraft] = useState(false);
+
+  // Every piece of state a staff member actually fills in across all 4 steps — restored as-is
+  // when resuming a draft. Deliberately excludes purely-fetched reference data (agents,
+  // countries, weightBands, addonItems, supplies, customerTypeOptions, etc.) and transient UI
+  // state (modals, search box text, loading flags) that doesn't represent user input.
+  function buildDraftSnapshot() {
+    return {
+      step,
+      customerType,
+      entityType,
+      origin: {
+        contactName: originContactName,
+        customerId: originCustomerId,
+        company: originCompany,
+        taxId: originTaxId,
+        postcode: originPostcode,
+        city: originCity,
+        address: originAddress,
+        address2: originAddress2,
+        address3: originAddress3,
+        phone: originPhone,
+        notes: originNotes,
+      },
+      destination: {
+        contactName: destinationContactName,
+        customerId: destinationCustomerId,
+        company: destinationCompany,
+        taxId: destinationTaxId,
+        country: destinationCountry,
+        city: destinationCity,
+        postcode: destinationPostcode,
+        address: destinationAddress,
+        address2: destinationAddress2,
+        address3: destinationAddress3,
+        phone: destinationPhone,
+        email: destinationEmail,
+        notes: destinationNotes,
+      },
+      packages,
+      activePackageKey,
+      addonRows,
+      stockSupplyId,
+      selectedCarriers,
+      // Rate Quotes/selected quote are live carrier API data (prices can go stale by the time the
+      // draft is resumed) but restoring them still saves staff from re-running Check Rate for
+      // every minor edit — they can always re-check if prices look out of date.
+      results,
+      selectedQuote,
+      quotedDeclaredValues,
+      paymentMethod,
+      billTransportationTo,
+      billDutyTaxTo,
+      refInvoiceNo,
+      refInsuranceNo,
+      refPurchaseNo,
+    };
+  }
+
+  // Draft payloads are our own serialized snapshots (see buildDraftSnapshot) — trusted shape,
+  // just defensively guarded against missing/older fields so an older draft never crashes the page.
+  function applyDraftSnapshot(raw: Record<string, unknown>) {
+    const s = raw as Record<string, any>;
+    if (s.step === 1 || s.step === 2 || s.step === 3 || s.step === 4) setStep(s.step);
+    if (typeof s.customerType === "string") setCustomerType(s.customerType);
+    if (s.entityType === "INDIVIDUAL" || s.entityType === "COMPANY") setEntityType(s.entityType);
+
+    const o = s.origin ?? {};
+    setOriginContactName(o.contactName ?? "");
+    setOriginCustomerId(o.customerId ?? null);
+    setOriginCompany(o.company ?? "");
+    setOriginTaxId(o.taxId ?? "");
+    setOriginPostcode(o.postcode ?? "");
+    setOriginCity(o.city ?? "");
+    setOriginAddress(o.address ?? "");
+    setOriginAddress2(o.address2 ?? "");
+    setOriginAddress3(o.address3 ?? "");
+    setOriginPhone(o.phone ?? "");
+    setOriginNotes(o.notes ?? "");
+
+    const d = s.destination ?? {};
+    setDestinationContactName(d.contactName ?? "");
+    setDestinationCustomerId(d.customerId ?? null);
+    setDestinationCompany(d.company ?? "");
+    setDestinationTaxId(d.taxId ?? "");
+    setDestinationCountry(d.country ?? "");
+    setDestinationCity(d.city ?? "");
+    setDestinationPostcode(d.postcode ?? "");
+    setDestinationAddress(d.address ?? "");
+    setDestinationAddress2(d.address2 ?? "");
+    setDestinationAddress3(d.address3 ?? "");
+    setDestinationPhone(d.phone ?? "");
+    setDestinationEmail(d.email ?? "");
+    setDestinationNotes(d.notes ?? "");
+
+    if (Array.isArray(s.packages) && s.packages.length > 0) {
+      setPackages(s.packages);
+      setActivePackageKey(s.activePackageKey ?? s.packages[0]?.key ?? null);
+      // Restored rows keep their original `key` values — bump the module-level sequence past the
+      // highest one so any NEW row added later can never collide with a restored one.
+      rowKeySeq = Math.max(rowKeySeq, ...s.packages.map((p: PackageRow) => p.key)) + 1;
+    }
+    if (Array.isArray(s.addonRows)) {
+      setAddonRows(s.addonRows);
+      if (s.addonRows.length > 0) {
+        addonRowKeySeq = Math.max(addonRowKeySeq, ...s.addonRows.map((r: AddonRow) => r.key)) + 1;
+      }
+    }
+    if (s.stockSupplyId !== undefined) setStockSupplyId(s.stockSupplyId);
+    if (Array.isArray(s.selectedCarriers)) setSelectedCarriers(s.selectedCarriers);
+    if (Array.isArray(s.results)) setResults(s.results);
+    if (s.selectedQuote) setSelectedQuote(s.selectedQuote);
+    if (s.quotedDeclaredValues) setQuotedDeclaredValues(s.quotedDeclaredValues);
+    if (typeof s.paymentMethod === "string") setPaymentMethod(s.paymentMethod);
+    if (typeof s.billTransportationTo === "string") setBillTransportationTo(s.billTransportationTo);
+    if (typeof s.billDutyTaxTo === "string") setBillDutyTaxTo(s.billDutyTaxTo);
+    if (typeof s.refInvoiceNo === "string") setRefInvoiceNo(s.refInvoiceNo);
+    if (typeof s.refInsuranceNo === "string") setRefInsuranceNo(s.refInsuranceNo);
+    if (typeof s.refPurchaseNo === "string") setRefPurchaseNo(s.refPurchaseNo);
+  }
+
+  useEffect(() => {
+    const draftParam = searchParams.get("draft");
+    if (!draftParam) return;
+    const id = Number(draftParam);
+    if (!Number.isFinite(id)) return;
+    setLoadingDraft(true);
+    getShipmentDraft(id)
+      .then((draft) => {
+        applyDraftSnapshot(draft.form_state);
+        setDraftId(draft.id);
+        setDraftName(draft.name ?? "");
+      })
+      .catch(() => setDraftError("โหลดฉบับร่างไม่สำเร็จ — อาจถูกลบไปแล้ว"))
+      .finally(() => setLoadingDraft(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleSaveDraft() {
+    setSavingDraft(true);
+    setDraftError("");
+    setDraftMessage("");
+    try {
+      const payload = { name: draftName.trim() || undefined, form_state: buildDraftSnapshot() };
+      const saved = draftId ? await updateShipmentDraft(draftId, payload) : await createShipmentDraft(payload);
+      setDraftId(saved.id);
+      setDraftMessage("บันทึกฉบับร่างเรียบร้อย");
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : "บันทึกฉบับร่างไม่สำเร็จ");
+    } finally {
+      setSavingDraft(false);
+    }
+  }
 
   function updatePackage(key: number, patch: Partial<PackageRow>) {
     setPackages((prev) => prev.map((p) => (p.key === key ? { ...p, ...patch } : p)));
@@ -964,16 +1181,19 @@ export default function ShipmentCreatePage() {
       origin: {
         contact_name: originContactName.trim() || undefined,
         company: originCompany.trim() || undefined,
+        tax_id: originTaxId.trim() || undefined,
         postcode: originPostcode.trim(),
         city: originCity.trim(),
         address: originAddress.trim(),
         address2: originAddress2.trim() || undefined,
         address3: originAddress3.trim() || undefined,
         phone: originPhone.trim() || undefined,
+        notes: originNotes.trim() || undefined,
       },
       destination: {
         contact_name: destinationContactName.trim() || undefined,
         company: destinationCompany.trim() || undefined,
+        tax_id: destinationTaxId.trim() || undefined,
         country: destinationCountry,
         city: destinationCity.trim(),
         postcode: destinationPostcode.trim() || undefined,
@@ -982,6 +1202,7 @@ export default function ShipmentCreatePage() {
         address3: destinationAddress3.trim() || undefined,
         phone: destinationPhone.trim() || undefined,
         email: destinationEmail.trim() || undefined,
+        notes: destinationNotes.trim() || undefined,
       },
       packages: packages.map((p) => {
         // Which Insurance item was sold for THIS package — lets the backend tell the carrier
@@ -996,6 +1217,9 @@ export default function ShipmentCreatePage() {
           description: p.description || undefined,
           is_document: p.is_document,
           declared_value: p.insured ? Number(p.declared_value) || 0 : undefined,
+          insured: p.insured,
+          product_type: p.productType,
+          product_type_other: p.productTypeOther || undefined,
           insurance_addon_item_id: insuranceRow?.addonItemId ?? null,
         };
       }),
@@ -1010,6 +1234,15 @@ export default function ShipmentCreatePage() {
       addon_total: addonTotal,
       order_total: orderTotal,
       currency: selectedQuote.currency ?? "THB",
+      customer_type: customerType,
+      entity_type: entityType,
+      payment_method: paymentMethod || undefined,
+      bill_transportation_to: billTransportationTo || undefined,
+      bill_duty_tax_to: billDutyTaxTo || undefined,
+      ref_invoice_no: refInvoiceNo.trim() || undefined,
+      ref_insurance_no: refInsuranceNo.trim() || undefined,
+      ref_purchase_no: refPurchaseNo.trim() || undefined,
+      rate_quote: selectedQuote,
     };
   }
 
@@ -1022,6 +1255,14 @@ export default function ShipmentCreatePage() {
     try {
       const shipment = await bookShipment(payload);
       setBookedShipment(shipment);
+      // A draft can only be edited while no Shipment has been created from it yet — once booked,
+      // delete it so it can never be resumed/edited again (best-effort; a failure here shouldn't
+      // block the already-successful booking from being shown to staff).
+      if (draftId) {
+        deleteShipmentDraft(draftId)
+          .then(() => setDraftId(null))
+          .catch(() => {});
+      }
     } catch (err) {
       setBookingError(err instanceof Error ? err.message : "สร้าง Shipment ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
     } finally {
@@ -1427,7 +1668,32 @@ export default function ShipmentCreatePage() {
 
   return (
     <div>
-      <PageHeader title="Create Shipment / Check Rate" description="Origin: Thailand — Destination: international only" />
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+        <PageHeader title="Create Shipment / Check Rate" description="Origin: Thailand — Destination: international only" />
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              placeholder="ชื่อฉบับร่าง (optional)"
+              className="w-48 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
+            />
+            <button
+              type="button"
+              onClick={handleSaveDraft}
+              disabled={savingDraft || loadingDraft}
+              className="flex items-center gap-2 whitespace-nowrap rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-600 shadow-sm hover:bg-slate-50 disabled:opacity-60"
+            >
+              {savingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {draftId ? "บันทึกฉบับร่าง (อัปเดต)" : "บันทึกฉบับร่าง"}
+            </button>
+          </div>
+          {loadingDraft && <span className="text-xs text-slate-400">กำลังโหลดฉบับร่าง...</span>}
+          {draftMessage && <span className="text-xs font-medium text-emerald-600">{draftMessage}</span>}
+          {draftError && <span className="text-xs font-medium text-red-600">{draftError}</span>}
+        </div>
+      </div>
 
       <div className="mb-4 flex items-center gap-2">
         {STEPS.map((s, idx) => (
@@ -1921,12 +2187,16 @@ export default function ShipmentCreatePage() {
               const maxCap = capValues.length > 0 ? Math.min(...capValues) : null;
               const declaredValueNum = Number(pkg.declared_value) || 0;
               const coveredValue = isSelectedThirdParty && maxCap != null ? Math.min(declaredValueNum, maxCap) : declaredValueNum;
-              // API_COST items (e.g. DHL's own insurance) already have their real sell price set
-              // on the row itself (from the carrier's actual API charge at selection time).
+              // API_COST items (e.g. DHL's own insurance) must reflect whatever service is
+              // CURRENTLY selected — computed fresh from selectedQuote's real chargeBreakdown on
+              // every render instead of a stored addon-row price, so switching between Rate
+              // Quote cards never shows a stale/missing premium while an effect catches up.
               const estimatedPremium =
                 selectedInsuranceItem?.price_type === "API_COST"
-                  ? selectedInsuranceRow
-                    ? Number(selectedInsuranceRow.unitPrice) || null
+                  ? selectedQuote && !isSelectedThirdParty
+                    ? (selectedQuote.chargeBreakdown?.find(
+                        (c) => c.code === (selectedQuote.carrier === "DHL" ? (pkg.is_document ? "IB" : "II") : "400"),
+                      )?.amount ?? null)
                     : null
                   : selectedInsuranceItem?.price != null
                     ? coveredValue * (Number(selectedInsuranceItem.price) / 100)
@@ -2113,7 +2383,12 @@ export default function ShipmentCreatePage() {
                         disabled={!isActive || (selectedQuote?.carrier === "UPS" && !!pkg.is_document)}
                         onChange={(e) => {
                           const insured = e.target.checked;
-                          updatePackage(pkg.key, { insured });
+                          // Documents have no Declared Value input (see below) — insurance is a
+                          // flat Yes/No, so just stamp the fixed coverage amount straight in.
+                          updatePackage(pkg.key, {
+                            insured,
+                            ...(insured && pkg.is_document ? { declared_value: DHL_DOCUMENT_FIXED_COVERAGE_THB } : {}),
+                          });
                           if (!insured) {
                             setAddonRows((prev) => prev.filter((r) => !(r.category === "Insurance" && r.packageKey === pkg.key)));
                           } else {
@@ -2128,7 +2403,7 @@ export default function ShipmentCreatePage() {
                       <span className="text-xs text-slate-500">Insurance</span>
                     </label>
                   </div>
-                  {pkg.insured && (
+                  {pkg.insured && !pkg.is_document && (
                     <label className="flex w-48 flex-col gap-1">
                       <span className={labelClass}>Declared Value (THB)</span>
                       <input
@@ -2142,6 +2417,12 @@ export default function ShipmentCreatePage() {
                         }`}
                       />
                     </label>
+                  )}
+                  {pkg.insured && pkg.is_document && (
+                    <p className="max-w-xs text-xs text-slate-500">
+                      In the rare event of physical loss of your documents, DHL will compensate for the cost of recovery with a
+                      fixed lump sum of <strong className="text-slate-700">17,000 THB</strong>.
+                    </p>
                   )}
                   {pkg.insured && (
                     <div className="flex flex-col justify-center gap-0.5 text-xs">
@@ -2169,7 +2450,9 @@ export default function ShipmentCreatePage() {
                       <strong>{coveredValue.toLocaleString()} บาท</strong> เท่านั้น (ส่วนเกินจะไม่ได้รับความคุ้มครอง)
                     </p>
                   )}
-                  {pkg.insured && renderInsurancePicker(pkg)}
+                  {/* Documents only ever have one eligible insurer (DHL's own) — the "Insurance"
+                      checkbox above already decides/auto-selects it, no picker needed. */}
+                  {pkg.insured && !pkg.is_document && renderInsurancePicker(pkg)}
                   <label className="flex flex-col gap-1">
                     <span className={labelClass}>Description of Goods</span>
                     <input
@@ -2942,6 +3225,14 @@ export default function ShipmentCreatePage() {
                   เปิด Label (พร้อมพิมพ์)
                 </button>
               )}
+              <button
+                type="button"
+                onClick={() => printShipmentReceipt(bookedShipment)}
+                className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+              >
+                <Printer className="h-4 w-4" />
+                พิมพ์ใบเสร็จ
+              </button>
               <div className="flex justify-end">
                 <button
                   type="button"

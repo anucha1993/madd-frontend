@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Eye, Search, Loader2 } from "lucide-react";
+import Link from "next/link";
+import { Eye, FileText, Printer, Search, Loader2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
-import { listShipments, openShipmentLabel, type Shipment } from "@/lib/shipments";
+import { listShipments, openShipmentLabel, printShipmentReceipt, type Shipment } from "@/lib/shipments";
 
 const STATUS_STYLE: Record<string, string> = {
   booked: "bg-emerald-50 text-emerald-600",
@@ -59,6 +60,9 @@ export default function ShipmentListPage() {
       setOpeningLabelId(null);
     }
   }
+
+  // Read-only detail view of everything filled in at /shipment/create — a booked/failed
+  // Shipment is never editable there either, just for reference/checking (see /shipment/view/[id]).
 
   return (
     <div>
@@ -159,16 +163,35 @@ export default function ShipmentListPage() {
                     {Number(s.order_total).toLocaleString(undefined, { maximumFractionDigits: 2 })}
                   </td>
                   <td className="px-5 py-3 text-right">
-                    <button
-                      type="button"
-                      onClick={() => handleViewLabel(s)}
-                      disabled={!s.label_storage_key || openingLabelId === s.id}
-                      className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30"
-                      aria-label="View Label"
-                      title={s.label_storage_key ? "เปิด Label" : "ไม่มี Label"}
-                    >
-                      {openingLabelId === s.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
-                    </button>
+                    <div className="flex items-center justify-end gap-1">
+                      <Link
+                        href={`/shipment/view/${s.id}`}
+                        className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
+                        aria-label="View Details"
+                        title="ดูรายละเอียด Shipment"
+                      >
+                        <FileText className="h-4 w-4" />
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={() => handleViewLabel(s)}
+                        disabled={!s.label_storage_key || openingLabelId === s.id}
+                        className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30"
+                        aria-label="View Label"
+                        title={s.label_storage_key ? "เปิด Label" : "ไม่มี Label"}
+                      >
+                        {openingLabelId === s.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => printShipmentReceipt(s)}
+                        className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
+                        aria-label="Print Receipt"
+                        title="พิมพ์ใบเสร็จ"
+                      >
+                        <Printer className="h-4 w-4" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))
