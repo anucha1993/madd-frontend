@@ -1689,7 +1689,7 @@ export default function ShipmentCreatePage() {
               {draftId ? "บันทึกฉบับร่าง (อัปเดต)" : "บันทึกฉบับร่าง"}
             </button>
           </div>
-          {loadingDraft && <span className="text-xs text-slate-400">กำลังโหลดฉบับร่าง...</span>}
+          {loadingDraft && <span className="text-xs text-slate-400">Loading draft...</span>}
           {draftMessage && <span className="text-xs font-medium text-emerald-600">{draftMessage}</span>}
           {draftError && <span className="text-xs font-medium text-red-600">{draftError}</span>}
         </div>

@@ -306,7 +306,7 @@ export default function AgentAccountsPage() {
       )}
 
       {loading ? (
-        <PageLoading label="กำลังโหลดข้อมูลบัญชี Agent..." />
+        <PageLoading label="Loading Agent Accounts..." />
       ) : (
       <div className="flex flex-col gap-6">
         {agents.map((agent) => {
@@ -559,7 +559,7 @@ export default function AgentAccountsPage() {
             </p>
 
             {fixedLoading ? (
-              <p className="text-sm text-slate-400">กำลังโหลด...</p>
+              <p className="text-sm text-slate-400">Loading...</p>
             ) : (
               <>
                 {fixedOverrides.length === 0 ? (

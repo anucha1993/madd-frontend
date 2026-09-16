@@ -152,7 +152,7 @@ export default function ThaiSubdistrictsPage() {
       {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
       {loading ? (
-        <PageLoading label="กำลังโหลดข้อมูลที่อยู่..." />
+        <PageLoading label="Loading Address data..." />
       ) : rows.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white py-20 text-center">
           <MapPin className="h-10 w-10 text-brand-amber" />

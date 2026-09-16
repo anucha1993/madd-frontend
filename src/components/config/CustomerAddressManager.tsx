@@ -167,7 +167,7 @@ export default function CustomerAddressManager({ customer, onClose }: Props) {
         {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
         {loading ? (
-          <p className="text-sm text-slate-400">กำลังโหลด...</p>
+          <p className="text-sm text-slate-400">Loading...</p>
         ) : (
           <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
             {renderSection("ship_from", "Ship From", shipFromAddresses)}

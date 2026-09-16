@@ -83,7 +83,7 @@ export default function SuppliesPage() {
       {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
       {loading ? (
-        <PageLoading label="กำลังโหลดข้อมูลอุปกรณ์..." />
+        <PageLoading label="Loading Supplies..." />
       ) : supplies.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white py-20 text-center">
           <Boxes className="h-10 w-10 text-brand-amber" />

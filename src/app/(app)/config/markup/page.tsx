@@ -218,7 +218,7 @@ export default function ConfigMarkupPage() {
       />
 
       {loading ? (
-        <PageLoading label="กำลังโหลดข้อมูล Markup Rules..." />
+        <PageLoading label="Loading Markup Rules..." />
       ) : (
         <>
           <div className="mb-4 flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">

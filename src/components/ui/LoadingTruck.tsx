@@ -1,46 +1,48 @@
 "use client";
 
-/** The MADD wordmark rebuilt as text + an SVG triangle, so the triangle
- * (the "A") can spin independently as a loading indicator. Pass `animate={false}`
- * to render it as a static logo (e.g. in the sidebar header). */
+/** Loading indicator: two rings spinning opposite ways (amber outer / gray-navy inner)
+ * around a pulsing center dot, with an animated "..." after the label. Pass
+ * `animate={false}` to freeze it. */
 export function TruckRouteGraphic({
   label,
   invert = false,
   animate = true,
-  size = "3.5rem",
+  size = "5rem",
 }: {
   label?: string;
   invert?: boolean;
   animate?: boolean;
   size?: string;
 }) {
-  const letterStyle: React.CSSProperties = {
-    fontFamily: "Georgia, 'Times New Roman', serif",
-    fontWeight: 700,
-  };
+  const dotColor = invert ? "var(--color-brand-navy-dark)" : "#fff";
 
   return (
     <div className="flex flex-col items-center gap-6">
-      <div
-        className="flex items-center"
-        style={{ color: invert ? "var(--color-brand-navy-dark)" : "#fff", fontSize: size, lineHeight: 1 }}
-      >
-        <span className={animate ? "madd-letter-pulse" : ""} style={{ ...letterStyle, animationDelay: "0s" }}>
-          M
-        </span>
-        <svg viewBox="0 0 60 54" className={`h-[0.85em] w-[0.85em] ${animate ? "madd-triangle-spin" : ""}`} aria-hidden>
-          <polygon points="30,2 58,50 2,50" fill="var(--color-brand-amber)" />
-          <circle cx="30" cy="38" r="6" fill="var(--color-brand-navy-dark)" />
-        </svg>
-        <span className={animate ? "madd-letter-pulse" : ""} style={{ ...letterStyle, animationDelay: "0.35s" }}>
-          D
-        </span>
-        <span className={animate ? "madd-letter-pulse" : ""} style={{ ...letterStyle, animationDelay: "0.7s" }}>
-          D
-        </span>
+      <div className="relative" style={{ width: size, height: size }}>
+        <div
+          className={`absolute inset-0 rounded-full ${animate ? "madd-arc-spin" : ""}`}
+          style={{ border: "3px solid transparent", borderTopColor: "var(--color-brand-amber)" }}
+        />
+        <div
+          className={`absolute rounded-full ${animate ? "madd-arc-spin-reverse" : ""}`}
+          style={{ inset: "15%", border: "3px solid transparent", borderTopColor: "var(--color-brand-navy)" }}
+        />
+        <span
+          className={`absolute left-1/2 top-1/2 rounded-full ${animate ? "madd-dot-grow" : ""}`}
+          style={{
+            width: `calc(${size} * 0.35)`,
+            height: `calc(${size} * 0.35)`,
+            marginLeft: `calc(${size} * -0.175)`,
+            marginTop: `calc(${size} * -0.175)`,
+            background: dotColor,
+          }}
+        />
       </div>
       {label && (
-        <p className={`text-sm font-medium ${invert ? "text-brand-navy-dark" : "text-slate-300"}`}>{label}</p>
+        <p className={`flex text-sm font-medium ${invert ? "text-brand-navy-dark" : "text-slate-300"}`}>
+          {label}
+          {animate && <span className="madd-loading-dots" aria-hidden />}
+        </p>
       )}
     </div>
   );
@@ -57,7 +59,7 @@ type Props = {
  * with `absolute inset-0` — NOT the whole viewport — so the sidebar/topbar stay
  * visible and usable while a page's data is loading.
  */
-export default function LoadingTruck({ label = "กำลังโหลด...", fullScreen = false, className = "" }: Props) {
+export default function LoadingTruck({ label = "Loading...", fullScreen = false, className = "" }: Props) {
   if (fullScreen) {
     return (
       <div className="absolute inset-0 z-40 flex items-center justify-center">

@@ -88,7 +88,7 @@ export default function CustomerPage() {
       {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
       {loading ? (
-        <PageLoading label="กำลังโหลดข้อมูลลูกค้า..." />
+        <PageLoading label="Loading Customers..." />
       ) : customers.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white py-20 text-center">
           <Users className="h-10 w-10 text-brand-amber" />

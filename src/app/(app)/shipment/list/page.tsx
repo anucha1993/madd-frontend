@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Eye, FileText, Printer, Search, Loader2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
+import PageLoading from "@/components/ui/PageLoading";
 import { listShipments, openShipmentLabel, printShipmentReceipt, type Shipment } from "@/lib/shipments";
 
 const STATUS_STYLE: Record<string, string> = {
@@ -117,6 +118,9 @@ export default function ShipmentListPage() {
 
       {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
+      {loading ? (
+        <PageLoading label="Loading Shipments..." />
+      ) : (
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <table className="w-full text-left text-sm">
           <thead className="bg-gradient-to-r from-brand-navy-dark to-brand-navy text-xs uppercase text-white/90">
@@ -131,13 +135,7 @@ export default function ShipmentListPage() {
             </tr>
           </thead>
           <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={7} className="px-5 py-8 text-center text-slate-400">
-                  <Loader2 className="mx-auto h-5 w-5 animate-spin" />
-                </td>
-              </tr>
-            ) : shipments.length === 0 ? (
+            {shipments.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-5 py-8 text-center text-slate-400">
                   ยังไม่มี Shipment ที่จองไว้
@@ -199,6 +197,7 @@ export default function ShipmentListPage() {
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }

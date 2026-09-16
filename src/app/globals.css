@@ -29,32 +29,51 @@ body {
   font-family: "Geist Sans", "Noto Sans Thai", Arial, Helvetica, sans-serif;
 }
 
-/* ---------- Login success: MADD logo with the triangle "A" spinning as loader ---------- */
+/* ---------- Loading spinner: two rings spinning opposite ways + pulsing dot ---------- */
 
-@keyframes madd-triangle-spin {
-  to {
+@keyframes madd-arc-spin {
+  100% {
     transform: rotate(360deg);
   }
 }
 
-.madd-triangle-spin {
-  transform-origin: 50% 55%;
-  animation: madd-triangle-spin 1.4s linear infinite;
+.madd-arc-spin {
+  animation: madd-arc-spin 2s infinite linear;
 }
 
-@keyframes madd-letter-pulse {
+.madd-arc-spin-reverse {
+  animation: madd-arc-spin 4s infinite linear reverse;
+}
+
+@keyframes madd-dot-grow {
   0%,
   100% {
-    transform: scale(1) translateY(0);
+    transform: scale(0);
   }
-  50% {
-    transform: scale(1.18) translateY(-6px);
+  75% {
+    transform: scale(1);
   }
 }
 
-.madd-letter-pulse {
-  display: inline-block;
-  animation: madd-letter-pulse 1.4s ease-in-out infinite;
+.madd-dot-grow {
+  animation: madd-dot-grow 1s infinite;
+}
+
+@keyframes madd-loading-dots {
+  0% {
+    content: ".";
+  }
+  50% {
+    content: "..";
+  }
+  100% {
+    content: "...";
+  }
+}
+
+.madd-loading-dots::after {
+  animation: madd-loading-dots 1.4s infinite;
+  content: ".";
 }
 
 @keyframes welcome-pop {

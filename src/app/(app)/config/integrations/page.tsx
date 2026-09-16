@@ -133,7 +133,7 @@ export default function IntegrationsPage() {
       />
 
       {loading ? (
-        <PageLoading label="กำลังโหลดข้อมูลการเชื่อมต่อ..." />
+        <PageLoading label="Loading Integrations..." />
       ) : (
         <div className="flex flex-col gap-4">
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">

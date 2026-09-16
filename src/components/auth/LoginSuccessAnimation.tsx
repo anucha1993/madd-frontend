@@ -27,7 +27,7 @@ export default function LoginSuccessAnimation({ userName, onComplete }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-brand-navy-dark">
       {phase === "route" ? (
-        <TruckRouteGraphic label="กำลังเข้าสู่ระบบ..." />
+        <TruckRouteGraphic label="Signing in..." />
       ) : (
         <div className="animate-welcome-pop flex flex-col items-center gap-3 px-6 text-center">
           <PartyPopper className="h-14 w-14 text-brand-amber" />

@@ -101,7 +101,7 @@ export default function LoginForm() {
         disabled={loading}
         className="mt-1 w-full rounded-lg bg-brand-navy-dark py-2.5 text-sm font-semibold text-white transition hover:bg-brand-navy-dark/90 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {loading ? "กำลังเข้าสู่ระบบ..." : "เข้าสู่ระบบ"}
+        {loading ? "Signing in..." : "เข้าสู่ระบบ"}
       </button>
     </form>
   );

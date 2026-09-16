@@ -206,7 +206,7 @@ export default function ManifestOptionsPage() {
       </p>
 
       {loading ? (
-        <PageLoading label="กำลังโหลดข้อมูล..." />
+        <PageLoading label="Loading..." />
       ) : (
         <>
           {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}

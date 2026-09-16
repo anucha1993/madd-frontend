@@ -230,7 +230,7 @@ export default function AddonSettingsPage() {
       />
 
       {loading ? (
-        <PageLoading label="กำลังโหลดข้อมูล Add-on..." />
+        <PageLoading label="Loading Add-on data..." />
       ) : (
         <>
           {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}

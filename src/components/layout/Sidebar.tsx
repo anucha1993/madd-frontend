@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronDown } from "lucide-react";
 import { NAV_SECTIONS } from "@/lib/nav";
-import { TruckRouteGraphic } from "@/components/ui/LoadingTruck";
 
 type Props = {
   open: boolean;
@@ -38,7 +38,7 @@ export default function Sidebar({ open, onNavigate }: Props) {
       }`}
     >
       <div className="flex h-20 items-center justify-center border-b border-white/10 px-5">
-        <TruckRouteGraphic animate={false} size="2.2rem" />
+        <Image src="/logo-250-white.png" alt="MADD" width={140} height={45} className="h-auto w-44" priority />
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
