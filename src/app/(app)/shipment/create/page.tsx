@@ -17,7 +17,7 @@ import { useAiEnabled } from "@/hooks/useAiEnabled";
 import { listProductWeightBands, matchProductWeightBand, pickForcedWeightBand, type ProductWeightBand } from "@/lib/productWeightBands";
 import { listManifestOptions, type ManifestOption } from "@/lib/manifestOptions";
 import { getThaiSubdistrictsByZipCode } from "@/lib/thaiSubdistricts";
-import { checkRate, type CheckRateInput, type RateQuote, type ShipmentPackageInput } from "@/lib/shipping";
+import { checkRate, type CheckRateInput, type RateChargeLine, type RateQuote, type ShipmentPackageInput } from "@/lib/shipping";
 import { lookupInsuranceCountryCap, type InsuranceCountryCap } from "@/lib/insuranceCountryCaps";
 import { bookShipment, describeShipmentPieces, openShipmentLabel, printShipmentReceipt, type BookShipmentInput, type Shipment } from "@/lib/shipments";
 import { getShipmentDraft, createShipmentDraft, updateShipmentDraft, deleteShipmentDraft } from "@/lib/shipmentDrafts";
@@ -39,6 +39,18 @@ import {
 // service, 'IB') rather than a percentage of a declared value — so Document insurance is just a
 // Yes/No toggle; this is the fixed compensation DHL states on its own MyDHL portal.
 const DHL_DOCUMENT_FIXED_COVERAGE_THB = 17000;
+
+// Describes exactly what a markup was computed from, e.g. "7% × 1,200.00" or "+50.00 flat" —
+// so staff can see which amount a Markup Rule (config/markup) used as its base.
+function formatMarkupBasis(line: RateChargeLine): string | null {
+  if (!line.markupUnit || line.markupValue == null) return null;
+  if (line.markupUnit === "PERCENTAGE") {
+    return line.markupBase != null
+      ? `${line.markupValue}% × ${line.markupBase.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+      : `${line.markupValue}%`;
+  }
+  return `+${line.markupValue.toLocaleString(undefined, { maximumFractionDigits: 2 })} flat`;
+}
 
 function levenshteinDistance(a: string, b: string): number {
   if (a === b) return 0;
@@ -736,6 +748,9 @@ export default function ShipmentCreatePage() {
           : item.price_type === "API_COST"
             ? String(carrierInsuranceCharge ?? 0)
             : "";
+    // Extra % (see /config/addon "Markup %") applied on top of the price above, whatever
+    // price_type computed it from — e.g. UPSC quotes 1,000 THB, staff still wants +2% on top.
+    const markedUpUnitPrice = unitPrice === "" ? "" : (Number(unitPrice) * (1 + (Number(item.markup_percent) || 0) / 100)).toFixed(2);
 
     setAddonRows((prev) => [
       ...prev.filter((r) => !(r.category === "Insurance" && r.packageKey === pkg.key)),
@@ -745,7 +760,7 @@ export default function ShipmentCreatePage() {
         nameLocked: true,
         category: item.category?.name ?? "Insurance",
         carriers: item.carriers.join("/"),
-        unitPrice,
+        unitPrice: markedUpUnitPrice,
         priceLocked: item.price_type === "FIXED" || item.price_type === "PERCENT" || item.price_type === "API_COST",
         costPrice: carrierInsuranceCharge != null ? String(carrierInsuranceCharge) : undefined,
         packageKey: pkg.key,
@@ -1569,16 +1584,18 @@ export default function ShipmentCreatePage() {
                   .filter((line) => sellingCarrierOwnInsurance || !carrierCostOnlyCodes.includes(line.code ?? ""))
                   .map((line, li) => {
                   const isCarrierInsuranceLine = carrierCostOnlyCodes.includes(line.code ?? "");
+                  const markupBasis = formatMarkupBasis(line);
                   return (
                     <div key={li} className="flex items-center justify-between text-xs">
-                      <span className="text-slate-500">
+                      <span className={line.isCustomCharge ? "text-emerald-600" : "text-slate-500"}>
                         {line.description}
                         {line.code ? <span className="text-slate-300"> ({line.code})</span> : null}
                         {isCarrierInsuranceLine && (
                           <span className="ml-1 text-amber-600">— ต้นทุน ไม่รวมในยอดขาย Freight ด้านบน</span>
                         )}
+                        {markupBasis && <span className="ml-1 text-emerald-600">({markupBasis})</span>}
                       </span>
-                      <span className="font-medium text-slate-600">
+                      <span className={`font-medium ${line.isCustomCharge ? "text-emerald-600" : "text-slate-600"}`}>
                         {line.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {line.currency}
                       </span>
                     </div>
@@ -1602,7 +1619,14 @@ export default function ShipmentCreatePage() {
               )}
               Freight ({selectedQuote?.carrier ?? "-"})
             </span>
-            <span className="font-medium text-slate-700">{freightAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} THB</span>
+            <span className="font-medium text-slate-700">
+              {freightAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} THB
+              {!!selectedQuote?.markupTotal && (
+                <span className="ml-1 font-normal text-emerald-600">
+                  (+{selectedQuote.markupTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })} Marked Up)
+                </span>
+              )}
+            </span>
           </div>
           {addonLines.map(({ row, amount }) => (
             <div key={row.key} className="flex items-center justify-between">
@@ -2761,20 +2785,24 @@ export default function ShipmentCreatePage() {
                           <div className="mt-2 flex flex-col gap-0.5 border-t border-slate-100 pt-2">
                             {r.chargeBreakdown
                               .filter((line) => sellingCarrierOwnInsurance || !rCostOnlyCodes.includes(line.code ?? ""))
-                              .map((line, li) => (
+                              .map((line, li) => {
+                              const markupBasis = formatMarkupBasis(line);
+                              return (
                               <div key={li} className="flex items-center justify-between text-xs">
-                                <span className="text-slate-500">
+                                <span className={line.isCustomCharge ? "text-emerald-600" : "text-slate-500"}>
                                   {line.description}
                                   {line.code ? <span className="text-slate-300"> ({line.code})</span> : null}
                                   {rCostOnlyCodes.includes(line.code ?? "") && (
                                     <span className="ml-1 text-amber-600">— ต้นทุน ไม่รวมในยอดขายด้านบน</span>
                                   )}
+                                  {markupBasis && <span className="ml-1 text-emerald-600">({markupBasis})</span>}
                                 </span>
-                                <span className="font-medium text-slate-600">
+                                <span className={`font-medium ${line.isCustomCharge ? "text-emerald-600" : "text-slate-600"}`}>
                                   {line.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {line.currency}
                                 </span>
                               </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                         {r.raw != null && (

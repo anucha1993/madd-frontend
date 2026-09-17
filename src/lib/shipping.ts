@@ -46,6 +46,17 @@ export type RateChargeLine = {
   description: string;
   amount: number;
   currency: string;
+  // Injected by ChargeMarkupService for a MarkupRule whose charge code the carrier never
+  // returned (e.g. a self-defined "VAT" line) — not part of the carrier's own quote.
+  isCustomCharge?: boolean;
+  // Present whenever a MarkupRule affected this line — lets the UI show exactly what amount
+  // the markup was computed from, e.g. "7% × 1,200.00" instead of just the final total.
+  markupUnit?: "PERCENTAGE" | "BAHT" | null;
+  markupValue?: number | null;
+  // The base the markupUnit/markupValue was applied to — for an existing carrier line this is
+  // that line's own (possibly fixed-override) amount; for a custom line with PERCENTAGE unit
+  // this is the quote's whole sell subtotal; null for a custom BAHT (flat) line.
+  markupBase?: number | null;
 };
 
 export type RateQuote = {
@@ -67,6 +78,9 @@ export type RateQuote = {
   transitDays?: number | null;
   estimatedDelivery?: string | null;
   chargeBreakdown?: RateChargeLine[];
+  // Sum of MarkupRule adjustments already baked into published/negotiated/chargeBreakdown above
+  // (see ChargeMarkupService) — only present when a markup rule actually applied to this quote.
+  markupTotal?: number | null;
   error?: string | null;
   // Raw carrier API response for this specific quote — only for staff-facing debugging (see
   // "Raw" button on each Rate Quotes candidate card), never shown to customers.

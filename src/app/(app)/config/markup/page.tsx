@@ -353,6 +353,11 @@ export default function ConfigMarkupPage() {
                       <td className="px-5 py-3 text-slate-500">{rule.agent_account?.username_acc ?? "-"}</td>
                       <td className="px-5 py-3 font-medium text-slate-700">
                         {rule.charge_code?.label}
+                        {rule.charge_code?.is_custom && (
+                          <span className="ml-1.5 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-600">
+                            Custom
+                          </span>
+                        )}
                         <div className="text-xs text-slate-400">{rule.charge_code?.code}</div>
                       </td>
                       <td className="px-5 py-3 text-slate-500">{rule.charge_code?.category ?? "-"}</td>
@@ -557,6 +562,11 @@ export default function ConfigMarkupPage() {
                                 ({c.code}
                                 {c.category ? `, ${c.category}` : ""})
                               </span>
+                              {c.is_custom && (
+                                <span className="ml-1.5 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-600">
+                                  Custom
+                                </span>
+                              )}
                             </button>
                           ))
                         )}
@@ -637,6 +647,36 @@ export default function ConfigMarkupPage() {
                     </select>
                   </label>
                 </div>
+                {newChargeCodeId && (
+                  <p className="-mt-1 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                    {selectedChargeCode?.is_custom ? (
+                      newUnit === "PERCENTAGE" ? (
+                        <>
+                          เป็น Charge Code <span className="font-medium text-emerald-600">Custom</span> (Carrier
+                          ไม่ได้ส่งมาให้) — % จะคำนวณจาก <span className="font-medium">ยอดขาย Freight รวม</span>{" "}
+                          ของใบเสนอราคานั้น (ไม่รวมค่าประกันที่เป็นต้นทุนของ Carrier) แล้วขึ้นเป็นรายการแยกใน Order
+                          Summary เช่น VAT
+                        </>
+                      ) : (
+                        <>
+                          เป็น Charge Code <span className="font-medium text-emerald-600">Custom</span> (Carrier
+                          ไม่ได้ส่งมาให้) — จะถูกบวกเป็น <span className="font-medium">ยอดคงที่ต่อ 1 ใบเสนอราคา</span>{" "}
+                          และขึ้นเป็นรายการแยกใน Order Summary เช่น VAT
+                        </>
+                      )
+                    ) : newUnit === "PERCENTAGE" ? (
+                      <>
+                        % จะคำนวณจาก <span className="font-medium">ยอดของรายการ Charge Code นี้เอง</span> ที่ Carrier
+                        เรียกเก็บ (หรือราคาคงที่ ถ้ามีตั้ง Fixed Override ไว้ที่ Agent Account)
+                      </>
+                    ) : (
+                      <>
+                        จะถูกบวกเพิ่มเข้าไปใน <span className="font-medium">ยอดของรายการ Charge Code นี้เอง</span>{" "}
+                        โดยตรง
+                      </>
+                    )}
+                  </p>
+                )}
                 {addError && <p className="whitespace-pre-line text-sm text-red-600">{addError}</p>}
                 <div className="mt-2 flex justify-end gap-2">
                   <button

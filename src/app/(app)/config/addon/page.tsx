@@ -39,6 +39,7 @@ type ItemForm = {
   product_types: string[];
   price_type: "FIXED" | "MANUAL" | "PERCENT" | "API_COST";
   price: string;
+  markup_percent: string;
   trigger_type: "MANUAL" | "AUTO";
   status: boolean;
   note: string;
@@ -51,6 +52,7 @@ const emptyForm: ItemForm = {
   product_types: [],
   price_type: "MANUAL",
   price: "",
+  markup_percent: "",
   trigger_type: "MANUAL",
   status: true,
   note: "",
@@ -146,6 +148,7 @@ export default function AddonSettingsPage() {
       product_types: item.product_types ?? [],
       price_type: item.price_type,
       price: item.price != null ? String(item.price) : "",
+      markup_percent: item.markup_percent != null ? String(item.markup_percent) : "",
       trigger_type: item.trigger_type,
       status: item.status,
       note: item.note ?? "",
@@ -196,6 +199,7 @@ export default function AddonSettingsPage() {
         product_types: form.product_types.length > 0 ? form.product_types : null,
         price_type: form.price_type,
         price: form.price ? Number(form.price) : null,
+        markup_percent: form.markup_percent ? Number(form.markup_percent) : null,
         trigger_type: form.trigger_type,
         status: form.status,
         note: form.note.trim() || undefined,
@@ -329,12 +333,17 @@ export default function AddonSettingsPage() {
                           </td>
                           <td className="px-5 py-3 text-right text-slate-500">
                             {item.price_type === "API_COST"
-                              ? "— (from API)"
+                              ? "At Cost"
                               : item.price != null
                                 ? item.price_type === "PERCENT"
                                   ? `${Number(item.price).toLocaleString()}%`
                                   : Number(item.price).toLocaleString()
                                 : "-"}
+                            {item.markup_percent != null && Number(item.markup_percent) !== 0 && (
+                              <div className="text-xs font-medium text-emerald-600">
+                                +{Number(item.markup_percent).toLocaleString()}% markup
+                              </div>
+                            )}
                           </td>
                           <td className="px-5 py-3 text-slate-500">{item.trigger_type === "AUTO" ? "Auto" : "Manual"}</td>
                           <td className="px-5 py-3">
@@ -510,6 +519,19 @@ export default function AddonSettingsPage() {
                     />
                   </label>
                 </div>
+
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-sm font-medium text-slate-600">Markup % (on top of the price above, optional)</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    value={form.markup_percent}
+                    onChange={(e) => setForm((prev) => ({ ...prev, markup_percent: e.target.value }))}
+                    placeholder="e.g. 2 for +2% on top, blank = no extra markup"
+                    className={inputClass}
+                  />
+                </label>
 
                 <div className="grid grid-cols-2 gap-3">
                   <label className="flex flex-col gap-1.5">

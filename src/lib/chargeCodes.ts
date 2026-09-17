@@ -7,6 +7,9 @@ export type ChargeCode = {
   label: string;
   description: string | null;
   category: string | null;
+  // true only for codes hand-added via "+ Add Charge Code" on /config/markup — the carrier API
+  // never actually returns these (e.g. a self-defined "VAT" line).
+  is_custom: boolean;
 };
 
 export const listChargeCodes = (params: { provider?: "UPS" | "DHL"; q?: string } = {}) => {

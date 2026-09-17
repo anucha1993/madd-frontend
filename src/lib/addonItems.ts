@@ -16,6 +16,8 @@ export type AddonItem = {
   product_types: string[] | null;
   price_type: "FIXED" | "MANUAL" | "PERCENT" | "API_COST";
   price: string | number | null;
+  // Extra % applied on top of whatever price_type already computes — independent of price_type.
+  markup_percent: string | number | null;
   trigger_type: "MANUAL" | "AUTO";
   status: boolean;
   note: string | null;
@@ -44,6 +46,7 @@ export type AddonItemInput = {
   product_types?: string[] | null;
   price_type: "FIXED" | "MANUAL" | "PERCENT" | "API_COST";
   price?: number | null;
+  markup_percent?: number | null;
   trigger_type: "MANUAL" | "AUTO";
   status?: boolean;
   note?: string;
