@@ -2,12 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Check, Loader2, Package, Printer } from "lucide-react";
+import { ArrowLeft, ArrowRight, Loader2, Package, Printer, Receipt, FileCheck, XCircle } from "lucide-react";
 import {
   getShipment,
-  updateShipmentRefs,
   openShipmentLabel,
   printShipmentReceipt,
+  describeShipmentPieces,
+  openShipmentWaybill,
+  openShipmentCommercialInvoice,
+  voidShipment,
   type Shipment,
 } from "@/lib/shipments";
 
@@ -15,7 +18,11 @@ import {
    Layout
 
    Left   the frozen air waybill: parties, packages, add-ons
-   Right  totals + reference numbers, the only editable part (sticky on scroll)
+   Right  totals + reference numbers
+
+   Every field on this page is read-only — a booked Shipment is a real carrier
+   air waybill already issued; the only lifecycle action left is Void/Cancel,
+   then create a brand new Shipment if something needs to change.
 
    Density: one spacing step (4 / 8 / 12 / 16px), labels 11px, data 13px,
    every field is a single line so a full shipment fits in about one screen.
@@ -37,6 +44,7 @@ const STATUS: Record<string, { label: string; dot: string; chip: string }> = {
   booked: { label: "Booked", dot: "bg-emerald-400", chip: "bg-emerald-400/15 text-emerald-200" },
   pending: { label: "Pending", dot: "bg-amber-400", chip: "bg-amber-400/15 text-amber-200" },
   failed: { label: "Failed", dot: "bg-red-400", chip: "bg-red-400/15 text-red-200" },
+  voided: { label: "Voided", dot: "bg-slate-400", chip: "bg-white/10 text-white/60" },
 };
 
 const money = (value: unknown) =>
@@ -118,13 +126,12 @@ export default function ShipmentViewPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const [refInvoiceNo, setRefInvoiceNo] = useState("");
-  const [refInsuranceNo, setRefInsuranceNo] = useState("");
-  const [refPurchaseNo, setRefPurchaseNo] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [saveState, setSaveState] = useState<{ ok: boolean; text: string } | null>(null);
   const [openingLabel, setOpeningLabel] = useState(false);
   const [labelError, setLabelError] = useState("");
+  const [openingPiece, setOpeningPiece] = useState<string | null>(null);
+  const [openingWaybill, setOpeningWaybill] = useState(false);
+  const [openingInvoice, setOpeningInvoice] = useState(false);
+  const [voiding, setVoiding] = useState(false);
 
   useEffect(() => {
     // Was: return early without clearing loading, so a non-numeric id left the
@@ -136,36 +143,10 @@ export default function ShipmentViewPage() {
     }
     setLoading(true);
     getShipment(shipmentId)
-      .then((s) => {
-        setShipment(s);
-        setRefInvoiceNo(s.ref_invoice_no ?? "");
-        setRefInsuranceNo(s.ref_insurance_no ?? "");
-        setRefPurchaseNo(s.ref_purchase_no ?? "");
-      })
+      .then((s) => setShipment(s))
       .catch((err) => setError(err instanceof Error ? err.message : "Couldn't load this shipment."))
       .finally(() => setLoading(false));
   }, [shipmentId]);
-
-  async function handleSaveRefs() {
-    setSaving(true);
-    setSaveState(null);
-    try {
-      // Was: `|| undefined`, so clearing a field dropped it from the payload and
-      // the old value survived on the server. Send the empty string instead.
-      // (Switch to null if the API needs null to mean "clear".)
-      const updated = await updateShipmentRefs(shipmentId, {
-        ref_invoice_no: refInvoiceNo.trim(),
-        ref_insurance_no: refInsuranceNo.trim(),
-        ref_purchase_no: refPurchaseNo.trim(),
-      });
-      setShipment(updated);
-      setSaveState({ ok: true, text: "References saved" });
-    } catch (err) {
-      setSaveState({ ok: false, text: err instanceof Error ? err.message : "Save failed. Try again." });
-    } finally {
-      setSaving(false);
-    }
-  }
 
   async function handleOpenLabel() {
     if (!shipment) return;
@@ -178,6 +159,66 @@ export default function ShipmentViewPage() {
       setLabelError(err instanceof Error ? err.message : "Couldn't open the label.");
     } finally {
       setOpeningLabel(false);
+    }
+  }
+
+  async function handleOpenPieceLabel(trackingNumber: string | null) {
+    if (!shipment || !trackingNumber) return;
+    setOpeningPiece(trackingNumber);
+    setLabelError("");
+    try {
+      await openShipmentLabel(shipment.id, trackingNumber);
+    } catch (err) {
+      setLabelError(err instanceof Error ? err.message : "Couldn't open the label.");
+    } finally {
+      setOpeningPiece(null);
+    }
+  }
+
+  async function handleOpenWaybill() {
+    if (!shipment) return;
+    setOpeningWaybill(true);
+    setLabelError("");
+    try {
+      await openShipmentWaybill(shipment.id);
+    } catch (err) {
+      setLabelError(err instanceof Error ? err.message : "Couldn't open the waybill.");
+    } finally {
+      setOpeningWaybill(false);
+    }
+  }
+
+  async function handleOpenInvoice() {
+    if (!shipment) return;
+    setOpeningInvoice(true);
+    setLabelError("");
+    try {
+      await openShipmentCommercialInvoice(shipment.id);
+    } catch (err) {
+      setLabelError(err instanceof Error ? err.message : "Couldn't open the commercial invoice.");
+    } finally {
+      setOpeningInvoice(false);
+    }
+  }
+
+  // UPS: really cancels the air waybill with UPS. DHL: DHL has no cancel API at all — this only
+  // flips our own status locally, staff must still contact DHL directly to actually stop it.
+  async function handleVoid() {
+    if (!shipment) return;
+    const confirmMsg =
+      shipment.carrier === "UPS"
+        ? "ยืนยันยกเลิก Shipment นี้กับ UPS จริง? (จะยกเลิก Air Waybill กับ UPS ทันที ย้อนกลับไม่ได้)"
+        : "DHL ไม่มี API ยกเลิก Shipment — การกดนี้จะแค่มาร์คสถานะในระบบเราเป็น Voided เท่านั้น ต้องติดต่อ DHL โดยตรงเพื่อยกเลิกจริง ดำเนินการต่อไหม?";
+    if (!confirm(confirmMsg)) return;
+
+    setVoiding(true);
+    try {
+      const updated = await voidShipment(shipment.id);
+      setShipment(updated);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "ยกเลิก Shipment ไม่สำเร็จ");
+    } finally {
+      setVoiding(false);
     }
   }
 
@@ -218,27 +259,7 @@ export default function ShipmentViewPage() {
   const packages = s.packages ?? [];
   const addons = s.addon_lines ?? [];
   const charges = rateQuote?.chargeBreakdown ?? [];
-
-  const dirty =
-    refInvoiceNo.trim() !== (s.ref_invoice_no ?? "") ||
-    refInsuranceNo.trim() !== (s.ref_insurance_no ?? "") ||
-    refPurchaseNo.trim() !== (s.ref_purchase_no ?? "");
-
-  const refField = (label: string, value: string, set: (v: string) => void, placeholder: string) => (
-    <label className="flex items-center gap-3">
-      <span className="w-24 shrink-0 text-[11px] text-slate-500">{label}</span>
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => {
-          set(e.target.value);
-          setSaveState(null);
-        }}
-        placeholder={placeholder}
-        className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[13px] text-slate-900 outline-none transition placeholder:text-slate-300 focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
-      />
-    </label>
-  );
+  const pieces = describeShipmentPieces(s);
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-3">
@@ -278,9 +299,32 @@ export default function ShipmentViewPage() {
                   Open label
                 </button>
               )}
+              {s.waybill_storage_key && (
+                <button type="button" onClick={handleOpenWaybill} disabled={openingWaybill} className={headerBtn}>
+                  {openingWaybill ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Receipt className="h-3.5 w-3.5" />}
+                  Open waybill
+                </button>
+              )}
+              {s.commercial_invoice_storage_key && (
+                <button type="button" onClick={handleOpenInvoice} disabled={openingInvoice} className={headerBtn}>
+                  {openingInvoice ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileCheck className="h-3.5 w-3.5" />}
+                  Open invoice
+                </button>
+              )}
               <button type="button" onClick={() => printShipmentReceipt(s)} className={headerBtn}>
                 <Printer className="h-3.5 w-3.5" /> Print receipt
               </button>
+              {s.status === "booked" && (
+                <button
+                  type="button"
+                  onClick={handleVoid}
+                  disabled={voiding}
+                  className="flex items-center gap-1.5 rounded-lg bg-red-500/15 px-3 py-1.5 text-[13px] font-medium text-red-200 transition hover:bg-red-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60 disabled:opacity-60"
+                >
+                  {voiding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
+                  Void / Cancel
+                </button>
+              )}
             </div>
           </div>
 
@@ -290,6 +334,7 @@ export default function ShipmentViewPage() {
               <p className="text-2xl font-semibold leading-8 tabular-nums tracking-[0.04em]">
                 {s.tracking_number ?? <span className="text-white/40">Not issued</span>}
               </p>
+              {s.status === "voided" && s.void_note && <p className="mt-1 text-[11px] text-white/50">{s.void_note}</p>}
             </div>
             <div className="flex min-w-0 items-center gap-2.5 text-[13px]">
               <span className="truncate font-medium">{cityLine(s.origin as Party | undefined)}</span>
@@ -319,6 +364,16 @@ export default function ShipmentViewPage() {
             }
           />
         </div>
+
+        {s.status === "booked" && (
+          <p className="border-t border-white/10 bg-white/5 px-4 py-2 text-[11px] text-white/50">
+            {s.carrier === "UPS"
+              ? "UPS: เลื่อนวันได้เองถ้ายังไม่ End of Day (ยังไม่ปิดงาน) — หากเลย EOD แล้ว ต้อง Void แล้วจองใหม่แทน"
+              : `DHL: เลข Tracking นี้ใช้งานได้ต่อไปอีกประมาณ 1 เดือนนับจากวันจอง (ถึง ~${new Date(
+                  new Date(s.created_at).getTime() + 30 * 24 * 60 * 60 * 1000,
+                ).toLocaleDateString()}) ไม่ต้องเลื่อนวันแบบ UPS`}
+          </p>
+        )}
       </header>
 
       {(s.error_message || labelError) && (
@@ -330,6 +385,49 @@ export default function ShipmentViewPage() {
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_320px]">
         {/* --- left: locked record --- */}
         <div className="flex min-w-0 flex-col gap-3">
+          {/* A multi-piece shipment (several boxes booked in one carrier request) gets its own
+              tracking number per box — only worth a section once there's more than one. */}
+          {pieces.length > 1 && (
+            <Section title={`Tracking Numbers (${pieces.length})`}>
+              <table className="w-full text-[13px]">
+                <thead>
+                  <tr className="border-b border-slate-200 text-[11px] text-slate-500">
+                    <th className="w-8 pb-1.5 text-left font-medium">#</th>
+                    <th className="pb-1.5 text-left font-medium">Tracking No.</th>
+                    <th className="pb-1.5 text-left font-medium">Package</th>
+                    <th className="pb-1.5 text-right font-medium">Label</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {pieces.map((piece, i) => (
+                    <tr key={piece.tracking_number ?? i}>
+                      <td className="py-1.5 tabular-nums text-slate-400">{i + 1}</td>
+                      <td className="py-1.5 tabular-nums text-slate-900">{piece.tracking_number ?? "—"}</td>
+                      <td className="py-1.5 text-slate-500">{piece.description}</td>
+                      <td className="py-1.5 text-right">
+                        {piece.label_storage_key && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenPieceLabel(piece.tracking_number)}
+                            disabled={openingPiece === piece.tracking_number}
+                            className="inline-flex items-center gap-1 text-[13px] font-medium text-brand-navy-dark hover:underline disabled:opacity-60"
+                          >
+                            {openingPiece === piece.tracking_number ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Package className="h-3.5 w-3.5" />
+                            )}
+                            Open label
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Section>
+          )}
+
           <Section title="Ship Info">
             <dl className="mb-3 flex flex-wrap gap-x-8 border-b border-slate-100 pb-2">
               <Row label="Customer Type" value={s.customer_type} labelWidth="w-28" />
@@ -462,28 +560,11 @@ export default function ShipmentViewPage() {
           </Section>
 
           <Section title="Reference Numbers">
-            <p className="-mt-1 mb-3 text-[11px] leading-4 text-slate-500">
-              The only fields you can change. Everything else is locked once the air waybill is issued.
-            </p>
-            <div className="flex flex-col gap-2">
-              {refField("Invoice No.", refInvoiceNo, setRefInvoiceNo, "INV-2026-00123")}
-              {refField("Insurance No.", refInsuranceNo, setRefInsuranceNo, "INS-2026-00123")}
-              {refField("Purchase No.", refPurchaseNo, setRefPurchaseNo, "PO-2026-00123")}
-            </div>
-
-            <button
-              type="button"
-              onClick={handleSaveRefs}
-              disabled={saving || !dirty}
-              className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-amber px-3 py-2 text-[13px] font-semibold text-brand-navy-dark transition hover:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-amber focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-              Save references
-            </button>
-
-            <p aria-live="polite" className={`mt-1.5 min-h-[1rem] text-[11px] ${saveState?.ok ? "text-emerald-600" : "text-red-600"}`}>
-              {saveState?.text}
-            </p>
+            <dl className="divide-y divide-slate-100">
+              <Row label="Invoice No." value={s.ref_invoice_no} labelWidth="w-24" />
+              <Row label="Insurance No." value={s.ref_insurance_no} labelWidth="w-24" />
+              <Row label="Purchase No." value={s.ref_purchase_no} labelWidth="w-24" />
+            </dl>
           </Section>
         </aside>
       </div>

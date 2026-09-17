@@ -27,16 +27,15 @@ export const NAV_SECTIONS: NavItem[] = [
   {
     label: "Dashboard",
     icon: LayoutDashboard,
-    href: "/dashboard",
+    href: "/shipment/list",
   },
   {
     label: "Shipments",
     icon: Package,
     children: [
-      { label: "Create Shipment", href: "/shipment/create" },
-      { label: "My Shipments", href: "/shipment/list" },
       { label: "Drafts", href: "/shipment/draft" },
       { label: "Review Shipment", href: "/shipment/review" },
+      { label: "My Pickups", href: "/pickup/list" },
     ],
   },
   {
@@ -88,6 +87,7 @@ export const NAV_SECTIONS: NavItem[] = [
       { label: "Thai Address Database", href: "/config/thai-address" },
       { label: "Users & Permissions", href: "/config/users" },
       { label: "API Integrations", href: "/config/integrations" },
+      { label: "Tracking Sync", href: "/config/tracking-sync" },
     ],
   },
 ];

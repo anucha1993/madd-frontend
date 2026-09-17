@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
@@ -33,12 +33,15 @@ export default function ConfigMarkupPage() {
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [modalAgentId, setModalAgentId] = useState<number | null>(null);
-  const [modalAccountId, setModalAccountId] = useState<number | null>(null);
+  const [modalAccountIds, setModalAccountIds] = useState<Set<number>>(new Set());
   const [newChargeCodeId, setNewChargeCodeId] = useState<number | "">("");
   const [newValue, setNewValue] = useState("");
   const [newUnit, setNewUnit] = useState<"PERCENTAGE" | "BAHT">("PERCENTAGE");
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState("");
+  const [chargeCodeQuery, setChargeCodeQuery] = useState("");
+  const [chargeCodeDropdownOpen, setChargeCodeDropdownOpen] = useState(false);
+  const chargeCodeBoxRef = useRef<HTMLDivElement>(null);
 
   const [showNewChargeCode, setShowNewChargeCode] = useState(false);
   const [newCodeValue, setNewCodeValue] = useState("");
@@ -108,10 +111,12 @@ export default function ConfigMarkupPage() {
     setNewUnit("PERCENTAGE");
     setAddError("");
     setShowNewChargeCode(false);
+    setChargeCodeQuery("");
+    setChargeCodeDropdownOpen(false);
     const defaultAgentId = filterAgentId || agents[0]?.id || null;
     setModalAgentId(defaultAgentId);
     const defaultAccounts = accounts.filter((a) => a.agent_id === defaultAgentId);
-    setModalAccountId(filterAccountId || defaultAccounts[0]?.id || null);
+    setModalAccountIds(new Set(filterAccountId ? [filterAccountId] : defaultAccounts.map((a) => a.id)));
     const agent = agents.find((a) => a.id === defaultAgentId);
     if (agent) loadChargeCodes(agent.agent_code);
     setShowAddModal(true);
@@ -121,29 +126,66 @@ export default function ConfigMarkupPage() {
     if (!modalAgentId) return;
     const agent = agents.find((a) => a.id === modalAgentId);
     if (agent) loadChargeCodes(agent.agent_code);
-    const firstAccount = accounts.filter((a) => a.agent_id === modalAgentId)[0];
-    setModalAccountId(firstAccount?.id ?? null);
+    const agentAccounts = accounts.filter((a) => a.agent_id === modalAgentId);
+    setModalAccountIds(new Set(agentAccounts.map((a) => a.id)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modalAgentId]);
 
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (chargeCodeBoxRef.current && !chargeCodeBoxRef.current.contains(e.target as Node)) {
+        setChargeCodeDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  function toggleAccountSelection(id: number) {
+    setModalAccountIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllAccounts() {
+    setModalAccountIds((prev) =>
+      prev.size === modalAgentAccounts.length ? new Set() : new Set(modalAgentAccounts.map((a) => a.id))
+    );
+  }
+
+  // Mass-create: submits one request per selected Agent Account, then reports how many
+  // succeeded vs. were skipped (e.g. a rule for that charge code already exists on that account).
   async function handleAddRule() {
-    if (!modalAgentId || !modalAccountId || !newChargeCodeId || !newValue) return;
+    if (!modalAgentId || modalAccountIds.size === 0 || !newChargeCodeId || !newValue) return;
     setAdding(true);
     setAddError("");
-    try {
-      await createMarkupRule({
-        agent_id: modalAgentId,
-        agent_account_id: modalAccountId,
-        charge_code_id: Number(newChargeCodeId),
-        value: Number(newValue),
-        unit: newUnit,
-      });
+    const accountIds = Array.from(modalAccountIds);
+    let created = 0;
+    const skipped: string[] = [];
+    for (const accountId of accountIds) {
+      try {
+        await createMarkupRule({
+          agent_id: modalAgentId,
+          agent_account_id: accountId,
+          charge_code_id: Number(newChargeCodeId),
+          value: Number(newValue),
+          unit: newUnit,
+        });
+        created++;
+      } catch (err) {
+        const account = modalAgentAccounts.find((a) => a.id === accountId);
+        skipped.push(`${account?.username_acc ?? accountId}: ${err instanceof Error ? err.message : "Failed"}`);
+      }
+    }
+    await loadRules();
+    setAdding(false);
+    if (skipped.length === 0) {
       setShowAddModal(false);
-      await loadRules();
-    } catch (err) {
-      setAddError(err instanceof Error ? err.message : "Failed to add rule");
-    } finally {
-      setAdding(false);
+    } else {
+      setAddError(`Created for ${created} account(s). ${skipped.length} skipped:\n${skipped.join("\n")}`);
     }
   }
 
@@ -205,10 +247,12 @@ export default function ConfigMarkupPage() {
     await loadRules();
   }
 
-  const usedChargeCodeIdsForModalAccount = new Set(
-    rules.filter((r) => r.agent_account_id === modalAccountId).map((r) => r.charge_code_id)
-  );
-  const availableChargeCodes = chargeCodes.filter((c) => !usedChargeCodeIdsForModalAccount.has(c.id));
+  const selectedChargeCode = chargeCodes.find((c) => c.id === newChargeCodeId);
+  const chargeCodeSearchTerm = chargeCodeQuery.trim().toLowerCase();
+  const filteredChargeCodes = chargeCodes.filter((c) => {
+    if (!chargeCodeSearchTerm) return true;
+    return `${c.label} ${c.code} ${c.category ?? ""}`.toLowerCase().includes(chargeCodeSearchTerm);
+  });
 
   return (
     <div>
@@ -434,37 +478,91 @@ export default function ConfigMarkupPage() {
                       ))}
                     </select>
                   </label>
-                  <label className="flex flex-col gap-1.5">
-                    <span className="text-sm font-medium text-slate-600">Agent Account</span>
-                    <select
-                      value={modalAccountId ?? ""}
-                      onChange={(e) => setModalAccountId(e.target.value ? Number(e.target.value) : null)}
-                      className={inputClass}
-                    >
-                      {modalAgentAccounts.length === 0 && <option value="">No accounts</option>}
-                      {modalAgentAccounts.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.username_acc}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-slate-600">Agent Account(s)</span>
+                      <button
+                        type="button"
+                        onClick={toggleSelectAllAccounts}
+                        disabled={modalAgentAccounts.length === 0}
+                        className="text-xs font-medium text-brand-navy-dark hover:underline disabled:opacity-40"
+                      >
+                        {modalAccountIds.size === modalAgentAccounts.length ? "Deselect All" : "Select All"}
+                      </button>
+                    </div>
+                    <div className="max-h-36 overflow-y-auto rounded-lg border border-slate-300 bg-white p-2">
+                      {modalAgentAccounts.length === 0 ? (
+                        <p className="px-1 py-1 text-xs text-slate-400">No accounts for this agent</p>
+                      ) : (
+                        modalAgentAccounts.map((a) => (
+                          <label
+                            key={a.id}
+                            className="flex items-center gap-2 rounded px-1 py-1 text-sm text-slate-700 hover:bg-slate-50"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={modalAccountIds.has(a.id)}
+                              onChange={() => toggleAccountSelection(a.id)}
+                              className="h-3.5 w-3.5 rounded border-slate-300 text-brand-navy-dark focus:ring-brand-navy/30"
+                            />
+                            {a.username_acc}
+                          </label>
+                        ))
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      {modalAccountIds.size} account(s) selected — the rule will be created for each one.
+                    </p>
+                  </div>
                 </div>
 
                 <label className="flex flex-col gap-1.5">
                   <span className="text-sm font-medium text-slate-600">Charge Code</span>
-                  <select
-                    value={newChargeCodeId}
-                    onChange={(e) => setNewChargeCodeId(e.target.value ? Number(e.target.value) : "")}
-                    className={inputClass}
-                  >
-                    <option value="">Select charge code...</option>
-                    {availableChargeCodes.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.label} ({c.code})
-                      </option>
-                    ))}
-                  </select>
+                  <div ref={chargeCodeBoxRef} className="relative">
+                    <input
+                      type="text"
+                      value={
+                        chargeCodeDropdownOpen
+                          ? chargeCodeQuery
+                          : selectedChargeCode
+                          ? `${selectedChargeCode.label} (${selectedChargeCode.code})`
+                          : ""
+                      }
+                      onFocus={() => {
+                        setChargeCodeQuery("");
+                        setChargeCodeDropdownOpen(true);
+                      }}
+                      onChange={(e) => setChargeCodeQuery(e.target.value)}
+                      placeholder="Search charge code by label or code..."
+                      className={`${inputClass} w-full`}
+                    />
+                    {chargeCodeDropdownOpen && (
+                      <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                        {filteredChargeCodes.length === 0 ? (
+                          <p className="px-3 py-2 text-xs text-slate-400">No matching charge codes</p>
+                        ) : (
+                          filteredChargeCodes.map((c) => (
+                            <button
+                              type="button"
+                              key={c.id}
+                              onClick={() => {
+                                setNewChargeCodeId(c.id);
+                                setChargeCodeQuery("");
+                                setChargeCodeDropdownOpen(false);
+                              }}
+                              className="block w-full border-b border-slate-50 px-3 py-2 text-left text-xs last:border-0 hover:bg-slate-50"
+                            >
+                              <span className="font-medium text-slate-700">{c.label}</span>{" "}
+                              <span className="text-slate-400">
+                                ({c.code}
+                                {c.category ? `, ${c.category}` : ""})
+                              </span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </label>
 
                 <button
@@ -539,7 +637,7 @@ export default function ConfigMarkupPage() {
                     </select>
                   </label>
                 </div>
-                {addError && <p className="text-sm text-red-600">{addError}</p>}
+                {addError && <p className="whitespace-pre-line text-sm text-red-600">{addError}</p>}
                 <div className="mt-2 flex justify-end gap-2">
                   <button
                     type="button"
@@ -551,10 +649,15 @@ export default function ConfigMarkupPage() {
                   <button
                     type="button"
                     onClick={handleAddRule}
-                    disabled={adding || !newChargeCodeId || !newValue}
+                    disabled={adding || !newChargeCodeId || !newValue || modalAccountIds.size === 0}
                     className="flex items-center gap-2 rounded-lg bg-brand-amber px-4 py-2 text-sm font-semibold text-brand-navy-dark hover:bg-brand-amber/90 disabled:opacity-60"
                   >
-                    <Plus className="h-4 w-4" /> {adding ? "Adding..." : "Add Rule"}
+                    <Plus className="h-4 w-4" />{" "}
+                    {adding
+                      ? "Adding..."
+                      : modalAccountIds.size > 1
+                      ? `Add Rule to ${modalAccountIds.size} Accounts`
+                      : "Add Rule"}
                   </button>
                 </div>
               </div>

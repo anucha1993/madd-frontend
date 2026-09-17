@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Code, Loader2, Lock, Package, Plus, Printer, Receipt, Search, ShieldCheck, Sparkles, Tag, Trash2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Code, Copy, Loader2, Lock, Package, Plus, Printer, Receipt, Search, ShieldCheck, Sparkles, Tag, Trash2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import ThaiAddressSearch from "@/components/shipment/ThaiAddressSearch";
@@ -19,7 +19,7 @@ import { listManifestOptions, type ManifestOption } from "@/lib/manifestOptions"
 import { getThaiSubdistrictsByZipCode } from "@/lib/thaiSubdistricts";
 import { checkRate, type CheckRateInput, type RateQuote, type ShipmentPackageInput } from "@/lib/shipping";
 import { lookupInsuranceCountryCap, type InsuranceCountryCap } from "@/lib/insuranceCountryCaps";
-import { bookShipment, openShipmentLabel, printShipmentReceipt, type BookShipmentInput, type Shipment } from "@/lib/shipments";
+import { bookShipment, describeShipmentPieces, openShipmentLabel, printShipmentReceipt, type BookShipmentInput, type Shipment } from "@/lib/shipments";
 import { getShipmentDraft, createShipmentDraft, updateShipmentDraft, deleteShipmentDraft } from "@/lib/shipmentDrafts";
 import { getUser } from "@/lib/auth";
 import {
@@ -74,9 +74,17 @@ type ProductType = "SILVER" | "NON_SILVER" | "OTHER" | null;
 type PackageRow = ShipmentPackageInput & {
   key: number;
   forcedWeightBandId: number | null;
+  // The CPM band's fixed billing weight (kg), captured from the Supply at the moment it was
+  // applied — sent to the carrier instead of the (still freely editable) `weight` field above,
+  // since staff may legitimately type the box's real physical weight for their own records while
+  // the carrier must always be billed at the fixed CPM weight regardless (see billedWeightFor()).
+  forcedWeightBandWeight: number | null;
   insured: boolean;
   productType: ProductType;
   productTypeOther: string;
+  // Whether `declared_value` (typed by staff) means the TOTAL for this row (qty boxes combined)
+  // or the value of ONE box (system multiplies by qty) — undefined (old drafts) behaves as TOTAL.
+  declared_value_mode?: "TOTAL" | "PER_BOX";
 };
 
 let rowKeySeq = 1;
@@ -90,12 +98,29 @@ const newRow = (): PackageRow => ({
   description: "",
   is_document: false,
   declared_value: 0,
+  declared_value_mode: "TOTAL",
   insured: false,
   // Non Silver is the default Product Type for every new box (see selectPackageInsurance / renderInsurancePicker).
   productType: "NON_SILVER",
   productTypeOther: "",
   forcedWeightBandId: null,
+  forcedWeightBandWeight: null,
 });
+
+// What to actually bill the carrier for this package — the fixed CPM weight when one is forced
+// (ignores whatever real weight is typed/edited in the row), otherwise the row's own weight.
+function billedWeightFor(pkg: Pick<PackageRow, "weight" | "forcedWeightBandId" | "forcedWeightBandWeight">): number {
+  return pkg.forcedWeightBandId && pkg.forcedWeightBandWeight ? pkg.forcedWeightBandWeight : Number(pkg.weight) || 0;
+}
+
+// The single source of truth for "how much is this whole row (all `quantity` boxes) insured
+// for" — always a TOTAL regardless of which input mode staff used, sent to the backend as-is
+// (DHL sums row totals directly; UPS divides by quantity per expanded box, see UpsRateService).
+function packageTotalDeclaredValue(pkg: Pick<PackageRow, "declared_value" | "quantity" | "declared_value_mode">): number {
+  const raw = Number(pkg.declared_value) || 0;
+  const qty = Math.max(Number(pkg.quantity) || 1, 1);
+  return pkg.declared_value_mode === "PER_BOX" ? raw * qty : raw;
+}
 
 // A free-form Add-on order line (POS-style row) — can be quick-filled from a catalog suggestion
 // or added blank and typed in manually.
@@ -204,7 +229,7 @@ export default function ShipmentCreatePage() {
 
   // Declared Value is set PER PACKAGE (UPS insurance is a package-level field) — this total feeds
   // any Add-on catalog item priced as "Percent of Declared Value" (e.g. Insurance).
-  const totalDeclaredValue = packages.reduce((sum, p) => sum + (p.insured ? Number(p.declared_value) || 0 : 0), 0);
+  const totalDeclaredValue = packages.reduce((sum, p) => sum + (p.insured ? packageTotalDeclaredValue(p) : 0), 0);
 
   const [customerTypeOptions, setCustomerTypeOptions] = useState<ManifestOption[]>([]);
   const [customerType, setCustomerType] = useState("DAILY");
@@ -300,6 +325,9 @@ export default function ShipmentCreatePage() {
   const [bookingError, setBookingError] = useState("");
   const [bookedShipment, setBookedShipment] = useState<Shipment | null>(null);
   const [openingLabel, setOpeningLabel] = useState(false);
+  const [openingPieceTracking, setOpeningPieceTracking] = useState<string | null>(null);
+  const [copiedTracking, setCopiedTracking] = useState<string | null>(null);
+  const [viewBookedRaw, setViewBookedRaw] = useState(false);
   const [viewRawQuote, setViewRawQuote] = useState<RateQuote | null>(null);
   // Which carrier(s) to check — lets staff narrow to just UPS or just DHL so the insurance
   // picker (which needs a known carrier) can be driven right after Check Rate, without waiting
@@ -583,16 +611,31 @@ export default function ShipmentCreatePage() {
   // is cleared and staff must re-run Check Rate + reselect to get an accurate price.
   function updateDeclaredValue(pkg: PackageRow, declaredValue: number) {
     updatePackage(pkg.key, { declared_value: declaredValue });
+    const newTotal = packageTotalDeclaredValue({ ...pkg, declared_value: declaredValue });
     const selectedRow = addonRows.find((r) => r.packageKey === pkg.key && r.category === "Insurance");
     const selectedItem = selectedRow ? addonItems.find((i) => i.id === selectedRow.addonItemId) : undefined;
-    if (selectedItem?.price_type === "API_COST" && quotedDeclaredValues[pkg.key] !== declaredValue) {
+    if (selectedItem?.price_type === "API_COST" && quotedDeclaredValues[pkg.key] !== newTotal) {
       setAddonRows((prev) => prev.filter((r) => !(r.packageKey === pkg.key && r.category === "Insurance")));
       alert("มูลค่าสินค้าที่แจ้งเปลี่ยนไป — ราคาประกันนี้อ้างอิงจากราคาจริงของ carrier ครั้งก่อน กรุณากด Check Rate ใหม่แล้วเลือกประกันอีกครั้งเพื่อราคาที่ถูกต้อง");
     }
   }
 
+  // Lets staff switch how the Declared Value input is read (total for all `quantity` boxes vs
+  // one box, auto-multiplied) WITHOUT changing the actual insured total — the displayed number
+  // is converted so the economic total stays the same across the toggle.
+  function setDeclaredValueMode(pkg: PackageRow, mode: "TOTAL" | "PER_BOX") {
+    if ((pkg.declared_value_mode ?? "TOTAL") === mode) return;
+    const currentTotal = packageTotalDeclaredValue(pkg);
+    const qty = Math.max(Number(pkg.quantity) || 1, 1);
+    const nextRaw = mode === "PER_BOX" ? currentTotal / qty : currentTotal;
+    updatePackage(pkg.key, { declared_value_mode: mode, declared_value: Math.round(nextRaw * 100) / 100 });
+  }
+
+  // A shipment must be all-Box or all-Document — neither UPS nor DHL accepts a mix (confirmed
+  // via live rate check) — so a newly added row always inherits the shipment's existing type
+  // instead of defaulting to Box, which would silently create a mix.
   function addPackage() {
-    const row = newRow();
+    const row = { ...newRow(), is_document: packages[0]?.is_document ?? false };
     setPackages((prev) => [...prev, row]);
     setActivePackageKey(row.key);
   }
@@ -658,7 +701,7 @@ export default function ShipmentCreatePage() {
     // API_COST's price is frozen from the last Check Rate's real chargeBreakdown — refuse to
     // (re)select it with a Declared Value that's changed since, instead of silently reusing a
     // stale carrier cost that no longer matches what was actually sent to Check Rate.
-    if (item.price_type === "API_COST" && quotedDeclaredValues[pkg.key] !== (Number(pkg.declared_value) || 0)) {
+    if (item.price_type === "API_COST" && quotedDeclaredValues[pkg.key] !== packageTotalDeclaredValue(pkg)) {
       alert("มูลค่าสินค้าเปลี่ยนไปตั้งแต่เช็ค Rate ล่าสุด — กรุณากด Check Rate ใหม่ก่อนเลือกประกันนี้ เพื่อราคาที่ถูกต้อง");
       return;
     }
@@ -672,7 +715,7 @@ export default function ShipmentCreatePage() {
         : selectedQuote?.carrier === "UPS"
           ? insuranceCap?.ups_max_declared
           : null;
-    const rawDeclaredValue = Number(pkg.declared_value) || 0;
+    const rawDeclaredValue = packageTotalDeclaredValue(pkg);
     const effectiveDeclaredValue =
       isThirdParty && carrierMaxDeclared != null ? Math.min(rawDeclaredValue, Number(carrierMaxDeclared)) : rawDeclaredValue;
 
@@ -1046,18 +1089,33 @@ export default function ShipmentCreatePage() {
   const activeRow = packages.find((p) => p.key === activePackageKey) ?? packages[0];
 
   // Shipment Weight Range — auto-matched from total weight (legacy system required manually
-  // picking this from a radio list; here it's derived automatically instead). A supply box
-  // linked to a fixed Weight Range (e.g. CPM10/CPM25) always overrides the weight-based match,
-  // even if the actual total weight doesn't reach that band's threshold.
-  const totalShipmentWeight = packages.reduce((sum, p) => sum + (Number(p.weight) || 0) * (Number(p.quantity) || 1), 0);
+  // picking this from a radio list; here it's derived automatically instead). Uses the BILLED
+  // weight (billedWeightFor) so a CPM-forced row's fixed weight — not whatever real weight staff
+  // typed for their own records — feeds the total.
+  const totalShipmentWeight = packages.reduce((sum, p) => sum + billedWeightFor(p) * (Number(p.quantity) || 1), 0);
+  const totalPackageQuantity = packages.reduce((sum, p) => sum + (Number(p.quantity) || 1), 0);
   const overallPackageType: "box" | "document" = packages.every((p) => p.is_document) ? "document" : "box";
-  const forcedBandIds = packages.map((p) => p.forcedWeightBandId).filter((id): id is number => !!id);
+  // Confirmed empirically (live rate check, not guessed): UPS's Rating API rejects EVERY
+  // service code with "The requested service is not valid for shipments with the requested
+  // packaging" whenever a shipment mixes Document (Packaging 01) and Box (Packaging 02)
+  // packages — a shipment must be all-Document or all-Box for UPS. DHL has no such
+  // restriction (a mixed shipment quotes fine). Split into two separate shipments for UPS.
+  const hasMixedPackageTypes = packages.some((p) => p.is_document) && packages.some((p) => !p.is_document);
+  // A CPM-forced Weight Range (e.g. CPM10/CPM25) only overrides the weight-based match when the
+  // shipment is truly a single box (total quantity across every row is 1) — a CPM box's fixed
+  // weight only means "bill this one box as if it weighs 10/20kg", not "this whole multi-box
+  // shipment is CPM10". With >1 box total, the Shipment Weight Range must fall back to matching
+  // a REG band against the combined billed weight of every box.
+  const forcedBandIds =
+    totalPackageQuantity === 1 ? packages.map((p) => p.forcedWeightBandId).filter((id): id is number => !!id) : [];
   const matchedWeightBand =
     pickForcedWeightBand(weightBands, forcedBandIds) ?? matchProductWeightBand(weightBands, totalShipmentWeight, overallPackageType);
 
   // Applying a stock size only fills in the dimensions as a guide — it does not add a purchase.
   // Targets whichever package row is currently "active" (unlocked), not always the first one.
-  // If the supply is linked to a fixed Weight Range (CPM10/CPM25), that row now forces it.
+  // If the supply is linked to a fixed Weight Range (CPM10/CPM25), that row now forces it — and
+  // the carrier is always billed at that fixed weight (see billedWeightFor), never whatever real
+  // weight staff later types into the row for their own records.
   function applyStockSize(supply: Supply) {
     setStockSupplyId(supply.id);
     const targetKey = activePackageKey ?? packages[0].key;
@@ -1068,6 +1126,7 @@ export default function ShipmentCreatePage() {
       height: Number(supply.height) || undefined,
       is_document: false,
       forcedWeightBandId: supply.weight_band_id ?? null,
+      forcedWeightBandWeight: supply.weight_band_id ? Number(supply.weight) || null : null,
     });
   }
 
@@ -1110,21 +1169,21 @@ export default function ShipmentCreatePage() {
       const sendDeclaredValue = p.insured;
       return p.is_document
         ? {
-            weight: p.weight,
+            weight: billedWeightFor(p),
             quantity: p.quantity,
             description: p.description,
             is_document: true,
-            declared_value: sendDeclaredValue ? p.declared_value : undefined,
+            declared_value: sendDeclaredValue ? packageTotalDeclaredValue(p) : undefined,
           }
         : {
-            weight: p.weight,
+            weight: billedWeightFor(p),
             length: p.length,
             width: p.width,
             height: p.height,
             quantity: p.quantity,
             description: p.description,
             is_document: false,
-            declared_value: sendDeclaredValue ? p.declared_value : undefined,
+            declared_value: sendDeclaredValue ? packageTotalDeclaredValue(p) : undefined,
           };
     });
 
@@ -1160,7 +1219,7 @@ export default function ShipmentCreatePage() {
         .filter((r) => !r.error)
         .sort((a, b) => (a.negotiated ?? a.published ?? Infinity) - (b.negotiated ?? b.published ?? Infinity))[0];
       setSelectedQuote(cheapest ?? null);
-      setQuotedDeclaredValues(Object.fromEntries(packages.map((p) => [p.key, Number(p.declared_value) || 0])));
+      setQuotedDeclaredValues(Object.fromEntries(packages.map((p) => [p.key, packageTotalDeclaredValue(p)])));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to check rate. Please try again.");
     } finally {
@@ -1209,14 +1268,14 @@ export default function ShipmentCreatePage() {
         // apart from third-party UPSC (see ShipmentController::store's useCarrierInsurance).
         const insuranceRow = addonRows.find((r) => r.packageKey === p.key && r.category === "Insurance");
         return {
-          weight: p.weight,
+          weight: billedWeightFor(p),
           length: p.is_document ? undefined : p.length,
           width: p.is_document ? undefined : p.width,
           height: p.is_document ? undefined : p.height,
           quantity: p.quantity,
           description: p.description || undefined,
           is_document: p.is_document,
-          declared_value: p.insured ? Number(p.declared_value) || 0 : undefined,
+          declared_value: p.insured ? packageTotalDeclaredValue(p) : undefined,
           insured: p.insured,
           product_type: p.productType,
           product_type_other: p.productTypeOther || undefined,
@@ -1282,11 +1341,42 @@ export default function ShipmentCreatePage() {
     }
   }
 
+  async function handleOpenPieceLabel(trackingNumber: string | null) {
+    if (!bookedShipment || !trackingNumber) return;
+    setOpeningPieceTracking(trackingNumber);
+    try {
+      await openShipmentLabel(bookedShipment.id, trackingNumber);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "เปิด Label ไม่สำเร็จ");
+    } finally {
+      setOpeningPieceTracking(null);
+    }
+  }
+
+  function handleCopyTracking(trackingNumber: string | null) {
+    if (!trackingNumber) return;
+    navigator.clipboard?.writeText(trackingNumber).then(() => {
+      setCopiedTracking(trackingNumber);
+      setTimeout(() => setCopiedTracking((cur) => (cur === trackingNumber ? null : cur)), 1500);
+    });
+  }
+
+  // Pieces come back from the carrier as a flat list expanded in package/quantity order — see
+  // describeShipmentPieces() in lib/shipments.ts (shared with /shipment/view/[id]).
+
   const inputClass =
     "w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-sm text-slate-800 outline-none transition focus:border-brand-navy focus:bg-white focus:ring-2 focus:ring-brand-navy/15";
   const labelClass = "text-sm font-medium text-slate-600";
 
   const okResults = (results ?? []).filter((r) => !r.error).sort((a, b) => (a.negotiated ?? a.published ?? Infinity) - (b.negotiated ?? b.published ?? Infinity));
+  // Every failed account/service call, deduped by carrier+message — surfaced to staff instead of
+  // silently disappearing behind a generic "No valid quotes returned." (this is exactly what a
+  // mixed Document+Box UPS shipment looks like: every UPS service errors, no error was ever shown).
+  const errorResults = Array.from(new Map((results ?? []).filter((r) => r.error).map((r) => [`${r.carrier}:${r.error}`, r])).values());
+  const explainRateError = (r: RateQuote) =>
+    r.carrier === "UPS" && (r.error ?? "").includes("not valid for shipments with the requested packaging")
+      ? "UPS ไม่รองรับการส่ง Box และ Document ปนกันใน Shipment เดียวกัน — กรุณาแยกเป็นคนละ Shipment (ดูคำเตือนในหัวข้อ Packages)"
+      : null;
 
   const addonByCategory = addonItems.reduce<Record<string, AddonItem[]>>((acc, item) => {
     const key = item.category?.name ?? "Other";
@@ -1586,7 +1676,7 @@ export default function ShipmentCreatePage() {
     const radioName = `insurance-${pkg.key}`;
     const isStaleApiCost =
       insuranceCarrierOption?.price_type === "API_COST" &&
-      quotedDeclaredValues[pkg.key] !== (Number(pkg.declared_value) || 0);
+      quotedDeclaredValues[pkg.key] !== packageTotalDeclaredValue(pkg);
     // UPS does not cover Document shipments with its own insurance (ICDV) at all — confirmed
     // business rule, not a config-driven restriction like the insurance country caps below.
     const upsDocumentNotCovered = selectedQuote?.carrier === "UPS" && !!pkg.is_document;
@@ -2167,6 +2257,16 @@ export default function ShipmentCreatePage() {
           )}
         </div>
 
+        {hasMixedPackageTypes && (
+          <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+            <p className="text-xs text-amber-800">
+              <span className="font-bold">คละ Box กับ Document ใน Shipment เดียวกัน</span> — ทั้ง UPS และ DHL ไม่รองรับ
+              (จะไม่ขึ้น Rate เลยตอนกด Check Rate) ต้องแยกเป็นคนละ Shipment
+            </p>
+          </div>
+        )}
+
         <div className={activeRow.is_document ? "" : "flex flex-col gap-3 lg:flex-row lg:items-start"}>
           <div className={activeRow.is_document ? "flex flex-col gap-2.5" : "flex flex-col gap-2.5 lg:flex-1"}>
             {packages.map((pkg) => {
@@ -2185,7 +2285,7 @@ export default function ShipmentCreatePage() {
                 .filter((v): v is number | string => v != null)
                 .map(Number);
               const maxCap = capValues.length > 0 ? Math.min(...capValues) : null;
-              const declaredValueNum = Number(pkg.declared_value) || 0;
+              const declaredValueNum = packageTotalDeclaredValue(pkg);
               const coveredValue = isSelectedThirdParty && maxCap != null ? Math.min(declaredValueNum, maxCap) : declaredValueNum;
               // API_COST items (e.g. DHL's own insurance) must reflect whatever service is
               // CURRENTLY selected — computed fresh from selectedQuote's real chargeBreakdown on
@@ -2201,6 +2301,10 @@ export default function ShipmentCreatePage() {
                   : selectedInsuranceItem?.price != null
                     ? coveredValue * (Number(selectedInsuranceItem.price) / 100)
                     : null;
+              // Neither UPS nor DHL accepts a shipment mixing Document + Box packages — disable
+              // switching THIS row to a type that conflicts with some OTHER row's type.
+              const blocksBox = packages.some((p) => p.key !== pkg.key && p.is_document);
+              const blocksDocument = packages.some((p) => p.key !== pkg.key && !p.is_document);
               return (
                 <div
                   key={pkg.key}
@@ -2220,8 +2324,15 @@ export default function ShipmentCreatePage() {
                   <div className="flex items-center gap-1.5">
                     <button
                       type="button"
-                      disabled={!isActive}
-                      onClick={() => updatePackage(pkg.key, { is_document: false, forcedWeightBandId: null })}
+                      disabled={!isActive || blocksBox}
+                      title={blocksBox ? "ปิดใช้งาน — มีกล่องอื่นเป็น Document อยู่ จะคละกับ Box ไม่ได้ แยกเป็นคนละ Shipment" : undefined}
+                      onClick={() => {
+                        if (blocksBox) {
+                          alert("ไม่สามารถเปลี่ยนเป็น Box ได้ — มีกล่องอื่นเป็น Document อยู่ ทั้ง UPS และ DHL ไม่รองรับการคละประเภท กรุณาแยกเป็นคนละ Shipment");
+                          return;
+                        }
+                        updatePackage(pkg.key, { is_document: false, forcedWeightBandId: null, forcedWeightBandWeight: null });
+                      }}
                       className={`rounded-md px-2 py-0.5 text-xs font-semibold transition disabled:cursor-not-allowed ${
                         !pkg.is_document ? "bg-brand-navy-dark text-white" : "bg-slate-200 text-slate-500"
                       }`}
@@ -2230,8 +2341,15 @@ export default function ShipmentCreatePage() {
                     </button>
                     <button
                       type="button"
-                      disabled={!isActive}
-                      onClick={() => updatePackage(pkg.key, { is_document: true, forcedWeightBandId: null })}
+                      disabled={!isActive || blocksDocument}
+                      title={blocksDocument ? "ปิดใช้งาน — มีกล่องอื่นเป็น Box อยู่ จะคละกับ Document ไม่ได้ แยกเป็นคนละ Shipment" : undefined}
+                      onClick={() => {
+                        if (blocksDocument) {
+                          alert("ไม่สามารถเปลี่ยนเป็น Document ได้ — มีกล่องอื่นเป็น Box อยู่ ทั้ง UPS และ DHL ไม่รองรับการคละประเภท กรุณาแยกเป็นคนละ Shipment");
+                          return;
+                        }
+                        updatePackage(pkg.key, { is_document: true, forcedWeightBandId: null, forcedWeightBandWeight: null });
+                      }}
                       className={`rounded-md px-2 py-0.5 text-xs font-semibold transition disabled:cursor-not-allowed ${
                         pkg.is_document ? "bg-violet-600 text-white" : "bg-slate-200 text-slate-500"
                       }`}
@@ -2239,8 +2357,12 @@ export default function ShipmentCreatePage() {
                       Document
                     </button>
                     {pkg.forcedWeightBandId && (
-                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                      <span
+                        className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700"
+                        title="คิดค่าขนส่งที่น้ำหนักนี้เสมอ 2 ไม่ว่าจะระบุน้ำหนักจริงเท่าไรก็ตาม"
+                      >
                         Fixed Weight Range: {weightBands.find((b) => b.id === pkg.forcedWeightBandId)?.label}
+                        {pkg.forcedWeightBandWeight ? ` (คิดที่ ${pkg.forcedWeightBandWeight}kg)` : ""}
                       </span>
                     )}
                   </div>
@@ -2300,6 +2422,11 @@ export default function ShipmentCreatePage() {
                       step={0.1}
                       value={pkg.weight}
                       disabled={!isActive}
+                      title={
+                        pkg.forcedWeightBandWeight
+                          ? `บันทึกน้ำหนักจริงไว้ได้ตามต้องการ — ค่าขนส่งจะคิดที่ ${pkg.forcedWeightBandWeight}kg เสมอ (CPM)`
+                          : undefined
+                      }
                       onChange={(e) => updatePackage(pkg.key, { weight: Number(e.target.value) })}
                       className={`w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15 disabled:bg-slate-100 ${
                         !isActive ? "pointer-events-none" : ""
@@ -2404,8 +2531,22 @@ export default function ShipmentCreatePage() {
                     </label>
                   </div>
                   {pkg.insured && !pkg.is_document && (
-                    <label className="flex w-48 flex-col gap-1">
-                      <span className={labelClass}>Declared Value (THB)</span>
+                    <label className="flex w-52 flex-col gap-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-slate-600">Declared Value (THB)</span>
+                        {Number(pkg.quantity) > 1 && (
+                          <select
+                            value={pkg.declared_value_mode ?? "TOTAL"}
+                            disabled={!isActive}
+                            onChange={(e) => setDeclaredValueMode(pkg, e.target.value as "TOTAL" | "PER_BOX")}
+                            title="วิธีกรอก Declared Value"
+                            className="rounded-md border border-slate-300 bg-white px-1 py-0.5 text-[10px] font-semibold text-slate-600 outline-none disabled:cursor-not-allowed disabled:bg-slate-100"
+                          >
+                            <option value="TOTAL">รวมทั้งหมด</option>
+                            <option value="PER_BOX">ต่อกล่อง</option>
+                          </select>
+                        )}
+                      </div>
                       <input
                         type="number"
                         min={0}
@@ -2416,6 +2557,11 @@ export default function ShipmentCreatePage() {
                           !isActive ? "pointer-events-none" : ""
                         }`}
                       />
+                      {Number(pkg.quantity) > 1 && (
+                        <span className="text-[11px] text-slate-400">
+                          = {packageTotalDeclaredValue(pkg).toLocaleString()} บาท รวมทั้ง {pkg.quantity} กล่อง
+                        </span>
+                      )}
                     </label>
                   )}
                   {pkg.insured && pkg.is_document && (
@@ -2648,7 +2794,22 @@ export default function ShipmentCreatePage() {
                       </div>
                     );
                   })}
-                  {okResults.length === 0 && <p className="text-sm text-slate-400">No valid quotes returned.</p>}
+                  {okResults.length === 0 &&
+                    (errorResults.length > 0 ? (
+                      <div className="flex flex-col gap-2">
+                        {errorResults.map((r, i) => (
+                          <div key={i} className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                            <p>
+                              <span className="font-semibold">{r.carrier}</span>
+                              {r.username ? <span className="text-red-400"> ({r.username})</span> : null}: {r.error}
+                            </p>
+                            {explainRateError(r) && <p className="mt-1 text-amber-700">{explainRateError(r)}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-slate-400">No valid quotes returned.</p>
+                    ))}
                 </div>
                 <div className="mt-4 flex justify-end">
                   <button
@@ -3185,6 +3346,18 @@ export default function ShipmentCreatePage() {
         </Modal>
       )}
 
+      {viewBookedRaw && bookedShipment && (
+        <Modal
+          title={`Raw Booking Response — ${bookedShipment.carrier} ${bookedShipment.tracking_number ?? ""}`}
+          onClose={() => setViewBookedRaw(false)}
+          maxWidthClassName="max-w-3xl"
+        >
+          <pre className="max-h-[65vh] overflow-auto rounded-lg bg-slate-900 p-4 text-xs text-slate-100">
+            {JSON.stringify(bookedShipment.raw_response, null, 2)}
+          </pre>
+        </Modal>
+      )}
+
       {bookingModalOpen && selectedQuote && (
         <Modal
           title={bookedShipment ? "สร้าง Shipment สำเร็จ" : "ยืนยันการสร้าง Shipment"}
@@ -3199,51 +3372,117 @@ export default function ShipmentCreatePage() {
           maxWidthClassName="max-w-3xl"
           bodyMaxHeightClassName="max-h-[92vh]"
         >
-          {bookedShipment ? (
-            <div className="flex flex-col gap-5">
-              <div className="flex flex-col items-center gap-3 rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50 to-white px-6 py-8 text-center">
-                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500 shadow-lg shadow-emerald-200">
-                  <CheckCircle2 className="h-8 w-8 text-white" />
+          {bookedShipment ? (() => {
+            const pieces = describeShipmentPieces(bookedShipment);
+            const isMultiPiece = pieces.length > 1;
+            return (
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-500">
+                    <CheckCircle2 className="h-5 w-5 text-white" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-emerald-800">จอง Shipment กับ {bookedShipment.carrier} สำเร็จแล้ว</p>
+                    <p className="text-xs text-emerald-700/80">บันทึกเข้าระบบเรียบร้อย พร้อมติดตามสถานะได้ทันที</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-base font-bold text-emerald-700">จอง Shipment กับ {bookedShipment.carrier} สำเร็จแล้ว</p>
-                  <p className="mt-1 text-sm text-slate-500">บันทึกเข้าระบบเรียบร้อย พร้อมติดตามสถานะได้ทันที</p>
+
+                <div className="rounded-xl border border-slate-200">
+                  <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5">
+                    <h3 className="text-sm font-semibold text-slate-800">
+                      Tracking Number{isMultiPiece ? ` (${pieces.length} กล่อง)` : ""}
+                    </h3>
+                    {!isMultiPiece && bookedShipment.label_storage_key && (
+                      <button
+                        type="button"
+                        onClick={handleOpenLabel}
+                        disabled={openingLabel}
+                        className="flex items-center gap-1.5 rounded-lg bg-brand-navy-dark px-2.5 py-1.5 text-xs font-semibold text-white transition hover:brightness-110 disabled:opacity-60"
+                      >
+                        {openingLabel ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Receipt className="h-3.5 w-3.5" />}
+                        เปิด Label
+                      </button>
+                    )}
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {pieces.length > 0 ? (
+                      pieces.map((piece, i) => (
+                        <div key={piece.tracking_number ?? i} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                          <div className="min-w-0">
+                            {isMultiPiece && <p className="text-[11px] text-slate-400">{piece.description}</p>}
+                            <p className="truncate font-mono text-sm font-bold text-brand-navy-dark">
+                              {piece.tracking_number ?? "-"}
+                            </p>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleCopyTracking(piece.tracking_number)}
+                              title="คัดลอกเลข Tracking"
+                              className="flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                              {copiedTracking === piece.tracking_number ? "คัดลอกแล้ว" : "คัดลอก"}
+                            </button>
+                            {isMultiPiece && piece.label_storage_key && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenPieceLabel(piece.tracking_number)}
+                                disabled={openingPieceTracking === piece.tracking_number}
+                                className="flex items-center gap-1 rounded-lg bg-brand-navy-dark px-2 py-1.5 text-xs font-semibold text-white transition hover:brightness-110 disabled:opacity-60"
+                              >
+                                {openingPieceTracking === piece.tracking_number ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Receipt className="h-3.5 w-3.5" />
+                                )}
+                                Label
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="px-4 py-2.5">
+                        <p className="truncate font-mono text-sm font-bold text-brand-navy-dark">
+                          {bookedShipment.tracking_number ?? "-"}
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div className="mt-2 flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 shadow-sm">
-                  <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Tracking No.</span>
-                  <span className="font-mono text-lg font-bold text-brand-navy-dark">{bookedShipment.tracking_number ?? "-"}</span>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => printShipmentReceipt(bookedShipment)}
+                    className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                  >
+                    <Printer className="h-4 w-4" />
+                    พิมพ์ใบเสร็จ
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewBookedRaw(true)}
+                    className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                  >
+                    <Code className="h-4 w-4" />
+                    ดู Raw Response (หลักฐาน)
+                  </button>
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => router.push("/shipment/list")}
+                    className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                  >
+                    ปิด
+                  </button>
                 </div>
               </div>
-              {bookedShipment.label_storage_key && (
-                <button
-                  type="button"
-                  onClick={handleOpenLabel}
-                  disabled={openingLabel}
-                  className="flex items-center justify-center gap-2 rounded-xl bg-brand-navy-dark px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:opacity-60"
-                >
-                  {openingLabel ? <Loader2 className="h-4 w-4 animate-spin" /> : <Receipt className="h-4 w-4" />}
-                  เปิด Label (พร้อมพิมพ์)
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => printShipmentReceipt(bookedShipment)}
-                className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-              >
-                <Printer className="h-4 w-4" />
-                พิมพ์ใบเสร็จ
-              </button>
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => router.push("/shipment/list")}
-                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
-                >
-                  ปิด
-                </button>
-              </div>
-            </div>
-          ) : (
+            );
+          })() : (
             <div className="flex flex-col gap-2.5">
               <div className="flex items-start gap-2.5 rounded-lg border border-amber-200 bg-gradient-to-r from-amber-50 to-white px-3 py-2">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />

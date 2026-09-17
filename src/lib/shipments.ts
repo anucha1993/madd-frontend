@@ -116,6 +116,14 @@ export type ShipmentAddonLine = {
   unit_price: number;
 };
 
+// One entry per physical piece/box the carrier actually booked (multi-piece shipment) — each
+// has its own carrier tracking number; `label_storage_key` is null for DHL pieces that share
+// the one combined label PDF (see ShipmentController::uploadShipmentLabel on the backend).
+export type ShipmentPiece = {
+  tracking_number: string | null;
+  label_storage_key?: string | null;
+};
+
 export type Shipment = {
   id: number;
   agent_account_id: number;
@@ -123,7 +131,12 @@ export type Shipment = {
   service_code: string;
   service_label: string | null;
   tracking_number: string | null;
-  status: "pending" | "booked" | "failed";
+  pieces?: ShipmentPiece[] | null;
+  status: "pending" | "booked" | "failed" | "voided";
+  // Set when status becomes "voided". `void_note` explains HOW it was cancelled — a real UPS
+  // Void Shipment API call, vs. DHL where it's only ever a local status flag (see voidShipment()).
+  voided_at?: string | null;
+  void_note?: string | null;
   origin?: ShipmentAddress | null;
   destination?: ShipmentAddress | null;
   packages?: ShipmentPackageRecord[];
@@ -142,6 +155,26 @@ export type Shipment = {
   ref_purchase_no?: string | null;
   rate_quote?: Record<string, unknown> | null;
   label_storage_key: string | null;
+  // UPS's Shipper's Copy waybill/receipt (ControlLogReceipt) — proof of booking, kept separate
+  // from the label(s) actually stuck on the boxes. Always null for DHL (no equivalent document).
+  waybill_storage_key?: string | null;
+  // Commercial Invoice for customs — only present when the carrier actually returned one (DHL
+  // auto-generates it for customs-declarable shipments; UPS only if forms were requested).
+  commercial_invoice_storage_key?: string | null;
+  // Full raw booking response from the carrier (UPS/DHL) — kept as evidence of what was
+  // actually returned when the shipment was created.
+  raw_response?: Record<string, unknown> | null;
+  // Active (status="requested") Pickups this shipment is already attached to — non-empty means
+  // it can't be added to ANOTHER Pickup until the existing one is cancelled (see
+  // PickupController's matching server-side guard). Only ever loaded from `listShipments()`.
+  pickups?: { id: number; carrier_reference: string | null }[];
+  // The carrier's REAL delivery progress (separate from `status`, which is only our own booking
+  // lifecycle) — synced periodically by the shipments:sync-tracking command. `null` until the
+  // first sync runs for this shipment.
+  tracking_status?: "not_picked_up" | "in_transit" | "delivered" | null;
+  tracking_raw_status?: string | null;
+  tracking_synced_at?: string | null;
+  delivered_at?: string | null;
   error_message: string | null;
   created_at: string;
   agent_account?: { id: number; username_acc: string; agent?: { agent_code: string; name?: string; logo_url?: string } } | null;
@@ -154,38 +187,94 @@ export type PaginatedShipments = {
   total: number;
 };
 
-export const listShipments = (params?: { search?: string; carrier?: "UPS" | "DHL"; status?: string; page?: number }) => {
+export const listShipments = (params?: {
+  search?: string;
+  carrier?: "UPS" | "DHL";
+  status?: string;
+  page?: number;
+  date_from?: string;
+  date_to?: string;
+}) => {
   const query = new URLSearchParams();
   if (params?.search) query.set("search", params.search);
   if (params?.carrier) query.set("carrier", params.carrier);
   if (params?.status) query.set("status", params.status);
   if (params?.page) query.set("page", String(params.page));
+  if (params?.date_from) query.set("date_from", params.date_from);
+  if (params?.date_to) query.set("date_to", params.date_to);
   const qs = query.toString();
   return apiClient.get<PaginatedShipments>(`/shipments${qs ? `?${qs}` : ""}`);
 };
+
+// KPI summary for the "My Shipments" page header (merged former /dashboard page) — always
+// reflects today/this-month regardless of whatever list filters are currently applied.
+export type ShipmentStats = {
+  today_count: number;
+  month_count: number;
+  month_revenue: number;
+  in_transit_count: number;
+  cancelled_count: number;
+};
+
+export const getShipmentStats = () => apiClient.get<ShipmentStats>("/shipments/stats");
 
 export const bookShipment = (data: BookShipmentInput) => apiClient.post<Shipment>("/shipments", data);
 
 export const getShipment = (id: number) => apiClient.get<Shipment>(`/shipments/${id}`);
 
-// A booked Shipment is otherwise fully immutable — only these 3 reference numbers can still be
-// edited afterwards (see /shipment/view/[id]).
-export const updateShipmentRefs = (
-  id: number,
-  data: { ref_invoice_no?: string; ref_insurance_no?: string; ref_purchase_no?: string },
-) => apiClient.put<Shipment>(`/shipments/${id}/refs`, data);
+// Pieces come back from the carrier as a flat list expanded in package/quantity order (see
+// ShipmentController) — rebuild the same expansion here so each tracking number can be labeled
+// with the box it actually belongs to (e.g. "Package 2 · Box 1/3"). Shared by /shipment/create's
+// booking-success modal and /shipment/view/[id]'s Tracking Numbers table.
+export function describeShipmentPieces(shipment: Shipment) {
+  const packages = shipment.packages ?? [];
+  const descriptors: string[] = [];
+  packages.forEach((pkg, packageIndex) => {
+    const qty = pkg.quantity ?? 1;
+    const kind = pkg.is_document ? "Document" : "Box";
+    const type = pkg.product_type === "OTHER" ? pkg.product_type_other : pkg.product_type;
+    for (let i = 0; i < qty; i++) {
+      const boxNo = qty > 1 ? ` ${i + 1}/${qty}` : "";
+      descriptors.push(`Package ${packageIndex + 1} · ${kind}${boxNo}${type ? ` · ${type}` : ""} · ${pkg.weight}kg`);
+    }
+  });
+  return (shipment.pieces ?? []).map((piece, i) => ({ ...piece, description: descriptors[i] ?? `Piece ${i + 1}` }));
+}
+
+// Cancels a booked shipment. UPS: a REAL cancellation with UPS (Void Shipment API). DHL: DHL has
+// no shipment-cancel API at all — this only flips our own local status, staff must still contact
+// DHL directly to actually stop the shipment (see backend ShipmentController::void() for detail).
+export const voidShipment = (id: number) => apiClient.post<Shipment>(`/shipments/${id}/void`, {});
 
 // The label route returns a raw binary file (not JSON) and needs the Bearer token — apiClient
 // can't be reused as-is, so this fetches the blob and opens a dedicated print-preview window
 // (UPS GIF labels come back rotated 90° — rotated back here for a normal upright read/print;
 // PDF labels from DHL are already upright, just shown full-page and print() is triggered too).
-export async function openShipmentLabel(shipmentId: number) {
+
+// Shown immediately in a just-opened popup so it isn't a frozen-looking blank about:blank tab
+// while the label fetch is in flight — document.write() again once the real content is ready
+// implicitly clears this (standard browser behavior for writing to an already-loaded document).
+function writeLoadingPlaceholder(win: Window) {
+  win.document.write(
+    `<!DOCTYPE html><html><head><title>Loading...</title><style>
+      html,body{margin:0;height:100%;background:#525659;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;}
+      .spinner{width:36px;height:36px;border:4px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;animation:spin 0.8s linear infinite;}
+      p{position:absolute;margin-top:64px;color:#fff;font-size:14px;}
+      @keyframes spin{to{transform:rotate(360deg);}}
+    </style></head><body><div class="spinner"></div><p>กำลังโหลด Label...</p></body></html>`,
+  );
+  win.document.close();
+}
+
+export async function openShipmentLabel(shipmentId: number, trackingNumber?: string) {
   // Must open synchronously within the click handler, before the async fetch, or popup blockers
   // will silently swallow it.
   const printWindow = window.open("", "_blank");
+  if (printWindow) writeLoadingPlaceholder(printWindow);
 
   const token = getToken();
-  const res = await fetch(`${API_URL}/shipments/${shipmentId}/label`, {
+  const qs = trackingNumber ? `?tracking_number=${encodeURIComponent(trackingNumber)}` : "";
+  const res = await fetch(`${API_URL}/shipments/${shipmentId}/label${qs}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) {
@@ -229,6 +318,141 @@ export async function openShipmentLabel(shipmentId: number) {
       };
     }
   }
+}
+
+// Shared by openShipmentWaybill/openShipmentCommercialInvoice — same fetch-blob-then-print-preview
+// pattern as openShipmentLabel, but without the label's 90°-rotate-for-GIF quirk (these are
+// full-page documents, not small label GIFs).
+async function openShipmentDocument(path: string, title: string, notFoundMessage: string) {
+  // Must open synchronously within the click handler, before the async fetch, or popup blockers
+  // will silently swallow it.
+  const printWindow = window.open("", "_blank");
+  if (printWindow) writeLoadingPlaceholder(printWindow);
+
+  const token = getToken();
+  const res = await fetch(`${API_URL}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    printWindow?.close();
+    throw new Error(notFoundMessage);
+  }
+
+  const contentType = res.headers.get("Content-Type") || "application/octet-stream";
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+
+  if (!printWindow) {
+    window.open(url, "_blank");
+    return;
+  }
+
+  if (contentType.startsWith("image/")) {
+    printWindow.document.write(
+      `<!DOCTYPE html><html><head><title>${title}</title><style>
+        html,body{margin:0;height:100%;background:#525659;display:flex;align-items:center;justify-content:center;}
+        img{max-width:95vw;max-height:95vh;}
+        @media print{html,body{background:#fff;}}
+      </style></head><body><img id="doc-img" src="${url}" /></body></html>`,
+    );
+    printWindow.document.close();
+    const img = printWindow.document.getElementById("doc-img") as HTMLImageElement | null;
+    if (img) img.onload = () => printWindow.print();
+  } else {
+    printWindow.document.write(
+      `<!DOCTYPE html><html><head><title>${title}</title><style>
+        html,body,iframe{margin:0;padding:0;width:100%;height:100%;border:0;}
+      </style></head><body><iframe id="doc-frame" src="${url}"></iframe></body></html>`,
+    );
+    printWindow.document.close();
+    const frame = printWindow.document.getElementById("doc-frame") as HTMLIFrameElement | null;
+    if (frame) {
+      frame.onload = () => {
+        frame.contentWindow?.focus();
+        frame.contentWindow?.print();
+      };
+    }
+  }
+}
+
+export const openShipmentWaybill = (shipmentId: number) =>
+  openShipmentDocument(`/shipments/${shipmentId}/waybill`, "UPS Waybill", "เปิด Waybill ไม่สำเร็จ");
+
+export const openShipmentCommercialInvoice = (shipmentId: number) =>
+  openShipmentDocument(`/shipments/${shipmentId}/commercial-invoice`, "Commercial Invoice", "เปิด Commercial Invoice ไม่สำเร็จ");
+
+// Prints every piece's label as ONE combined job in a SINGLE tab (page-break between each) instead
+// of opening a separate tab per piece — caller should already dedupe tracking numbers that share
+// the same label file (e.g. DHL pieces all point at one combined multi-page PDF).
+export async function printAllShipmentLabels(shipmentId: number, trackingNumbers: string[]) {
+  if (trackingNumbers.length === 0) return;
+
+  // Must open synchronously within the click handler, before the async fetches, or popup
+  // blockers will silently swallow it.
+  const printWindow = window.open("", "_blank");
+  if (!printWindow) {
+    alert("กรุณาอนุญาต Popup เพื่อเปิด Label");
+    return;
+  }
+  writeLoadingPlaceholder(printWindow);
+
+  const token = getToken();
+  const fetched = await Promise.all(
+    trackingNumbers.map(async (trackingNumber) => {
+      const res = await fetch(`${API_URL}/shipments/${shipmentId}/label?tracking_number=${encodeURIComponent(trackingNumber)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) return null;
+      const contentType = res.headers.get("Content-Type") || "application/octet-stream";
+      const blob = await res.blob();
+      return { contentType, url: URL.createObjectURL(blob) };
+    }),
+  );
+  const labels = fetched.filter((l): l is { contentType: string; url: string } => l !== null);
+
+  if (labels.length === 0) {
+    printWindow.close();
+    alert("ไม่พบไฟล์ Label");
+    return;
+  }
+
+  const pages = labels
+    .map((l) =>
+      l.contentType.startsWith("image/")
+        ? `<div class="page"><img src="${l.url}" /></div>`
+        : `<div class="page"><iframe src="${l.url}"></iframe></div>`,
+    )
+    .join("");
+
+  printWindow.document.write(
+    `<!DOCTYPE html><html><head><title>Shipping Labels</title><style>
+      html,body{margin:0;background:#525659;}
+      .page{page-break-after:always;display:flex;align-items:center;justify-content:center;height:100vh;box-sizing:border-box;}
+      .page:last-child{page-break-after:auto;}
+      .page img{transform:rotate(90deg);max-width:90vh;max-height:90vw;}
+      .page iframe{border:0;width:100%;height:100%;}
+      @media print{html,body{background:#fff;}}
+    </style></head><body>${pages}</body></html>`,
+  );
+  printWindow.document.close();
+
+  // Wait for every image/iframe to actually load before printing once — otherwise blank pages
+  // print, since print() would fire before the async blob URLs finish rendering.
+  const loadables = Array.from(printWindow.document.querySelectorAll("img, iframe"));
+  await Promise.all(
+    loadables.map(
+      (el) =>
+        new Promise<void>((resolve) => {
+          if ((el as HTMLImageElement).complete) {
+            resolve();
+            return;
+          }
+          el.addEventListener("load", () => resolve(), { once: true });
+          el.addEventListener("error", () => resolve(), { once: true });
+        }),
+    ),
+  );
+  printWindow.print();
 }
 
 function escapeHtml(value: unknown): string {
@@ -280,6 +504,20 @@ export function printShipmentReceipt(shipment: Shipment) {
     )
     .join("");
 
+  // A multi-piece shipment (several boxes booked in one carrier request) has its own tracking
+  // number per box — list them all here, tagged with which package/box each belongs to, instead
+  // of only ever printing the single master tracking number above.
+  const pieces = describeShipmentPieces(shipment);
+  const pieceRows =
+    pieces.length > 1
+      ? pieces
+          .map(
+            (p, i) =>
+              `<tr><td>${i + 1}. ${escapeHtml(p.description)}</td><td class="right">${escapeHtml(p.tracking_number ?? "-")}</td></tr>`,
+          )
+          .join("")
+      : "";
+
   const currency = shipment.currency ?? "THB";
   const fmt = (n: number) => Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
 
@@ -311,6 +549,7 @@ export function printShipmentReceipt(shipment: Shipment) {
     <tr><td>Tracking No.</td><td class="right">${escapeHtml(shipment.tracking_number ?? "-")}</td></tr>
     <tr><td>Carrier / Service</td><td class="right">${escapeHtml(shipment.carrier)} - ${escapeHtml(shipment.service_label ?? shipment.service_code)}</td></tr>
   </table>
+  ${pieceRows ? `<hr class="divider" /><div class="muted">Tracking Numbers (${pieces.length})</div><table>${pieceRows}</table>` : ""}
   <hr class="divider" />
   <div class="muted">ผู้ส่ง / Ship From</div>
   <div>${formatAddress(shipment.origin)}</div>

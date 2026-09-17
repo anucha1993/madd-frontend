@@ -37,7 +37,7 @@ export default function LoginForm() {
   }
 
   if (welcomeName) {
-    return <LoginSuccessAnimation userName={welcomeName} onComplete={() => router.push("/dashboard")} />;
+    return <LoginSuccessAnimation userName={welcomeName} onComplete={() => router.push("/shipment/list")} />;
   }
 
   return (
