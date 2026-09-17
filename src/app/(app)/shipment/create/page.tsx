@@ -1465,6 +1465,16 @@ export default function ShipmentCreatePage() {
     const rawTotal = r.negotiated ?? r.published ?? 0;
     return { sellAmount: rawTotal - costOnlyAmount, costOnlyCodes };
   }
+
+  // The carrier's own cost-only insurance line (see getSellFreightAmount) only turns into an
+  // actual sell price via a carrier-own API_COST Insurance Add-on item (e.g. "DHL (Declared
+  // Value)") — its Markup % (set at /config/addon) is what "buying at cost + markup" means.
+  function getCarrierOwnInsuranceMarkupPercent(carrier: "UPS" | "DHL"): number {
+    const item = addonItems.find(
+      (i) => i.category?.name === "Insurance" && i.price_type === "API_COST" && i.carriers.includes(carrier) && !isThirdPartyInsuranceItem(i),
+    );
+    return item ? Number(item.markup_percent) || 0 : 0;
+  }
   const { sellAmount: freightAmount, costOnlyCodes: carrierCostOnlyCodes } = selectedQuote
     ? getSellFreightAmount(selectedQuote)
     : { sellAmount: 0, costOnlyCodes: [] as string[] };
@@ -1585,18 +1595,18 @@ export default function ShipmentCreatePage() {
                   .map((line, li) => {
                   const isCarrierInsuranceLine = carrierCostOnlyCodes.includes(line.code ?? "");
                   const markupBasis = formatMarkupBasis(line);
+                  const insuranceMarkupPct = isCarrierInsuranceLine ? getCarrierOwnInsuranceMarkupPercent(selectedQuote.carrier) : 0;
+                  const displayAmount = insuranceMarkupPct !== 0 ? line.amount * (1 + insuranceMarkupPct / 100) : line.amount;
                   return (
                     <div key={li} className="flex items-center justify-between text-xs">
                       <span className={line.isCustomCharge ? "text-emerald-600" : "text-slate-500"}>
                         {line.description}
                         {line.code ? <span className="text-slate-300"> ({line.code})</span> : null}
-                        {isCarrierInsuranceLine && (
-                          <span className="ml-1 text-amber-600">— ต้นทุน ไม่รวมในยอดขาย Freight ด้านบน</span>
-                        )}
                         {markupBasis && <span className="ml-1 text-emerald-600">({markupBasis})</span>}
+                        {insuranceMarkupPct !== 0 && <span className="ml-1 text-emerald-600">(+{insuranceMarkupPct}%)</span>}
                       </span>
-                      <span className={`font-medium ${line.isCustomCharge ? "text-emerald-600" : "text-slate-600"}`}>
-                        {line.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {line.currency}
+                      <span className={`font-medium ${line.isCustomCharge || insuranceMarkupPct !== 0 ? "text-emerald-600" : "text-slate-600"}`}>
+                        {displayAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {line.currency}
                       </span>
                     </div>
                   );
@@ -2315,7 +2325,7 @@ export default function ShipmentCreatePage() {
               // CURRENTLY selected — computed fresh from selectedQuote's real chargeBreakdown on
               // every render instead of a stored addon-row price, so switching between Rate
               // Quote cards never shows a stale/missing premium while an effect catches up.
-              const estimatedPremium =
+              const basePremium =
                 selectedInsuranceItem?.price_type === "API_COST"
                   ? selectedQuote && !isSelectedThirdParty
                     ? (selectedQuote.chargeBreakdown?.find(
@@ -2325,6 +2335,10 @@ export default function ShipmentCreatePage() {
                   : selectedInsuranceItem?.price != null
                     ? coveredValue * (Number(selectedInsuranceItem.price) / 100)
                     : null;
+              // Extra % (see /config/addon "Markup %") applied on top of the base premium above,
+              // same as the real price actually saved onto the addon row (selectPackageInsurance).
+              const insuranceMarkupPercent = Number(selectedInsuranceItem?.markup_percent) || 0;
+              const estimatedPremium = basePremium != null ? basePremium * (1 + insuranceMarkupPercent / 100) : null;
               // Neither UPS nor DHL accepts a shipment mixing Document + Box packages — disable
               // switching THIS row to a type that conflicts with some OTHER row's type.
               const blocksBox = packages.some((p) => p.key !== pkg.key && p.is_document);
@@ -2609,6 +2623,9 @@ export default function ShipmentCreatePage() {
                       <span className="text-slate-400">ราคาประกันสินค้า{selectedInsuranceItem ? ` (${selectedInsuranceItem.name})` : ""}</span>
                       <span className="font-semibold text-slate-700">
                         {estimatedPremium != null ? estimatedPremium.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "-"}
+                        {estimatedPremium != null && insuranceMarkupPercent !== 0 && (
+                          <span className="ml-1 font-normal text-emerald-600">(+{insuranceMarkupPercent}% Marked Up)</span>
+                        )}
                       </span>
                     </div>
                   )}
@@ -2787,18 +2804,19 @@ export default function ShipmentCreatePage() {
                               .filter((line) => sellingCarrierOwnInsurance || !rCostOnlyCodes.includes(line.code ?? ""))
                               .map((line, li) => {
                               const markupBasis = formatMarkupBasis(line);
+                              const isCarrierInsuranceLine = rCostOnlyCodes.includes(line.code ?? "");
+                              const insuranceMarkupPct = isCarrierInsuranceLine ? getCarrierOwnInsuranceMarkupPercent(r.carrier) : 0;
+                              const displayAmount = insuranceMarkupPct !== 0 ? line.amount * (1 + insuranceMarkupPct / 100) : line.amount;
                               return (
                               <div key={li} className="flex items-center justify-between text-xs">
                                 <span className={line.isCustomCharge ? "text-emerald-600" : "text-slate-500"}>
                                   {line.description}
                                   {line.code ? <span className="text-slate-300"> ({line.code})</span> : null}
-                                  {rCostOnlyCodes.includes(line.code ?? "") && (
-                                    <span className="ml-1 text-amber-600">— ต้นทุน ไม่รวมในยอดขายด้านบน</span>
-                                  )}
                                   {markupBasis && <span className="ml-1 text-emerald-600">({markupBasis})</span>}
+                                  {insuranceMarkupPct !== 0 && <span className="ml-1 text-emerald-600">(+{insuranceMarkupPct}%)</span>}
                                 </span>
-                                <span className={`font-medium ${line.isCustomCharge ? "text-emerald-600" : "text-slate-600"}`}>
-                                  {line.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {line.currency}
+                                <span className={`font-medium ${line.isCustomCharge || insuranceMarkupPct !== 0 ? "text-emerald-600" : "text-slate-600"}`}>
+                                  {displayAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {line.currency}
                                 </span>
                               </div>
                               );
