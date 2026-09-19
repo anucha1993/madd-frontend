@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Building2, Pencil, Plus, Trash2 } from "lucide-react";
+import { Building2, FileDigit, Pencil, Plus, Trash2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import PageLoading from "@/components/ui/PageLoading";
@@ -11,8 +11,11 @@ import {
   deleteBranch,
   listBranches,
   updateBranch,
+  getDocumentNumberSettings,
+  updateDocumentNumberSettings,
   type Branch,
   type BranchInput,
+  type DocumentNumberSequence,
 } from "@/lib/branches";
 import { listAgentAccounts, type AgentAccount } from "@/lib/agentAccounts";
 import {
@@ -33,6 +36,14 @@ export default function BranchPage() {
   const [modalCarrierAccounts, setModalCarrierAccounts] = useState<BranchCarrierAccount[]>([]);
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState("");
+
+  // Document numbering (Vol.No/No. patterns for Cash Receipt + Tax Invoice) — a separate small
+  // modal per branch, kept independent from the main Branch edit form above.
+  const [docNumberBranch, setDocNumberBranch] = useState<Branch | null>(null);
+  const [docSequences, setDocSequences] = useState<DocumentNumberSequence[]>([]);
+  const [docLoading, setDocLoading] = useState(false);
+  const [docSaving, setDocSaving] = useState(false);
+  const [docError, setDocError] = useState("");
 
   async function loadAll() {
     setLoading(true);
@@ -93,6 +104,41 @@ export default function BranchPage() {
       setTogglingId(null);
     }
   }
+
+  async function openDocNumberModal(branch: Branch) {
+    setDocNumberBranch(branch);
+    setDocError("");
+    setDocLoading(true);
+    try {
+      setDocSequences(await getDocumentNumberSettings(branch.id));
+    } catch (err) {
+      setDocError(err instanceof Error ? err.message : "โหลดข้อมูลไม่สำเร็จ");
+    } finally {
+      setDocLoading(false);
+    }
+  }
+
+  async function handleSaveDocNumbers() {
+    if (!docNumberBranch) return;
+    setDocSaving(true);
+    setDocError("");
+    try {
+      setDocSequences(
+        await updateDocumentNumberSettings(
+          docNumberBranch.id,
+          docSequences.map((s) => ({ id: s.id, pattern: s.pattern, next_number: s.next_number })),
+        ),
+      );
+      setDocNumberBranch(null);
+    } catch (err) {
+      setDocError(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ");
+    } finally {
+      setDocSaving(false);
+    }
+  }
+
+  const DOC_TYPE_LABEL: Record<string, string> = { CASH_RECEIPT: "ใบเสร็จเงินสด", TAX_INVOICE: "ใบกำกับภาษี" };
+  const DOC_FIELD_LABEL: Record<string, string> = { vol_no: "เล่มที่ (Vol.No)", no: "เลขที่ (No.)" };
 
   return (
     <div className="relative min-h-[360px]">
@@ -172,6 +218,15 @@ export default function BranchPage() {
                   <td className="px-5 py-3 text-right">
                     <button
                       type="button"
+                      onClick={() => openDocNumberModal(branch)}
+                      className="mr-2 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
+                      aria-label="เลขที่เอกสาร"
+                      title="ตั้งค่าเลขที่เอกสาร (ใบเสร็จ/ใบกำกับภาษี)"
+                    >
+                      <FileDigit className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => openModal(branch)}
                       className="mr-2 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
                       aria-label="แก้ไข"
@@ -211,6 +266,76 @@ export default function BranchPage() {
               onSubmit={handleSubmit}
               onCancel={() => setModalBranch(null)}
             />
+          )}
+        </Modal>
+      )}
+
+      {docNumberBranch && (
+        <Modal
+          title={`เลขที่เอกสาร — ${docNumberBranch.name}`}
+          onClose={() => setDocNumberBranch(null)}
+        >
+          {docLoading ? (
+            <PageLoading label="Loading..." />
+          ) : (
+            <div className="flex flex-col gap-4">
+              <p className="text-xs text-slate-500">
+                รูปแบบ (Pattern): ใช้ {"{YYYY}"}/{"{YY}"}/{"{MM}"}/{"{DD}"} แทนวันที่ปัจจุบัน และตัวเลขในวงเล็บปีกกา เช่น{" "}
+                {"{00001}"} คือตัวรันเลขอัตโนมัติ (จำนวนหลัก = ความกว้างของเลขนั้น) เช่น MADD-{"{YY}"}-{"{MM}"}-{"{00001}"}
+              </p>
+              {docError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{docError}</p>}
+              {docSequences.map((seq, index) => (
+                <div key={seq.id} className="grid grid-cols-3 gap-3 rounded-lg border border-slate-200 p-3">
+                  <div className="col-span-3 text-sm font-medium text-slate-600">
+                    {DOC_TYPE_LABEL[seq.document_type] ?? seq.document_type} — {DOC_FIELD_LABEL[seq.field] ?? seq.field}
+                  </div>
+                  <label className="col-span-2 flex flex-col gap-1.5">
+                    <span className="text-xs text-slate-500">Pattern</span>
+                    <input
+                      type="text"
+                      value={seq.pattern}
+                      onChange={(e) =>
+                        setDocSequences((prev) =>
+                          prev.map((s, i) => (i === index ? { ...s, pattern: e.target.value } : s)),
+                        )
+                      }
+                      className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-mono outline-none focus:border-brand-navy focus:bg-white focus:ring-2 focus:ring-brand-navy/15"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs text-slate-500">เลขถัดไป</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={seq.next_number}
+                      onChange={(e) =>
+                        setDocSequences((prev) =>
+                          prev.map((s, i) => (i === index ? { ...s, next_number: Number(e.target.value) || 1 } : s)),
+                        )
+                      }
+                      className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-brand-navy focus:bg-white focus:ring-2 focus:ring-brand-navy/15"
+                    />
+                  </label>
+                </div>
+              ))}
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDocNumberBranch(null)}
+                  className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveDocNumbers}
+                  disabled={docSaving}
+                  className="rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-brand-navy-dark/90 disabled:opacity-60"
+                >
+                  {docSaving ? "กำลังบันทึก..." : "บันทึก"}
+                </button>
+              </div>
+            </div>
           )}
         </Modal>
       )}

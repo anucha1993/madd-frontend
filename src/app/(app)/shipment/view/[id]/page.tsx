@@ -2,15 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Loader2, Package, Printer, Receipt, FileCheck, XCircle } from "lucide-react";
+import { ArrowLeft, ArrowRight, Loader2, Package, Printer, Receipt, FileCheck, XCircle, Trash2 } from "lucide-react";
 import {
   getShipment,
   openShipmentLabel,
-  printShipmentReceipt,
   describeShipmentPieces,
   openShipmentWaybill,
   openShipmentCommercialInvoice,
   voidShipment,
+  deleteShipment,
   type Shipment,
 } from "@/lib/shipments";
 
@@ -132,7 +132,7 @@ export default function ShipmentViewPage() {
   const [openingWaybill, setOpeningWaybill] = useState(false);
   const [openingInvoice, setOpeningInvoice] = useState(false);
   const [voiding, setVoiding] = useState(false);
-
+  const [deleting, setDeleting] = useState(false);
   useEffect(() => {
     // Was: return early without clearing loading, so a non-numeric id left the
     // spinner running forever.
@@ -222,6 +222,21 @@ export default function ShipmentViewPage() {
     }
   }
 
+  // Only ever allowed by the backend when `is_test` is true (booked via a Test-mode Agent
+  // Account). Real production bookings must use Void instead.
+  async function handleDelete() {
+    if (!shipment) return;
+    if (!confirm("Permanently delete this TEST shipment? This cannot be undone.")) return;
+    setDeleting(true);
+    try {
+      await deleteShipment(shipment.id);
+      router.push("/shipment/list");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to delete shipment");
+      setDeleting(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="mx-auto max-w-6xl animate-pulse space-y-3">
@@ -279,7 +294,7 @@ export default function ShipmentViewPage() {
             <div className="flex min-w-0 items-center gap-2.5">
               {s.agent_account?.agent?.logo_url && (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={s.agent_account.agent.logo_url} alt="" className="h-7 w-7 rounded bg-white object-contain p-0.5" />
+                <img src={s.agent_account.agent.logo_url} alt="" className="h-10 w-30 rounded bg-white object-contain p-0.5" />
               )}
               <p className="truncate text-[13px]">
                 <span className="font-semibold">{s.carrier}</span>
@@ -290,6 +305,11 @@ export default function ShipmentViewPage() {
                 <span className={`h-1.5 w-1.5 rounded-full ${status.dot}`} />
                 {status.label}
               </span>
+              {s.is_test && (
+                <span className="shrink-0 rounded-full bg-purple-500/20 px-2.5 py-0.5 text-[11px] font-semibold text-purple-200">
+                  TEST
+                </span>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
@@ -311,8 +331,8 @@ export default function ShipmentViewPage() {
                   Open invoice
                 </button>
               )}
-              <button type="button" onClick={() => printShipmentReceipt(s)} className={headerBtn}>
-                <Printer className="h-3.5 w-3.5" /> Print receipt
+              <button type="button" onClick={() => router.push("/billing/receipts/new")} className={headerBtn}>
+                <Printer className="h-3.5 w-3.5" /> Issue Receipt
               </button>
               {s.status === "booked" && (
                 <button
@@ -323,6 +343,17 @@ export default function ShipmentViewPage() {
                 >
                   {voiding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
                   Void / Cancel
+                </button>
+              )}
+              {s.is_test && (
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="flex items-center gap-1.5 rounded-lg bg-purple-500/15 px-3 py-1.5 text-[13px] font-medium text-purple-200 transition hover:bg-purple-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400/60 disabled:opacity-60"
+                >
+                  {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                  Delete TEST shipment
                 </button>
               )}
             </div>
@@ -400,7 +431,9 @@ export default function ShipmentViewPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {pieces.map((piece, i) => (
-                    <tr key={piece.tracking_number ?? i}>
+                    // Index-suffixed key: Test-mode bookings reuse the same placeholder tracking
+                    // number for every piece, which otherwise collides as a React key.
+                    <tr key={`${piece.tracking_number ?? "piece"}-${i}`}>
                       <td className="py-1.5 tabular-nums text-slate-400">{i + 1}</td>
                       <td className="py-1.5 tabular-nums text-slate-900">{piece.tracking_number ?? "—"}</td>
                       <td className="py-1.5 text-slate-500">{piece.description}</td>

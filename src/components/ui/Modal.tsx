@@ -13,6 +13,10 @@ type Props = {
   // Tailwind max-height class for the scrollable body — defaults to 75vh; pass a taller value
   // (e.g. "max-h-[92vh]") for content-heavy modals that should avoid scrolling where possible.
   bodyMaxHeightClassName?: string;
+  // Tailwind z-index class — defaults to z-50. Bump this (e.g. "z-[60]") for a modal that must
+  // stack ABOVE another modal already open underneath it (same z-index + later DOM order alone
+  // isn't reliable once conditional-render ordering shifts around).
+  zIndexClassName?: string;
 };
 
 export default function Modal({
@@ -21,9 +25,10 @@ export default function Modal({
   children,
   maxWidthClassName = "max-w-lg",
   bodyMaxHeightClassName = "max-h-[75vh]",
+  zIndexClassName = "z-50",
 }: Props) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
+    <div className={`fixed inset-0 ${zIndexClassName} flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm`}>
       <div className={`w-full ${maxWidthClassName} overflow-hidden rounded-2xl border border-black/10 bg-white shadow-2xl`}>
         <div className="flex items-center justify-between border-b border-black/5 bg-slate-100 px-4 py-3">
           <h2 className="text-sm font-semibold text-slate-700">{title}</h2>

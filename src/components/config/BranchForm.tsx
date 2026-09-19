@@ -21,6 +21,8 @@ export default function BranchForm({ initial, agentAccounts, initialCarrierAccou
   const [taxId, setTaxId] = useState(initial?.tax_id ?? "");
   const [address, setAddress] = useState(initial?.address ?? "");
   const [phone, setPhone] = useState(initial?.phone ?? "");
+  const [fax, setFax] = useState(initial?.fax ?? "");
+  const [isHeadOffice, setIsHeadOffice] = useState(initial?.is_head_office ?? false);
   const [status, setStatus] = useState(initial?.status ?? true);
   const [carrierAccounts, setCarrierAccounts] = useState<BranchCarrierAccountInput[]>(
     initialCarrierAccounts.map((row) => ({
@@ -61,6 +63,8 @@ export default function BranchForm({ initial, agentAccounts, initialCarrierAccou
           tax_id: taxId.trim(),
           address: address.trim() || undefined,
           phone: phone.trim() || undefined,
+          fax: fax.trim() || undefined,
+          is_head_office: isHeadOffice,
           status,
         },
         carrierAccounts
@@ -123,6 +127,21 @@ export default function BranchForm({ initial, agentAccounts, initialCarrierAccou
       <label className="flex flex-col gap-1.5">
         <span className={labelClass}>เบอร์โทร</span>
         <input type="text" value={phone} onChange={(e) => setPhone(e.target.value)} className={inputClass} />
+      </label>
+
+      <label className="flex flex-col gap-1.5">
+        <span className={labelClass}>โทรสาร (Fax)</span>
+        <input type="text" value={fax} onChange={(e) => setFax(e.target.value)} className={inputClass} />
+      </label>
+
+      <label className="flex items-center gap-2 text-sm text-slate-600">
+        <input
+          type="checkbox"
+          checked={isHeadOffice}
+          onChange={(e) => setIsHeadOffice(e.target.checked)}
+          className="h-4 w-4 rounded border-slate-300 accent-brand-amber"
+        />
+        เป็นสำนักงานใหญ่ (แสดงเป็นที่อยู่หลักบนใบเสร็จ/ใบกำกับภาษีทุกฉบับ)
       </label>
 
       <label className="flex items-center gap-2 text-sm text-slate-600">

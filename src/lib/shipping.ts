@@ -51,12 +51,15 @@ export type RateChargeLine = {
   isCustomCharge?: boolean;
   // Present whenever a MarkupRule affected this line — lets the UI show exactly what amount
   // the markup was computed from, e.g. "7% × 1,200.00" instead of just the final total.
-  markupUnit?: "PERCENTAGE" | "BAHT" | null;
+  markupUnit?: "PERCENTAGE" | "BAHT" | "FORMULA" | null;
   markupValue?: number | null;
   // The base the markupUnit/markupValue was applied to — for an existing carrier line this is
   // that line's own (possibly fixed-override) amount; for a custom line with PERCENTAGE unit
-  // this is the quote's whole sell subtotal; null for a custom BAHT (flat) line.
+  // this is the quote's whole sell subtotal; null for a custom BAHT (flat) line or FORMULA.
   markupBase?: number | null;
+  // Only set when markupUnit === "FORMULA" — the raw "({BASE} + {FF}) * 7%" expression, shown
+  // as-is since there's no single "base" to summarize like PERCENTAGE/BAHT have.
+  markupFormula?: string | null;
 };
 
 export type RateQuote = {

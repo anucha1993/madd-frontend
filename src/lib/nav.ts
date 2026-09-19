@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   Layers,
   Package,
+  Receipt,
   Settings,
   Truck,
   Users,
@@ -42,6 +43,15 @@ export const NAV_SECTIONS: NavItem[] = [
     label: "Manifest",
     icon: ClipboardList,
     href: "/manifest",
+  },
+  {
+    label: "Billing",
+    icon: Receipt,
+    children: [
+      { label: "Issue Receipt / Tax Invoice", href: "/billing/receipts/new" },
+      { label: "Receipts & Tax Invoices", href: "/billing/receipts" },
+      { label: "Tax Invoice Customers", href: "/billing/customers" },
+    ],
   },
   {
     label: "Tracking",

@@ -20,6 +20,7 @@ import {
   Wallet,
   Plus,
   MoreVertical,
+  Trash2,
 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import PageLoading from "@/components/ui/PageLoading";
@@ -30,12 +31,12 @@ import {
   listShipments,
   getShipmentStats,
   openShipmentLabel,
-  printShipmentReceipt,
   printAllShipmentLabels,
   describeShipmentPieces,
   openShipmentWaybill,
   openShipmentCommercialInvoice,
   voidShipment,
+  deleteShipment,
   type Shipment,
   type ShipmentStats,
 } from "@/lib/shipments";
@@ -95,11 +96,13 @@ export default function ShipmentListPage() {
   // Keyed as `${shipmentId}:waybill` / `${shipmentId}:invoice` — only one of these opening at a time.
   const [openingDocKey, setOpeningDocKey] = useState<string | null>(null);
   const [voidingId, setVoidingId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
 
-  // Multi-select for "combine into one Pickup" — a Pickup call only wants ONE agent_account_id,
-  // so once anything is checked, only other `booked` shipments on that SAME agent_account_id
-  // stay selectable (see PickupController::store, which filters by agent_account_id).
+  // Multi-select serves two mutually-exclusive purposes — switching `selectionMode` clears the
+  // current selection since eligibility rules differ (Pickup: same agent_account_id, not already
+  // on an active Pickup. Receipt: same branch_id, never yet attached to any Receipt/Tax Invoice).
+  const [selectionMode, setSelectionMode] = useState<"PICKUP" | "RECEIPT">("PICKUP");
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [pickupModalOpen, setPickupModalOpen] = useState(false);
 
@@ -234,22 +237,10 @@ export default function ShipmentListPage() {
   }
 
   async function handleOpenAllLabels(shipment: Shipment) {
-    // Dedupe pieces sharing the SAME label file (e.g. DHL: every piece points at one combined
-    // multi-page PDF) so it isn't fetched/printed once per piece.
-    const seenKeys = new Set<string>();
-    const trackingNumbers = describeShipmentPieces(shipment)
-      .filter((p) => {
-        if (!p.label_storage_key || !p.tracking_number) return false;
-        if (seenKeys.has(p.label_storage_key)) return false;
-        seenKeys.add(p.label_storage_key);
-        return true;
-      })
-      .map((p) => p.tracking_number as string);
-    if (trackingNumbers.length === 0) return;
     const key = `${shipment.id}:all`;
     setOpeningPieceKey(key);
     try {
-      await printAllShipmentLabels(shipment.id, trackingNumbers);
+      await printAllShipmentLabels(shipment.id);
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to open label");
     } finally {
@@ -293,15 +284,38 @@ export default function ShipmentListPage() {
     }
   }
 
+  // Only ever allowed by the backend when `is_test` is true (booked via a Test-mode Agent
+  // Account). Real production bookings must use Void instead.
+  async function handleDelete(shipment: Shipment) {
+    if (!confirm("Permanently delete this TEST shipment? This cannot be undone.")) return;
+    setDeletingId(shipment.id);
+    try {
+      await deleteShipment(shipment.id);
+      setShipments((prev) => prev.filter((s) => s.id !== shipment.id));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to delete shipment");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   // Only `booked` shipments on the SAME agent_account_id as the first one checked stay
   // selectable — see the note on `selectedIds` above. Also excludes shipments already sitting in
   // an active Pickup (see PickupController::store's matching server-side guard).
   const firstSelected = shipments.find((s) => selectedIds.has(s.id));
   function isSelectable(shipment: Shipment) {
     if (shipment.status !== "booked") return false;
-    if ((shipment.pickups ?? []).length > 0) return false;
+    if (selectionMode === "PICKUP") {
+      if ((shipment.pickups ?? []).length > 0) return false;
+      if (!firstSelected) return true;
+      return shipment.agent_account_id === firstSelected.agent_account_id;
+    }
+    // RECEIPT mode: never billed yet, and (once one is picked) same branch as the first one —
+    // a Receipt/Tax Invoice's header info is printed for exactly one issuing branch.
+    if ((shipment.receipts_count ?? 0) > 0) return false;
+    if (!shipment.branch_id) return false;
     if (!firstSelected) return true;
-    return shipment.agent_account_id === firstSelected.agent_account_id;
+    return shipment.branch_id === firstSelected.branch_id;
   }
 
   function toggleSelect(shipment: Shipment) {
@@ -314,6 +328,11 @@ export default function ShipmentListPage() {
       }
       return next;
     });
+  }
+
+  function changeSelectionMode(mode: "PICKUP" | "RECEIPT") {
+    setSelectionMode(mode);
+    setSelectedIds(new Set());
   }
 
   // Read-only detail view of everything filled in at /shipment/create — a booked/failed
@@ -472,10 +491,30 @@ export default function ShipmentListPage() {
 
       {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
+      <div className="mb-4 flex items-center gap-2">
+        <span className="text-sm font-medium text-slate-500">Select shipments for:</span>
+        {(["PICKUP", "RECEIPT"] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() => changeSelectionMode(mode)}
+            className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+              selectionMode === mode
+                ? "bg-brand-navy-dark text-white"
+                : "border border-slate-300 text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            {mode === "PICKUP" ? "Pickup" : "Receipt / Tax Invoice"}
+          </button>
+        ))}
+      </div>
+
       {selectedIds.size > 0 && (
         <div className="mb-4 flex items-center justify-between rounded-2xl border border-brand-navy/20 bg-brand-navy/5 px-4 py-3">
           <p className="text-sm font-medium text-brand-navy-dark">
-            {selectedIds.size} Shipment(s) selected — can be combined into one Pickup (same Carrier account)
+            {selectionMode === "PICKUP"
+              ? `${selectedIds.size} Shipment(s) selected — can be combined into one Pickup (same Carrier account)`
+              : `${selectedIds.size} Shipment(s) selected — can be combined into one Receipt/Tax Invoice (same Branch)`}
           </p>
           <div className="flex items-center gap-2">
             <button
@@ -485,14 +524,27 @@ export default function ShipmentListPage() {
             >
               Clear Selection
             </button>
-            <button
-              type="button"
-              onClick={() => setPickupModalOpen(true)}
-              className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
-            >
-              <Truck className="h-4 w-4" />
-              Schedule Pickup
-            </button>
+            {selectionMode === "PICKUP" ? (
+              <button
+                type="button"
+                onClick={() => setPickupModalOpen(true)}
+                className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
+              >
+                <Truck className="h-4 w-4" />
+                Schedule Pickup
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() =>
+                  router.push(`/billing/receipts/new?shipment_ids=${Array.from(selectedIds).join(",")}`)
+                }
+                className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
+              >
+                <Receipt className="h-4 w-4" />
+                Issue Receipt / Tax Invoice
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -534,8 +586,18 @@ export default function ShipmentListPage() {
                       disabled={!isSelectable(s) && !selectedIds.has(s.id)}
                       onChange={() => toggleSelect(s)}
                       className="h-4 w-4 rounded border-slate-300 text-brand-navy-dark disabled:cursor-not-allowed disabled:opacity-30"
-                      aria-label="Select for Pickup"
-                      title={(s.pickups ?? []).length > 0 ? "This shipment already has a Pickup scheduled — cancel the existing Pickup first to reschedule" : undefined}
+                      aria-label={selectionMode === "PICKUP" ? "Select for Pickup" : "Select for Receipt/Tax Invoice"}
+                      title={
+                        selectionMode === "PICKUP"
+                          ? (s.pickups ?? []).length > 0
+                            ? "This shipment already has a Pickup scheduled — cancel the existing Pickup first to reschedule"
+                            : undefined
+                          : (s.receipts_count ?? 0) > 0
+                            ? "This shipment already has a Receipt/Tax Invoice issued"
+                            : !s.branch_id
+                              ? "This shipment has no Branch on record — cannot be billed"
+                              : undefined
+                      }
                     />
                   </td>
                   <td className="px-5 py-3 font-mono font-medium text-slate-700">
@@ -569,6 +631,9 @@ export default function ShipmentListPage() {
                     <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_STYLE[s.status] ?? "bg-slate-50 text-slate-500"}`}>
                       {STATUS_LABEL[s.status] ?? s.status}
                     </span>
+                    {s.is_test && (
+                      <span className="ml-1.5 rounded-full bg-purple-50 px-2.5 py-0.5 text-xs font-medium text-purple-600">TEST</span>
+                    )}
                   </td>
                   <td className="px-5 py-3">
                     {s.status === "booked" ? (
@@ -646,7 +711,9 @@ export default function ShipmentListPage() {
                                 const key = `${s.id}:${piece.tracking_number}`;
                                 return (
                                   <button
-                                    key={piece.tracking_number ?? i}
+                                    // Index-suffixed: Test-mode bookings reuse the same
+                                    // placeholder tracking number for every piece.
+                                    key={`${key}-${i}`}
                                     type="button"
                                     onClick={() => handleOpenPieceLabel(s, piece.tracking_number)}
                                     disabled={!piece.label_storage_key || openingPieceKey === key}
@@ -700,13 +767,13 @@ export default function ShipmentListPage() {
                           <button
                             type="button"
                             onClick={() => {
-                              printShipmentReceipt(s);
+                              router.push("/billing/receipts/new");
                               setActionsMenuId(null);
                             }}
                             className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
                           >
                             <Printer className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                            Print Receipt
+                            Issue Receipt / Tax Invoice
                           </button>
                           {s.status === "booked" && (
                             <button
@@ -724,6 +791,24 @@ export default function ShipmentListPage() {
                                 <XCircle className="h-3.5 w-3.5 shrink-0" />
                               )}
                               {s.carrier === "UPS" ? "Void shipment with UPS" : "Mark as cancelled locally (DHL has no cancel API)"}
+                            </button>
+                          )}
+                          {s.is_test && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleDelete(s);
+                                setActionsMenuId(null);
+                              }}
+                              disabled={deletingId === s.id}
+                              className="flex w-full items-center gap-2 rounded-md border-t border-slate-100 px-2 py-1.5 text-left text-xs text-purple-600 hover:bg-purple-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {deletingId === s.id ? (
+                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-3.5 w-3.5 shrink-0" />
+                              )}
+                              Delete TEST shipment
                             </button>
                           )}
                         </div>,

@@ -16,13 +16,27 @@ function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(href + "/");
 }
 
+// Some nav hrefs can be prefixes of others (e.g. two hrefs where one starts with the other) —
+// naive prefix matching would light up BOTH at once. Only the longest (most specific) matching
+// href among every nav link should be considered the active one.
+function findActiveHref(pathname: string): string | undefined {
+  const hrefs: string[] = [];
+  NAV_SECTIONS.forEach((s) => {
+    if (s.href) hrefs.push(s.href);
+    s.children?.forEach((c) => hrefs.push(c.href));
+  });
+  const matches = hrefs.filter((href) => isActive(pathname, href));
+  return matches.reduce<string | undefined>((best, href) => (!best || href.length > best.length ? href : best), undefined);
+}
+
 export default function Sidebar({ open, onNavigate }: Props) {
   const pathname = usePathname();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const activeHref = useMemo(() => findActiveHref(pathname), [pathname]);
 
   const activeSectionLabel = useMemo(
-    () => NAV_SECTIONS.find((s) => s.children?.some((c) => isActive(pathname, c.href)))?.label,
-    [pathname],
+    () => NAV_SECTIONS.find((s) => s.children?.some((c) => c.href === activeHref))?.label,
+    [activeHref],
   );
 
   useEffect(() => {
@@ -46,7 +60,7 @@ export default function Sidebar({ open, onNavigate }: Props) {
           const Icon = section.icon;
 
           if (!section.children) {
-            const active = isActive(pathname, section.href!);
+            const active = section.href === activeHref;
             return (
               <Link
                 key={section.label}
@@ -63,7 +77,7 @@ export default function Sidebar({ open, onNavigate }: Props) {
           }
 
           const isOpenSection = !!expanded[section.label];
-          const sectionActive = section.children.some((c) => isActive(pathname, c.href));
+          const sectionActive = section.children.some((c) => c.href === activeHref);
 
           return (
             <div key={section.label}>
@@ -81,7 +95,7 @@ export default function Sidebar({ open, onNavigate }: Props) {
               {isOpenSection && (
                 <div className="ml-4 mt-1 flex flex-col gap-1 border-l border-white/10 pl-4">
                   {section.children.map((leaf) => {
-                    const active = isActive(pathname, leaf.href);
+                    const active = leaf.href === activeHref;
                     return (
                       <Link
                         key={leaf.href}

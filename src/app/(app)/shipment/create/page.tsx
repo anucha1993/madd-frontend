@@ -19,7 +19,7 @@ import { listManifestOptions, type ManifestOption } from "@/lib/manifestOptions"
 import { getThaiSubdistrictsByZipCode } from "@/lib/thaiSubdistricts";
 import { checkRate, type CheckRateInput, type RateChargeLine, type RateQuote, type ShipmentPackageInput } from "@/lib/shipping";
 import { lookupInsuranceCountryCap, type InsuranceCountryCap } from "@/lib/insuranceCountryCaps";
-import { bookShipment, describeShipmentPieces, openShipmentLabel, printShipmentReceipt, type BookShipmentInput, type Shipment } from "@/lib/shipments";
+import { bookShipment, describeShipmentPieces, openShipmentLabel, type BookShipmentInput, type Shipment } from "@/lib/shipments";
 import { getShipmentDraft, createShipmentDraft, updateShipmentDraft, deleteShipmentDraft } from "@/lib/shipmentDrafts";
 import { getUser } from "@/lib/auth";
 import {
@@ -43,6 +43,7 @@ const DHL_DOCUMENT_FIXED_COVERAGE_THB = 17000;
 // Describes exactly what a markup was computed from, e.g. "7% × 1,200.00" or "+50.00 flat" —
 // so staff can see which amount a Markup Rule (config/markup) used as its base.
 function formatMarkupBasis(line: RateChargeLine): string | null {
+  if (line.markupUnit === "FORMULA") return line.markupFormula ?? null;
   if (!line.markupUnit || line.markupValue == null) return null;
   if (line.markupUnit === "PERCENTAGE") {
     return line.markupBase != null
@@ -3397,6 +3398,7 @@ export default function ShipmentCreatePage() {
           title={`Raw Booking Response — ${bookedShipment.carrier} ${bookedShipment.tracking_number ?? ""}`}
           onClose={() => setViewBookedRaw(false)}
           maxWidthClassName="max-w-3xl"
+          zIndexClassName="z-[60]"
         >
           <pre className="max-h-[65vh] overflow-auto rounded-lg bg-slate-900 p-4 text-xs text-slate-100">
             {JSON.stringify(bookedShipment.raw_response, null, 2)}
@@ -3453,7 +3455,10 @@ export default function ShipmentCreatePage() {
                   <div className="divide-y divide-slate-100">
                     {pieces.length > 0 ? (
                       pieces.map((piece, i) => (
-                        <div key={piece.tracking_number ?? i} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                        // Index-suffixed key: Test-mode bookings reuse the same placeholder
+                        // tracking number (e.g. "1ZXXXXXXXXXXXXXXXX") for every piece, which
+                        // otherwise collides as a React key across multiple boxes.
+                        <div key={`${piece.tracking_number ?? "piece"}-${i}`} className="flex items-center justify-between gap-3 px-4 py-2.5">
                           <div className="min-w-0">
                             {isMultiPiece && <p className="text-[11px] text-slate-400">{piece.description}</p>}
                             <p className="truncate font-mono text-sm font-bold text-brand-navy-dark">
@@ -3501,11 +3506,11 @@ export default function ShipmentCreatePage() {
                 <div className="grid grid-cols-2 gap-2.5">
                   <button
                     type="button"
-                    onClick={() => printShipmentReceipt(bookedShipment)}
+                    onClick={() => router.push("/billing/receipts/new")}
                     className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
                   >
                     <Printer className="h-4 w-4" />
-                    พิมพ์ใบเสร็จ
+                    ออกใบเสร็จ / ใบกำกับภาษี
                   </button>
                   <button
                     type="button"

@@ -10,6 +10,9 @@ export type ChargeCode = {
   // true only for codes hand-added via "+ Add Charge Code" on /config/markup — the carrier API
   // never actually returns these (e.g. a self-defined "VAT" line).
   is_custom: boolean;
+  // Pinned codes show as quick-select chips on /config/markup and Fixed Charges instead of
+  // needing to search every time — for the handful of charge codes used regularly.
+  is_pinned: boolean;
 };
 
 export const listChargeCodes = (params: { provider?: "UPS" | "DHL"; q?: string } = {}) => {
@@ -30,7 +33,10 @@ export type ChargeCodeInput = {
 
 export const createChargeCode = (data: ChargeCodeInput) => apiClient.post<ChargeCode>("/charge-codes", data);
 
-export const updateChargeCode = (id: number, data: Partial<Omit<ChargeCodeInput, "provider" | "code">>) =>
+export const updateChargeCode = (id: number, data: Partial<Omit<ChargeCodeInput, "provider" | "code">> & { is_pinned?: boolean }) =>
   apiClient.put<ChargeCode>(`/charge-codes/${id}`, data);
+
+export const previewChargeFormula = (formula: string, values: Record<string, number>) =>
+  apiClient.post<{ result: number }>("/charge-formula/preview", { formula, values });
 
 export const deleteChargeCode = (id: number) => apiClient.delete<{ message: string }>(`/charge-codes/${id}`);
