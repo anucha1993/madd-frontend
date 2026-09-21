@@ -28,6 +28,15 @@ const labelClass = "text-xs font-medium uppercase tracking-wide text-slate-400";
 
 const money = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// Suggested lines are tagged "... (UPS)"/"... (DHL)" by the backend (see previewLines()) so a
+// mixed-carrier document still shows which carrier each amount came from — pull that tag out to
+// show as a proper CarrierBadge instead of just plain text, without touching the actual editable
+// description value (custom/merged lines with no tag simply show no badge).
+function extractCarrierTag(description: string): "UPS" | "DHL" | null {
+  const match = description.match(/\((UPS|DHL)\)\s*$/);
+  return match ? (match[1] as "UPS" | "DHL") : null;
+}
+
 function Card({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -361,12 +370,12 @@ export default function IssueReceiptPage() {
             ) : (
               <ul className="mb-3 divide-y divide-slate-100 rounded-lg border border-slate-200">
                 {shipments.map((s) => (
-                  <li key={s.id} className="flex items-center justify-between px-3 py-1.5 text-sm">
-                    <span className="flex items-center gap-1.5">
+                  <li key={s.id} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                    <span className="flex min-w-0 flex-1 items-center gap-1.5">
                       <CarrierBadge carrier={s.carrier} />
-                      <span className="font-mono text-slate-700">{s.tracking_number ?? `#${s.id}`}</span>
+                      <span className="truncate font-mono text-slate-700">{s.tracking_number ?? `#${s.id}`}</span>
                     </span>
-                    <div className="flex items-center gap-3">
+                    <div className="flex shrink-0 items-center gap-3">
                       <span className="text-slate-500">{money(Number(s.order_total))}</span>
                       <button
                         type="button"
@@ -524,12 +533,15 @@ export default function IssueReceiptPage() {
               {lines.map((line, index) => (
                 <tr key={index} className="border-t border-slate-100">
                   <td className="px-3 py-1.5">
-                    <input
-                      type="text"
-                      value={line.description}
-                      onChange={(e) => updateLine(index, { description: e.target.value.toUpperCase() })}
-                      className={underlineClass}
-                    />
+                    <div className="flex items-center gap-1.5">
+                      {extractCarrierTag(line.description) && <CarrierBadge carrier={extractCarrierTag(line.description)!} />}
+                      <input
+                        type="text"
+                        value={line.description}
+                        onChange={(e) => updateLine(index, { description: e.target.value.toUpperCase() })}
+                        className={underlineClass}
+                      />
+                    </div>
                   </td>
                   {docType === "TAX_INVOICE" && (
                     <td className="px-3 py-1.5">

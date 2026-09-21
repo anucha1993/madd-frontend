@@ -1,7 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Building2,
-  ClipboardList,
   FileBarChart2,
   LayoutDashboard,
   Layers,
@@ -40,11 +39,6 @@ export const NAV_SECTIONS: NavItem[] = [
     ],
   },
   {
-    label: "Manifest",
-    icon: ClipboardList,
-    href: "/manifest",
-  },
-  {
     label: "Billing",
     icon: Receipt,
     children: [
@@ -62,6 +56,7 @@ export const NAV_SECTIONS: NavItem[] = [
     label: "Reports",
     icon: FileBarChart2,
     children: [
+      { label: "Manifest", href: "/manifest" },
       { label: "Shipment Summary", href: "/reports/summary" },
       { label: "Revenue & Expense Report", href: "/reports/finance" },
     ],

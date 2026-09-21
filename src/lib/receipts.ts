@@ -131,7 +131,7 @@ export const voidReceipt = (id: number, voidNote?: string) =>
 // Unlike voidReceipt(), this also releases the shipment(s) so they can be billed again fresh.
 export const deleteReceipt = (id: number) => apiClient.delete<void>(`/receipts/${id}`);
 
-/** Opens the generated PDF (Tax Invoice = 2 pages, Cash Receipt = 1 page) in a new tab. */
+/** Opens the generated PDF (each document type is a standalone 1-page PDF) in a new tab. */
 export async function openReceiptPdf(id: number) {
   const res = await fetch(`${API_URL}/receipts/${id}/pdf`, {
     headers: { Authorization: `Bearer ${getToken()}` },
