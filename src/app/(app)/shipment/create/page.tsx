@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Code, Copy, Loader2, Lock, Package, Plus, Printer, Receipt, Search, ShieldCheck, Sparkles, Tag, Trash2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Code, Copy, ExternalLink, FileText, ListChecks, Loader2, Lock, MinusCircle, Package, Plus, Printer, Receipt, Search, ShieldCheck, Sparkles, Tag, Trash2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import ThaiAddressSearch from "@/components/shipment/ThaiAddressSearch";
@@ -19,7 +19,7 @@ import { listManifestOptions, type ManifestOption } from "@/lib/manifestOptions"
 import { getThaiSubdistrictsByZipCode } from "@/lib/thaiSubdistricts";
 import { checkRate, type CheckRateInput, type RateChargeLine, type RateQuote, type ShipmentPackageInput } from "@/lib/shipping";
 import { lookupInsuranceCountryCap, type InsuranceCountryCap } from "@/lib/insuranceCountryCaps";
-import { bookShipment, describeShipmentPieces, openShipmentLabel, type BookShipmentInput, type Shipment } from "@/lib/shipments";
+import { bookShipment, describeShipmentPieces, openShipmentCommercialInvoice, openShipmentLabel, openShipmentWaybill, printAllShipmentLabels, uploadCommercialInvoiceFile, type BookShipmentInput, type Shipment } from "@/lib/shipments";
 import { getShipmentDraft, createShipmentDraft, updateShipmentDraft, deleteShipmentDraft } from "@/lib/shipmentDrafts";
 import { getUser } from "@/lib/auth";
 import {
@@ -74,8 +74,41 @@ function levenshteinDistance(a: string, b: string): number {
 const STEPS = [
   { number: 1 as const, label: "Ship Info" },
   { number: 2 as const, label: "Product & Rate" },
-  { number: 3 as const, label: "Add On" },
-  { number: 4 as const, label: "Payment Info" },
+  { number: 3 as const, label: "Commercial Invoice" },
+  { number: 4 as const, label: "Add On" },
+  { number: 5 as const, label: "Payment Info" },
+];
+
+// DHL Optional Services — serviceCodes live-verified against DHL's own /reference-data
+// serviceCode dataset (2026-09-21), NOT guessed. Signature options are mutually exclusive
+// (radio); the rest can be combined freely (checkboxes).
+const DHL_SIGNATURE_OPTIONS = [
+  { code: "SF", label: "Direct Signature" },
+  { code: "SD", label: "Adult Signature" },
+  { code: "SG", label: "Signature Required" },
+  { code: "SX", label: "No Signature Required" },
+];
+const DHL_CHECKBOX_OPTIONS = [
+  { code: "FD", label: "GoGreen Plus" },
+  { code: "LX", label: "Hold for Collection" },
+  { code: "NN", label: "Neutral Delivery" },
+  { code: "WL", label: "Bonded Transit" },
+  { code: "WM", label: "Temporary Import/Export" },
+];
+
+// UPS Optional Services — DCIS1/2/3 are the package-level DeliveryConfirmation signature
+// options (mutually exclusive, like DHL's); ADDRESSEE_ONLY/DIRECT_ONLY are also package-level;
+// SATURDAY is shipment-level (SaturdayDeliveryIndicator). See UpsShipmentService.php.
+const UPS_SIGNATURE_OPTIONS = [
+  { code: "", label: "None" },
+  { code: "DCIS1", label: "Delivery Confirmation" },
+  { code: "DCIS2", label: "Signature Required" },
+  { code: "DCIS3", label: "Adult Signature Required" },
+];
+const UPS_CHECKBOX_OPTIONS = [
+  { code: "SATURDAY", label: "Saturday Delivery" },
+  { code: "ADDRESSEE_ONLY", label: "Deliver to Addressee Only" },
+  { code: "DIRECT_ONLY", label: "Direct Delivery Only" },
 ];
 
 // Product Type is per-box (each package can be a different classification) — which Insurance
@@ -99,6 +132,32 @@ type PackageRow = ShipmentPackageInput & {
   // or the value of ONE box (system multiplies by qty) — undefined (old drafts) behaves as TOTAL.
   declared_value_mode?: "TOTAL" | "PER_BOX";
 };
+
+// A free-form Commercial Invoice product line — NOT tied 1:1 to physical packages (a real
+// invoice usually lists products, not boxes) — one shipment can declare several product lines
+// regardless of how many boxes it's actually split across. See BookShipmentInvoiceLine.
+// `weight` is per-item net weight in kg (DHL's own MyDHL+ portal requires this on every
+// manually-typed line item, not just quantity + unit value).
+type InvoiceLineRow = {
+  key: number;
+  description: string;
+  quantity: number;
+  unit_value: string;
+  weight: string;
+  country_of_origin: string;
+  hs_code: string;
+};
+let invoiceLineKeySeq = 1;
+const newInvoiceLine = (init?: Partial<InvoiceLineRow>): InvoiceLineRow => ({
+  key: invoiceLineKeySeq++,
+  description: "",
+  quantity: 1,
+  unit_value: "",
+  weight: "",
+  country_of_origin: "TH",
+  hs_code: "",
+  ...init,
+});
 
 let rowKeySeq = 1;
 const newRow = (): PackageRow => ({
@@ -187,7 +246,7 @@ export default function ShipmentCreatePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { enabled: aiEnabled } = useAiEnabled();
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
 
   // Staff creating this shipment / their branch — shown in Order Summary as a final review.
   const currentUser = getUser();
@@ -228,6 +287,11 @@ export default function ShipmentCreatePage() {
   const [destinationTaxId, setDestinationTaxId] = useState("");
   const [destinationCountry, setDestinationCountry] = useState("");
   const [destinationCity, setDestinationCity] = useState("");
+  // UPS's real Ship API (unlike its Rate API, which tolerates it being blank) hard-requires
+  // StateProvinceCode for US/CA ship-to addresses — omitting it books successfully at Check
+  // Rate but fails at the final "สร้าง Shipment" step with "Missing or invalid ship to
+  // StateProvinceCode".
+  const [destinationState, setDestinationState] = useState("");
   const [destinationPostcode, setDestinationPostcode] = useState("");
   const [destinationAddress, setDestinationAddress] = useState("");
   const [destinationAddress2, setDestinationAddress2] = useState("");
@@ -243,6 +307,49 @@ export default function ShipmentCreatePage() {
   // Declared Value is set PER PACKAGE (UPS insurance is a package-level field) — this total feeds
   // any Add-on catalog item priced as "Percent of Declared Value" (e.g. Insurance).
   const totalDeclaredValue = packages.reduce((sum, p) => sum + (p.insured ? packageTotalDeclaredValue(p) : 0), 0);
+
+  // Commercial Invoice step — invoice_lines is ALWAYS required (min 1 row) to build the
+  // carrier's mandatory customs declaration (confirmed against DHL's own MyDHL+ portal:
+  // every shipment REQUIRES structured product/customs data regardless of any file upload).
+  // The file upload here is a SEPARATE optional supplementary attachment sent to DHL as
+  // documentImages typeCode CIN — it does NOT replace the line items. `invoiceMode` is kept
+  // only so old saved drafts still load; it always resolves to "FORM" at booking time now.
+  const [invoiceMode, setInvoiceMode] = useState<"FORM" | "UPLOAD">("FORM");
+  const [invoiceLines, setInvoiceLines] = useState<InvoiceLineRow[]>([newInvoiceLine()]);
+  const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
+  const [invoiceUploadKey, setInvoiceUploadKey] = useState<string | null>(null);
+  const [uploadingInvoiceFile, setUploadingInvoiceFile] = useState(false);
+  const [invoiceUploadError, setInvoiceUploadError] = useState("");
+  const invoiceLinesTotal = invoiceLines.reduce((sum, l) => sum + l.quantity * (Number(l.unit_value) || 0), 0);
+
+  function updateInvoiceLine(key: number, patch: Partial<InvoiceLineRow>) {
+    setInvoiceLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  }
+
+  function removeInvoiceLine(key: number) {
+    setInvoiceLines((prev) => (prev.length > 1 ? prev.filter((l) => l.key !== key) : prev));
+  }
+
+  async function handleInvoiceFileChange(file: File | null) {
+    setInvoiceFile(file);
+    setInvoiceUploadKey(null);
+    setInvoiceUploadError("");
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setInvoiceUploadError("ไฟล์ต้องมีขนาดไม่เกิน 5MB (ข้อจำกัดของ DHL)");
+      setInvoiceFile(null);
+      return;
+    }
+    setUploadingInvoiceFile(true);
+    try {
+      const res = await uploadCommercialInvoiceFile(file);
+      setInvoiceUploadKey(res.storage_key);
+    } catch (err) {
+      setInvoiceUploadError(err instanceof Error ? err.message : "อัปโหลดไฟล์ไม่สำเร็จ");
+    } finally {
+      setUploadingInvoiceFile(false);
+    }
+  }
 
   const [customerTypeOptions, setCustomerTypeOptions] = useState<ManifestOption[]>([]);
   const [customerType, setCustomerType] = useState("DAILY");
@@ -338,7 +445,10 @@ export default function ShipmentCreatePage() {
   const [bookingError, setBookingError] = useState("");
   const [bookedShipment, setBookedShipment] = useState<Shipment | null>(null);
   const [openingLabel, setOpeningLabel] = useState(false);
+  const [openingAllLabels, setOpeningAllLabels] = useState(false);
   const [openingPieceTracking, setOpeningPieceTracking] = useState<string | null>(null);
+  const [openingWaybill, setOpeningWaybill] = useState(false);
+  const [openingInvoice, setOpeningInvoice] = useState(false);
   const [copiedTracking, setCopiedTracking] = useState<string | null>(null);
   const [viewBookedRaw, setViewBookedRaw] = useState(false);
   const [viewRawQuote, setViewRawQuote] = useState<RateQuote | null>(null);
@@ -346,6 +456,36 @@ export default function ShipmentCreatePage() {
   // picker (which needs a known carrier) can be driven right after Check Rate, without waiting
   // to manually pick a quote card out of a mixed UPS+DHL results list.
   const [selectedCarriers, setSelectedCarriers] = useState<("UPS" | "DHL")[]>(["UPS", "DHL"]);
+
+  // DHL Optional Services — SF (Direct Signature) is the default, matching this account's
+  // long-standing default behavior before this selector existed.
+  const [dhlSignatureOption, setDhlSignatureOption] = useState<string>("SF");
+  const [dhlOptionalServices, setDhlOptionalServices] = useState<Set<string>>(new Set());
+  const dhlOptionalServiceCodes = [dhlSignatureOption, ...Array.from(dhlOptionalServices)].filter(Boolean);
+
+  function toggleDhlOptionalService(code: string) {
+    setDhlOptionalServices((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  }
+
+  // UPS Optional Services — no default signature option (unlike DHL's "SF"), matching this
+  // account's actual prior behavior before this selector existed (no code was ever sent to UPS).
+  const [upsSignatureOption, setUpsSignatureOption] = useState<string>("");
+  const [upsOptionalServices, setUpsOptionalServices] = useState<Set<string>>(new Set());
+  const upsOptionalServiceCodes = [upsSignatureOption, ...Array.from(upsOptionalServices)].filter(Boolean);
+
+  function toggleUpsOptionalService(code: string) {
+    setUpsOptionalServices((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  }
 
   function toggleCarrierFilter(carrier: "UPS" | "DHL") {
     setSelectedCarriers((prev) => {
@@ -491,6 +631,7 @@ export default function ShipmentCreatePage() {
         taxId: destinationTaxId,
         country: destinationCountry,
         city: destinationCity,
+        state: destinationState,
         postcode: destinationPostcode,
         address: destinationAddress,
         address2: destinationAddress2,
@@ -501,9 +642,15 @@ export default function ShipmentCreatePage() {
       },
       packages,
       activePackageKey,
+      invoiceMode,
+      invoiceLines,
       addonRows,
       stockSupplyId,
       selectedCarriers,
+      dhlSignatureOption,
+      dhlOptionalServices: Array.from(dhlOptionalServices),
+      upsSignatureOption,
+      upsOptionalServices: Array.from(upsOptionalServices),
       // Rate Quotes/selected quote are live carrier API data (prices can go stale by the time the
       // draft is resumed) but restoring them still saves staff from re-running Check Rate for
       // every minor edit — they can always re-check if prices look out of date.
@@ -523,7 +670,7 @@ export default function ShipmentCreatePage() {
   // just defensively guarded against missing/older fields so an older draft never crashes the page.
   function applyDraftSnapshot(raw: Record<string, unknown>) {
     const s = raw as Record<string, any>;
-    if (s.step === 1 || s.step === 2 || s.step === 3 || s.step === 4) setStep(s.step);
+    if (s.step === 1 || s.step === 2 || s.step === 3 || s.step === 4 || s.step === 5) setStep(s.step);
     if (typeof s.customerType === "string") setCustomerType(s.customerType);
     if (s.entityType === "INDIVIDUAL" || s.entityType === "COMPANY") setEntityType(s.entityType);
 
@@ -547,6 +694,7 @@ export default function ShipmentCreatePage() {
     setDestinationTaxId(d.taxId ?? "");
     setDestinationCountry(d.country ?? "");
     setDestinationCity(d.city ?? "");
+    setDestinationState(d.state ?? "");
     setDestinationPostcode(d.postcode ?? "");
     setDestinationAddress(d.address ?? "");
     setDestinationAddress2(d.address2 ?? "");
@@ -562,6 +710,11 @@ export default function ShipmentCreatePage() {
       // highest one so any NEW row added later can never collide with a restored one.
       rowKeySeq = Math.max(rowKeySeq, ...s.packages.map((p: PackageRow) => p.key)) + 1;
     }
+    if (s.invoiceMode === "FORM" || s.invoiceMode === "UPLOAD") setInvoiceMode(s.invoiceMode);
+    if (Array.isArray(s.invoiceLines) && s.invoiceLines.length > 0) {
+      setInvoiceLines(s.invoiceLines);
+      invoiceLineKeySeq = Math.max(invoiceLineKeySeq, ...s.invoiceLines.map((l: InvoiceLineRow) => l.key)) + 1;
+    }
     if (Array.isArray(s.addonRows)) {
       setAddonRows(s.addonRows);
       if (s.addonRows.length > 0) {
@@ -570,6 +723,10 @@ export default function ShipmentCreatePage() {
     }
     if (s.stockSupplyId !== undefined) setStockSupplyId(s.stockSupplyId);
     if (Array.isArray(s.selectedCarriers)) setSelectedCarriers(s.selectedCarriers);
+    if (typeof s.dhlSignatureOption === "string") setDhlSignatureOption(s.dhlSignatureOption);
+    if (Array.isArray(s.dhlOptionalServices)) setDhlOptionalServices(new Set(s.dhlOptionalServices));
+    if (typeof s.upsSignatureOption === "string") setUpsSignatureOption(s.upsSignatureOption);
+    if (Array.isArray(s.upsOptionalServices)) setUpsOptionalServices(new Set(s.upsOptionalServices));
     if (Array.isArray(s.results)) setResults(s.results);
     if (s.selectedQuote) setSelectedQuote(s.selectedQuote);
     if (s.quotedDeclaredValues) setQuotedDeclaredValues(s.quotedDeclaredValues);
@@ -1000,6 +1157,7 @@ export default function ShipmentCreatePage() {
       email: (target === "from" ? "" : destinationEmail).trim(),
       country: (target === "from" ? "TH" : destinationCountry).trim(),
       city: (target === "from" ? originCity : destinationCity).trim(),
+      state_code: (target === "from" ? "" : destinationState).trim(),
       postcode: (target === "from" ? originPostcode : destinationPostcode).trim(),
       address1: (target === "from" ? originAddress : destinationAddress).trim(),
       address2: (target === "from" ? originAddress2 : destinationAddress2).trim(),
@@ -1007,14 +1165,24 @@ export default function ShipmentCreatePage() {
       notes: (target === "from" ? originNotes : destinationNotes).trim(),
     };
 
+    // Loose equality for dedup matching — ignores case/whitespace for text and
+    // dashes/spaces/parens for phone numbers so re-typed values still match the saved record.
+    const normText = (v: string) => v.trim().toLowerCase();
+    const normPhone = (v: string) => v.replace(/[^0-9]/g, "");
+
     try {
-      // Prefer the customer the user actually picked from the saved-address search — matching
-      // by phone alone fails when the saved address itself had a blank phone field. Only fall
-      // back to a phone lookup / new customer when nothing was explicitly selected.
+      // Prefer the customer the user actually picked from the saved-address search. Otherwise
+      // try to find an existing customer by tax_id (most reliable identifier) then by phone,
+      // before falling back to creating a brand-new customer — avoids spawning duplicate
+      // Customer records every time staff retype the same customer's info by hand.
       let customerId: number | null = target === "from" ? originCustomerId : destinationCustomerId;
+      if (!customerId && fields.tax_id) {
+        const matches = await listCustomers(fields.tax_id);
+        customerId = matches.find((c) => c.tax_id && normText(c.tax_id) === normText(fields.tax_id))?.id ?? null;
+      }
       if (!customerId && fields.phone) {
         const matches = await listCustomers(fields.phone);
-        customerId = matches.find((c) => c.phone === fields.phone)?.id ?? null;
+        customerId = matches.find((c) => c.phone && normPhone(c.phone) === normPhone(fields.phone))?.id ?? null;
       }
       if (!customerId) {
         const customer = await createCustomer({
@@ -1028,16 +1196,17 @@ export default function ShipmentCreatePage() {
       }
 
       const existing = await listCustomerAddresses(customerId, type);
-      const norm = (v: string | null) => (v ?? "").trim().toLowerCase();
+      const norm = (v: string | null) => normText(v ?? "");
       const isDuplicate = existing.some(
         (addr) =>
           norm(addr.contact_name) === norm(fields.contact_name) &&
           norm(addr.company_name) === norm(fields.company_name) &&
           norm(addr.tax_id) === norm(fields.tax_id) &&
-          norm(addr.phone) === norm(fields.phone) &&
+          normPhone(addr.phone ?? "") === normPhone(fields.phone) &&
           norm(addr.email) === norm(fields.email) &&
           norm(addr.country) === norm(fields.country) &&
           norm(addr.city) === norm(fields.city) &&
+          norm(addr.state_code ?? "") === norm(fields.state_code) &&
           norm(addr.postcode) === norm(fields.postcode) &&
           norm(addr.address1) === norm(fields.address1) &&
           norm(addr.address2) === norm(fields.address2) &&
@@ -1055,6 +1224,7 @@ export default function ShipmentCreatePage() {
         email: fields.email || undefined,
         country: fields.country || undefined,
         city: fields.city || undefined,
+        state_code: fields.state_code || undefined,
         postcode: fields.postcode || undefined,
         address1: fields.address1 || undefined,
         address2: fields.address2 || undefined,
@@ -1092,6 +1262,7 @@ export default function ShipmentCreatePage() {
       setDestinationEmail(addr.email ?? "");
       if (addr.country) setDestinationCountry(addr.country);
       setDestinationCity(addr.city ?? "");
+      setDestinationState(addr.state_code ?? "");
       setDestinationPostcode(addr.postcode ?? "");
       setDestinationAddress(addr.address1 ?? "");
       setDestinationAddress2(addr.address2 ?? "");
@@ -1171,6 +1342,12 @@ export default function ShipmentCreatePage() {
       setError("Please fill in the destination city.");
       return;
     }
+    // UPS's real booking API rejects US/CA ship-to addresses with no StateProvinceCode —
+    // catch it here instead of letting staff discover it only at the final Confirm step.
+    if ((destinationCountry === "US" || destinationCountry === "CA") && !destinationState.trim()) {
+      setError("Please fill in the destination state/province (required for US/CA addresses).");
+      return;
+    }
 
     // Auto-save Ship From/Ship To as reusable customer addresses — fire-and-forget so a slow
     // or failed save never blocks/delays the rate check itself (see autoSaveAddress for the
@@ -1216,6 +1393,7 @@ export default function ShipmentCreatePage() {
       destination_company: destinationCompany.trim() || undefined,
       destination_country: destinationCountry,
       destination_city: destinationCity.trim(),
+      destination_state: destinationState.trim() || undefined,
       destination_postcode: destinationPostcode.trim() || undefined,
       destination_address: destinationAddress.trim() || undefined,
       destination_address2: destinationAddress2.trim() || undefined,
@@ -1225,6 +1403,8 @@ export default function ShipmentCreatePage() {
       packages: effectivePackages,
       declared_value_currency: "THB",
       carriers: selectedCarriers,
+      dhl_optional_services: dhlOptionalServiceCodes,
+      ups_optional_services: upsOptionalServiceCodes,
     };
 
     setLoading(true);
@@ -1271,6 +1451,7 @@ export default function ShipmentCreatePage() {
         tax_id: destinationTaxId.trim() || undefined,
         country: destinationCountry,
         city: destinationCity.trim(),
+        state: destinationState.trim() || undefined,
         postcode: destinationPostcode.trim() || undefined,
         address: destinationAddress.trim() || undefined,
         address2: destinationAddress2.trim() || undefined,
@@ -1299,6 +1480,18 @@ export default function ShipmentCreatePage() {
         };
       }),
       declared_value_currency: "THB",
+      invoice_mode: invoiceMode,
+      invoice_lines: invoiceLines.map((l) => ({
+        description: l.description || "General Merchandise",
+        quantity: l.quantity,
+        unit_value: Number(l.unit_value) || 0,
+        weight: Number(l.weight) || undefined,
+        country_of_origin: l.country_of_origin || "TH",
+        hs_code: l.hs_code || undefined,
+      })),
+      commercial_invoice_upload_key: invoiceUploadKey || undefined,
+      dhl_optional_services: dhlOptionalServiceCodes,
+      ups_optional_services: upsOptionalServiceCodes,
       addon_lines: addonRows.map((row) => ({
         name: row.name,
         category: row.category,
@@ -1357,6 +1550,18 @@ export default function ShipmentCreatePage() {
     }
   }
 
+  async function handleOpenAllLabels() {
+    if (!bookedShipment) return;
+    setOpeningAllLabels(true);
+    try {
+      await printAllShipmentLabels(bookedShipment.id);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "เปิด Label ทั้งหมดไม่สำเร็จ");
+    } finally {
+      setOpeningAllLabels(false);
+    }
+  }
+
   async function handleOpenPieceLabel(trackingNumber: string | null) {
     if (!bookedShipment || !trackingNumber) return;
     setOpeningPieceTracking(trackingNumber);
@@ -1366,6 +1571,30 @@ export default function ShipmentCreatePage() {
       alert(err instanceof Error ? err.message : "เปิด Label ไม่สำเร็จ");
     } finally {
       setOpeningPieceTracking(null);
+    }
+  }
+
+  async function handleOpenWaybill() {
+    if (!bookedShipment) return;
+    setOpeningWaybill(true);
+    try {
+      await openShipmentWaybill(bookedShipment.id);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "เปิด Waybill ไม่สำเร็จ");
+    } finally {
+      setOpeningWaybill(false);
+    }
+  }
+
+  async function handleOpenCommercialInvoice() {
+    if (!bookedShipment) return;
+    setOpeningInvoice(true);
+    try {
+      await openShipmentCommercialInvoice(bookedShipment.id);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "เปิด Commercial Invoice ไม่สำเร็จ");
+    } finally {
+      setOpeningInvoice(false);
     }
   }
 
@@ -2084,21 +2313,39 @@ export default function ShipmentCreatePage() {
                 </div>
               </label>
               <label className="flex flex-col gap-1">
-                <span className={labelClass}>Postal Code</span>
+                <span className={labelClass}>
+                  State / Province{(destinationCountry === "US" || destinationCountry === "CA") && " *"}
+                </span>
                 <div className="relative">
                   <input
                     type="text"
-                    value={destinationPostcode}
-                    onChange={(e) => setDestinationPostcode(e.target.value)}
-                    placeholder="e.g. 018956"
-                    className={`${inputClass} ${destinationPostcode ? "pr-8" : ""}`}
+                    value={destinationState}
+                    onChange={(e) => setDestinationState(e.target.value.toUpperCase())}
+                    placeholder="e.g. NY"
+                    maxLength={10}
+                    className={`${inputClass} ${destinationState ? "pr-8" : ""}`}
                   />
-                  {destinationPostcode && (
+                  {destinationState && (
                     <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />
                   )}
                 </div>
               </label>
             </div>
+            <label className="flex flex-col gap-1">
+              <span className={labelClass}>Postal Code</span>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={destinationPostcode}
+                  onChange={(e) => setDestinationPostcode(e.target.value)}
+                  placeholder="e.g. 018956"
+                  className={`${inputClass} ${destinationPostcode ? "pr-8" : ""}`}
+                />
+                {destinationPostcode && (
+                  <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />
+                )}
+              </div>
+            </label>
             <label className="flex flex-col gap-1">
               <span className={labelClass}>Address 1</span>
               <div className="relative">
@@ -2889,7 +3136,7 @@ export default function ShipmentCreatePage() {
           type="button"
           onClick={handleSubmit}
           disabled={loading}
-          className="flex items-center gap-2 rounded-lg bg-brand-amber px-6 py-2.5 text-sm font-semibold text-brand-navy-dark shadow-sm hover:bg-brand-amber/90 disabled:opacity-60"
+          className="flex items-center gap-2 rounded-lg bg-slate-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-700 disabled:opacity-60"
         >
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Package className="h-4 w-4" />}
           {loading ? "Checking rates..." : "Check Rate"}
@@ -2898,7 +3145,266 @@ export default function ShipmentCreatePage() {
         </>
       )}
 
-      {step === 4 && (
+      {step === 3 && (
+        <>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="flex flex-col gap-4 lg:col-span-2">
+      <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
+        <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <FileText className="h-4 w-4" /> Commercial Invoice
+        </h2>
+        <p className="mb-3 text-xs text-slate-400">
+          ใช้ออกใบ Invoice ศุลกากรตอนจองจริง ไม่ว่าจะซื้อประกันหรือไม่ก็ตาม — รายการไม่จำเป็นต้องตรงกับจำนวนกล่อง สามารถเพิ่ม/ลบได้ตามใจ
+        </p>
+
+        {selectedQuote?.carrier === "DHL" && (
+          // DHL Optional Services don't change the quoted rate (no charge_code impact) — kept
+          // here instead of Step 2 Rate Quotes so it's clearly about customs/delivery handling.
+          <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+            <p className="mb-1.5 text-xs font-semibold text-slate-500">DHL Optional Services</p>
+            <div className="mb-2 flex flex-wrap gap-1">
+              {DHL_SIGNATURE_OPTIONS.map((opt) => (
+                <button
+                  type="button"
+                  key={opt.code}
+                  onClick={() => setDhlSignatureOption(opt.code)}
+                  className={`rounded-md px-2 py-1 text-[11px] font-medium transition ${
+                    dhlSignatureOption === opt.code
+                      ? "bg-brand-navy-dark text-white"
+                      : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {DHL_CHECKBOX_OPTIONS.map((opt) => (
+                <label key={opt.code} className="flex cursor-pointer items-center gap-1 text-[11px] text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={dhlOptionalServices.has(opt.code)}
+                    onChange={() => toggleDhlOptionalService(opt.code)}
+                    className="h-3 w-3 rounded border-slate-300 text-brand-navy focus:ring-brand-navy/30"
+                  />
+                  {opt.label}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {selectedQuote?.carrier === "UPS" && (
+          // UPS Optional Services also don't change the quoted rate — same reasoning as DHL's.
+          <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+            <p className="mb-1.5 text-xs font-semibold text-slate-500">UPS Optional Services</p>
+            <div className="mb-2 flex flex-wrap gap-1">
+              {UPS_SIGNATURE_OPTIONS.map((opt) => (
+                <button
+                  type="button"
+                  key={opt.code || "none"}
+                  onClick={() => setUpsSignatureOption(opt.code)}
+                  className={`rounded-md px-2 py-1 text-[11px] font-medium transition ${
+                    upsSignatureOption === opt.code
+                      ? "bg-brand-navy-dark text-white"
+                      : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {UPS_CHECKBOX_OPTIONS.map((opt) => (
+                <label key={opt.code} className="flex cursor-pointer items-center gap-1 text-[11px] text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={upsOptionalServices.has(opt.code)}
+                    onChange={() => toggleUpsOptionalService(opt.code)}
+                    className="h-3 w-3 rounded border-slate-300 text-brand-navy focus:ring-brand-navy/30"
+                  />
+                  {opt.label}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          <p className="font-semibold text-slate-700">Commercial Invoice</p>
+          <p className="mt-0.5">
+            กรอกรายการสินค้าตามจริง (อย่างน้อย 1 รายการ) — ระบบจะส่งเป็นข้อมูลศุลกากรให้ Carrier
+            เอง (บังคับตาม DHL/UPS schema) และแนบไฟล์ Invoice ของคุณเป็นเอกสารเสริมได้ด้านล่าง
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-3">
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full min-w-[940px] border-collapse text-left text-xs">
+                <thead className="bg-gradient-to-r from-brand-navy-dark to-brand-navy text-[11px] uppercase text-white/90">
+                  <tr>
+                    <th className="whitespace-nowrap px-2 py-1 font-medium">Description</th>
+                    <th className="w-16 whitespace-nowrap px-2 py-1 font-medium text-right">Qty</th>
+                    <th className="w-32 whitespace-nowrap px-2 py-1 font-medium text-right">Unit Value (THB)</th>
+                    <th className="w-24 whitespace-nowrap px-2 py-1 font-medium text-right">Weight (kg)</th>
+                    <th className="w-36 whitespace-nowrap px-2 py-1 font-medium">Country of Origin</th>
+                    <th className="w-28 whitespace-nowrap px-2 py-1 font-medium">HS Code</th>
+                    <th className="w-24 whitespace-nowrap px-2 py-1 font-medium text-right">Amount</th>
+                    <th className="w-8 px-1 py-1"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoiceLines.map((line, idx) => (
+                    <tr key={line.key} className="border-b border-slate-100 last:border-0">
+                      <td className="px-1 py-0.5">
+                        <input
+                          type="text"
+                          value={line.description}
+                          onChange={(e) => updateInvoiceLine(line.key, { description: e.target.value })}
+                          placeholder={`e.g. Cotton T-Shirts`}
+                          className="w-full min-w-[160px] rounded border border-transparent bg-transparent px-1.5 py-1 text-xs outline-none focus:border-brand-navy focus:bg-white focus:ring-1 focus:ring-brand-navy/20"
+                        />
+                      </td>
+                      <td className="px-1 py-0.5">
+                        <input
+                          type="number"
+                          min={0.01}
+                          value={line.quantity}
+                          onChange={(e) => updateInvoiceLine(line.key, { quantity: Number(e.target.value) })}
+                          className="w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-right text-xs outline-none focus:border-brand-navy focus:bg-white focus:ring-1 focus:ring-brand-navy/20"
+                        />
+                      </td>
+                      <td className="px-1 py-0.5">
+                        <input
+                          type="number"
+                          min={0}
+                          value={line.unit_value}
+                          onChange={(e) => updateInvoiceLine(line.key, { unit_value: e.target.value })}
+                          className="w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-right text-xs outline-none focus:border-brand-navy focus:bg-white focus:ring-1 focus:ring-brand-navy/20"
+                        />
+                      </td>
+                      <td className="px-1 py-0.5">
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.01}
+                          value={line.weight}
+                          onChange={(e) => updateInvoiceLine(line.key, { weight: e.target.value })}
+                          placeholder="0.00"
+                          className="w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-right text-xs outline-none focus:border-brand-navy focus:bg-white focus:ring-1 focus:ring-brand-navy/20"
+                        />
+                      </td>
+                      <td className="px-1 py-0.5">
+                        <CountrySelect
+                          value={line.country_of_origin}
+                          onChange={(code) => updateInvoiceLine(line.key, { country_of_origin: code })}
+                          compact
+                          alwaysInclude={["TH"]}
+                        />
+                      </td>
+                      <td className="px-1 py-0.5">
+                        <input
+                          type="text"
+                          value={line.hs_code}
+                          onChange={(e) => updateInvoiceLine(line.key, { hs_code: e.target.value })}
+                          placeholder="ถ้ามี"
+                          className="w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-xs outline-none focus:border-brand-navy focus:bg-white focus:ring-1 focus:ring-brand-navy/20"
+                        />
+                      </td>
+                      <td className="px-2 py-0.5 text-right font-medium text-slate-700">
+                        {(line.quantity * (Number(line.unit_value) || 0)).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="px-1 py-0.5 text-right">
+                        <button
+                          type="button"
+                          onClick={() => removeInvoiceLine(line.key)}
+                          disabled={invoiceLines.length <= 1}
+                          className="rounded p-1 text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-30"
+                          aria-label="Remove line"
+                          title={`Remove line ${idx + 1}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colSpan={6} className="border-t border-slate-200 px-2 py-1.5 text-right text-xs font-semibold text-slate-500">
+                      รวมมูลค่าสินค้าทั้งหมด
+                    </td>
+                    <td className="border-t border-slate-200 px-2 py-1.5 text-right text-xs font-bold text-brand-navy-dark">
+                      {invoiceLinesTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </td>
+                    <td className="border-t border-slate-200" />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setInvoiceLines((prev) => [...prev, newInvoiceLine()])}
+              className="flex items-center gap-1 self-start text-sm font-medium text-amber-600 hover:underline"
+            >
+              <Plus className="h-4 w-4" /> เพิ่มรายการ
+            </button>
+          </div>
+
+          <div className="mt-4 flex flex-col gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/50 p-3">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold text-slate-700">
+                ไฟล์ Commercial Invoice (เสริม — PDF/JPG/PNG)
+              </span>
+              <span className="text-[11px] text-slate-500">
+                ถ้าคุณมีไฟล์ Invoice ของบริษัทเอง แนบที่นี่ได้ — ไม่แทนที่ข้อมูลรายการสินค้าด้านบน
+                (บังคับต้องกรอกทั้งคู่) ไฟล์นี้จะถูกส่งให้ carrier รับทราบทางอิเล็กทรอนิกส์จริง: DHL
+                รับเป็นเอกสารแนบ (documentImages CIN) ในคำขอสร้าง Shipment เดียวกัน, UPS อัปโหลดเข้า
+                Paperless Document แล้วผูกกับ Shipment ให้ขึ้น EDI-IDIS บนใบส่ง — ขนาดไฟล์ไม่เกิน 5MB
+              </span>
+              <input
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png"
+                onChange={(e) => handleInvoiceFileChange(e.target.files?.[0] ?? null)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1 file:text-xs file:font-semibold"
+              />
+            </label>
+            {uploadingInvoiceFile && <p className="text-xs text-slate-400">กำลังอัปโหลด...</p>}
+            {invoiceUploadError && <p className="text-xs text-red-600">{invoiceUploadError}</p>}
+            {invoiceUploadKey && !uploadingInvoiceFile && (
+              <p className="text-xs font-medium text-emerald-600">
+                อัปโหลดสำเร็จ: {invoiceFile?.name} — จะแนบไปกับ Shipment นี้เป็นเอกสารเสริม
+              </p>
+            )}
+          </div>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => setStep(2)}
+          className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+        >
+          <ChevronLeft className="h-4 w-4" /> Back
+        </button>
+        <button
+          type="button"
+          onClick={() => setStep(4)}
+          disabled={uploadingInvoiceFile}
+          className="flex items-center gap-2 rounded-lg bg-brand-amber px-6 py-2.5 text-sm font-semibold text-brand-navy-dark shadow-sm hover:bg-brand-amber/90 disabled:opacity-60"
+        >
+          Next <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+        </div>
+
+        <div className="lg:col-span-1">{orderSummaryPanel}</div>
+      </div>
+        </>
+      )}
+
+      {step === 5 && (
         <>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="flex flex-col gap-4 lg:col-span-2">
@@ -2971,7 +3477,7 @@ export default function ShipmentCreatePage() {
       <div className="flex items-center justify-between">
         <button
           type="button"
-          onClick={() => setStep(3)}
+          onClick={() => setStep(4)}
           className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
         >
           <ChevronLeft className="h-4 w-4" /> Back
@@ -2996,7 +3502,7 @@ export default function ShipmentCreatePage() {
         </>
       )}
 
-      {step === 3 && (
+      {step === 4 && (
         <>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="flex flex-col gap-4 lg:col-span-2">
@@ -3283,14 +3789,14 @@ export default function ShipmentCreatePage() {
       <div className="flex items-center justify-between">
         <button
           type="button"
-          onClick={() => setStep(2)}
+          onClick={() => setStep(3)}
           className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
         >
           <ChevronLeft className="h-4 w-4" /> Back
         </button>
         <button
           type="button"
-          onClick={() => setStep(4)}
+          onClick={() => setStep(5)}
           className="flex items-center gap-2 rounded-lg bg-brand-amber px-6 py-2.5 text-sm font-semibold text-brand-navy-dark shadow-sm hover:bg-brand-amber/90"
         >
           Next <ChevronRight className="h-4 w-4" />
@@ -3435,22 +3941,104 @@ export default function ShipmentCreatePage() {
                   </div>
                 </div>
 
+                {(() => {
+                  const hasLabel = isMultiPiece
+                    ? pieces.some((p) => p.label_storage_key)
+                    : !!bookedShipment.label_storage_key;
+                  // Both carriers now build a DIY Waybill (Shipper's Copy) on-the-fly from the
+                  // label — see ShipmentController::buildDhlDiyWaybill / buildUpsDiyWaybill —
+                  // so it's available any time a label exists, regardless of carrier.
+                  const hasWaybill = hasLabel;
+                  const hasInvoice = !!bookedShipment.commercial_invoice_storage_key;
+
+                  const checklist: { label: string; done: boolean }[] = [
+                    { label: `ส่งคำขอจอง Shipment ไปยัง ${bookedShipment.carrier} API`, done: true },
+                    { label: "ได้รับเลข Tracking Number กลับมา", done: !!bookedShipment.tracking_number },
+                    { label: "บันทึกข้อมูล Shipment เข้าระบบ MADD", done: true },
+                    { label: "ดึงเอกสาร Label (ใบปะหน้ากล่อง)", done: hasLabel },
+                    { label: "ดึงเอกสาร Waybill (Shipper's Copy)", done: hasWaybill },
+                    { label: "ดึงเอกสาร Commercial Invoice (ใบกำกับสินค้าศุลกากร)", done: hasInvoice },
+                  ];
+
+                  const documents: { label: string; icon: typeof FileText; onOpen: () => void; loading: boolean }[] = [
+                    ...(hasLabel
+                      ? [
+                          isMultiPiece
+                            ? { label: `Shipping Label (รวม ${pieces.length} กล่อง)`, icon: Package, onOpen: handleOpenAllLabels, loading: openingAllLabels }
+                            : { label: "Shipping Label", icon: Package, onOpen: handleOpenLabel, loading: openingLabel },
+                        ]
+                      : []),
+                    ...(hasWaybill
+                      ? [{ label: "Waybill (Shipper's Copy)", icon: FileText, onOpen: handleOpenWaybill, loading: openingWaybill }]
+                      : []),
+                    ...(hasInvoice
+                      ? [{ label: "Commercial Invoice", icon: Receipt, onOpen: handleOpenCommercialInvoice, loading: openingInvoice }]
+                      : []),
+                  ];
+
+                  return (
+                    <>
+                      <div className="rounded-xl border border-slate-200">
+                        <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2.5">
+                          <ListChecks className="h-4 w-4 text-slate-500" />
+                          <h3 className="text-sm font-semibold text-slate-800">ขั้นตอนที่ระบบดำเนินการ</h3>
+                        </div>
+                        <div className="divide-y divide-slate-100">
+                          {checklist.map((item, i) => (
+                            <div key={i} className="flex items-center justify-between gap-3 px-4 py-2">
+                              <div className="flex items-center gap-2">
+                                {item.done ? (
+                                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+                                ) : (
+                                  <MinusCircle className="h-4 w-4 shrink-0 text-slate-300" />
+                                )}
+                                <span className="text-xs text-slate-700">{item.label}</span>
+                              </div>
+                              <span className={`shrink-0 text-[11px] font-semibold ${item.done ? "text-emerald-600" : "text-slate-400"}`}>
+                                {item.done ? "Success" : "ไม่มีเอกสารนี้"}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {documents.length > 0 && (
+                        <div className="rounded-xl border border-slate-200">
+                          <div className="border-b border-slate-100 px-4 py-2.5">
+                            <h3 className="text-sm font-semibold text-slate-800">เอกสารที่ได้รับ ({documents.length})</h3>
+                          </div>
+                          <div className="divide-y divide-slate-100">
+                            {documents.map((doc, i) => (
+                              <div key={i} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                                <div className="flex items-center gap-2.5">
+                                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-navy/10">
+                                    <doc.icon className="h-4 w-4 text-brand-navy-dark" />
+                                  </div>
+                                  <span className="text-sm font-medium text-slate-700">{doc.label}</span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={doc.onOpen}
+                                  disabled={doc.loading}
+                                  className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-60"
+                                >
+                                  {doc.loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
+                                  เปิดดู
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+
                 <div className="rounded-xl border border-slate-200">
                   <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5">
                     <h3 className="text-sm font-semibold text-slate-800">
                       Tracking Number{isMultiPiece ? ` (${pieces.length} กล่อง)` : ""}
                     </h3>
-                    {!isMultiPiece && bookedShipment.label_storage_key && (
-                      <button
-                        type="button"
-                        onClick={handleOpenLabel}
-                        disabled={openingLabel}
-                        className="flex items-center gap-1.5 rounded-lg bg-brand-navy-dark px-2.5 py-1.5 text-xs font-semibold text-white transition hover:brightness-110 disabled:opacity-60"
-                      >
-                        {openingLabel ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Receipt className="h-3.5 w-3.5" />}
-                        เปิด Label
-                      </button>
-                    )}
                   </div>
                   <div className="divide-y divide-slate-100">
                     {pieces.length > 0 ? (

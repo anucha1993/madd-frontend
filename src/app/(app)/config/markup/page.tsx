@@ -205,7 +205,8 @@ export default function ConfigMarkupPage() {
   // Swaps {CODE} references for their human-readable label, purely for display.
   function describeFormula(formula: string): string {
     return formula.replace(/\{([^{}]+)\}/g, (_match, code) => {
-      const match = chargeCodes.find((c) => c.code === code.trim());
+      const trimmed = code.trim();
+      const match = chargeCodes.find((c) => c.code === trimmed);
       return match ? match.label : code;
     });
   }

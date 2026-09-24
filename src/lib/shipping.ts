@@ -26,6 +26,8 @@ export type CheckRateInput = {
   destination_company?: string;
   destination_country: string;
   destination_city: string;
+  // Required by UPS's real booking API (not the Rate API) for US/CA ship-to addresses.
+  destination_state?: string;
   destination_postcode?: string;
   destination_address?: string;
   destination_address2?: string;
@@ -39,6 +41,13 @@ export type CheckRateInput = {
   agent_account_ids?: number[];
   // Which carrier(s) to check — omit/empty to check both UPS and DHL (default).
   carriers?: ("UPS" | "DHL")[];
+  // DHL Optional Services (live-verified serviceCodes) — applied to both the rate check and the
+  // real booking so quoted/charged amounts stay consistent. Defaults to ["SF"] (Direct Signature)
+  // server-side if omitted.
+  dhl_optional_services?: string[];
+  // UPS Optional Services (SATURDAY, DCIS1/2/3 signature options, ADDRESSEE_ONLY, DIRECT_ONLY) —
+  // same pattern as dhl_optional_services; defaults to none if omitted.
+  ups_optional_services?: string[];
 };
 
 export type RateChargeLine = {

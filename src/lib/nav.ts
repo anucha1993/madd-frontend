@@ -93,6 +93,8 @@ export const NAV_SECTIONS: NavItem[] = [
       { label: "Users & Permissions", href: "/config/users" },
       { label: "API Integrations", href: "/config/integrations" },
       { label: "Tracking Sync", href: "/config/tracking-sync" },
+      { label: "Report Schedules", href: "/config/report-schedules" },
+      { label: "SMTP Settings (Gmail)", href: "/config/smtp-settings" },
     ],
   },
 ];

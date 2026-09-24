@@ -20,7 +20,7 @@ const RANGE_OPTIONS: { value: ManifestRangePreset; label: string }[] = [
 ];
 
 const COLUMN_LABELS = [
-  "Tracking", "Ref", "Zone", "Act", "Dim", "Pay", "Dest", "Type", "Pkg", "Shipper", "Consignee",
+  "Tracking", "Vol./No.", "Zone", "Act", "Dim", "Pay", "Dest", "Type", "Pkg", "Shipper", "Consignee",
   "Freight", "Sur", "Accs", "Ins.", "Ins-Co", "Metal", "Form", "Other", "Total Charge", "Remark", "Inv.Value",
 ];
 

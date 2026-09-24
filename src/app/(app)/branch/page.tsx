@@ -280,7 +280,8 @@ export default function BranchPage() {
           ) : (
             <div className="flex flex-col gap-4">
               <p className="text-xs text-slate-500">
-                รูปแบบ (Pattern): ใช้ {"{YYYY}"}/{"{YY}"}/{"{MM}"}/{"{DD}"} แทนวันที่ปัจจุบัน และตัวเลขในวงเล็บปีกกา เช่น{" "}
+                รูปแบบ (Pattern): ใช้ {"{YYYY}"}/{"{YYY}"}/{"{YY}"}/{"{MM}"}/{"{DD}"} แทนวันที่ปัจจุบัน (ปี 4/3/2 หลัก, เดือน,
+                วัน) และตัวเลขในวงเล็บปีกกา เช่น{" "}
                 {"{00001}"} คือตัวรันเลขอัตโนมัติ (จำนวนหลัก = ความกว้างของเลขนั้น) เช่น MADD-{"{YY}"}-{"{MM}"}-{"{00001}"}
               </p>
               {docError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{docError}</p>}

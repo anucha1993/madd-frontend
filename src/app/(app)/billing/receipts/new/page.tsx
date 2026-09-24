@@ -6,17 +6,20 @@ import Link from "next/link";
 import { ArrowLeft, Plus, Trash2, X } from "lucide-react";
 import PageLoading from "@/components/ui/PageLoading";
 import CarrierBadge from "@/components/ui/CarrierBadge";
+import BillingCustomerManagerModal from "@/components/config/BillingCustomerManagerModal";
 import { listShipments, getShipment, type Shipment } from "@/lib/shipments";
 import {
   listBillingCustomers,
+  createBillingCustomer,
   formatBillingCustomerAddress,
   type BillingCustomer,
 } from "@/lib/billingCustomers";
+import { searchCustomerAddresses, type CustomerAddressWithCustomer } from "@/lib/customers";
 import {
   previewReceiptLines,
   createReceipt,
   openReceiptPdf,
-  type ReceiptType,
+  type ReceiptPair,
   type ReceiptLineInput,
 } from "@/lib/receipts";
 
@@ -35,6 +38,10 @@ const money = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits
 function extractCarrierTag(description: string): "UPS" | "DHL" | null {
   const match = description.match(/\((UPS|DHL)\)\s*$/);
   return match ? (match[1] as "UPS" | "DHL") : null;
+}
+
+function formatAddressLine(parts: Array<string | null | undefined>): string {
+  return parts.filter(Boolean).join(", ");
 }
 
 function Card({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
@@ -61,8 +68,6 @@ export default function IssueReceiptPage() {
     [searchParams],
   );
 
-  const [docType, setDocType] = useState<ReceiptType>("CASH_RECEIPT");
-
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [lines, setLines] = useState<ReceiptLineInput[]>([]);
   // Set right before collapsing lines via the "Merge into one line" toggle, so pressing it again
@@ -88,11 +93,18 @@ export default function IssueReceiptPage() {
   const [billingCustomerId, setBillingCustomerId] = useState<number | null>(null);
   const [customerQuery, setCustomerQuery] = useState("");
   const [customerResults, setCustomerResults] = useState<BillingCustomer[]>([]);
+  // Search results from the Shipment side's Customer/CustomerAddress directory — lets staff pick
+  // a buyer that's already on file for booking shipments even if it has no Tax Invoice Customer
+  // record yet (one gets auto-saved on submit via autoSaveBillingCustomer()).
+  const [customerAddressResults, setCustomerAddressResults] = useState<CustomerAddressWithCustomer[]>([]);
+  // Which source tab the Buyer picker dropdown is currently showing results from.
+  const [customerSearchScope, setCustomerSearchScope] = useState<"billing" | "shipment">("billing");
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
+  const [showCustomerManager, setShowCustomerManager] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
-  const [successReceiptId, setSuccessReceiptId] = useState<number | null>(null);
+  const [successPair, setSuccessPair] = useState<ReceiptPair | null>(null);
 
   // Fetches shipment summaries + re-runs the suggested-lines grouping for the given id set —
   // used both for the initial load and whenever shipments are added/removed via the picker below
@@ -112,11 +124,9 @@ export default function IssueReceiptPage() {
     setLines(preview.lines.map((l) => ({ description: l.description, is_non_vat: l.is_non_vat, amount: l.amount })));
     setPreMergeLines(null);
     setTargetTotal(preview.target_total);
-    if (docType === "CASH_RECEIPT") {
-      setBuyerName(preview.cash_receipt_buyer_suggestion.name.toUpperCase());
-      setBuyerTaxId(preview.cash_receipt_buyer_suggestion.tax_id ?? "");
-      setBuyerAddress(preview.cash_receipt_buyer_suggestion.address.toUpperCase());
-    }
+    setBuyerName(preview.buyer_suggestion.name.toUpperCase());
+    setBuyerTaxId(preview.buyer_suggestion.tax_id ?? "");
+    setBuyerAddress(preview.buyer_suggestion.address.toUpperCase());
   }
 
   useEffect(() => {
@@ -129,15 +139,21 @@ export default function IssueReceiptPage() {
   }, []);
 
   useEffect(() => {
-    if (docType !== "TAX_INVOICE" || customerQuery.trim().length < 2) {
+    if (customerQuery.trim().length < 2) {
       setCustomerResults([]);
+      setCustomerAddressResults([]);
       return;
     }
     const timeout = setTimeout(() => {
-      listBillingCustomers({ q: customerQuery }).then((res) => setCustomerResults(res.data));
+      Promise.all([listBillingCustomers({ q: customerQuery }), searchCustomerAddresses(customerQuery)]).then(
+        ([billing, addresses]) => {
+          setCustomerResults(billing.data);
+          setCustomerAddressResults(addresses);
+        },
+      );
     }, 250);
     return () => clearTimeout(timeout);
-  }, [customerQuery, docType]);
+  }, [customerQuery]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -186,6 +202,20 @@ export default function IssueReceiptPage() {
     setCustomerDropdownOpen(false);
   }
 
+  // Picking a Shipment-side Customer address — not yet a Tax Invoice Customer record, so
+  // billingCustomerId stays null (autoSaveBillingCustomer() creates one on submit if needed).
+  function selectCustomerAddress(a: CustomerAddressWithCustomer) {
+    const name = a.company_name || a.customer?.name || a.contact_name;
+    setBillingCustomerId(null);
+    setBuyerName(name.toUpperCase());
+    setBuyerTaxId(a.tax_id ?? "");
+    setBuyerAddress(formatAddressLine([a.address1, a.address2, a.address3, a.city, a.postcode, a.country]).toUpperCase());
+    setBuyerIsHeadOffice(true);
+    setBuyerBranchNo("");
+    setCustomerQuery(name);
+    setCustomerDropdownOpen(false);
+  }
+
   function mergeIntoOneLine() {
     // Toggle: merge collapses the current itemized lines into one, remembering them; pressing
     // again while merged restores exactly what was there before instead of just re-suggesting.
@@ -216,46 +246,72 @@ export default function IssueReceiptPage() {
   // vat-marked lines for the Tax Invoice's legal breakdown, never added on top, so Grand Total
   // always equals exactly what was entered (matches the shipment's sell price with no markup).
   const vatInclusiveAmount = useMemo(
-    () => (docType === "TAX_INVOICE" ? lines.filter((l) => !l.is_non_vat).reduce((s, l) => s + (Number(l.amount) || 0), 0) : 0),
-    [lines, docType],
+    () => lines.filter((l) => !l.is_non_vat).reduce((s, l) => s + (Number(l.amount) || 0), 0),
+    [lines],
   );
-  const subtotalNonVat = docType === "TAX_INVOICE" ? linesTotal - vatInclusiveAmount : 0;
-  const subtotalVat = docType === "TAX_INVOICE" ? Math.round((vatInclusiveAmount / 1.07) * 100) / 100 : 0;
-  const vatAmount = docType === "TAX_INVOICE" ? Math.round((vatInclusiveAmount - subtotalVat) * 100) / 100 : 0;
-  const grandTotal = docType === "TAX_INVOICE" ? Math.round((subtotalNonVat + subtotalVat + vatAmount) * 100) / 100 : linesTotal;
+  const subtotalNonVat = linesTotal - vatInclusiveAmount;
+  const subtotalVat = Math.round((vatInclusiveAmount / 1.07) * 100) / 100;
+  const vatAmount = Math.round((vatInclusiveAmount - subtotalVat) * 100) / 100;
+  const grandTotal = Math.round((subtotalNonVat + subtotalVat + vatAmount) * 100) / 100;
 
-  const totalsMatch = targetTotal != null && Math.abs(linesTotal - targetTotal) <= 0.01;
-  // Matches the backend's actual rules (ReceiptController::store) — billing_customer_id is only
-  // ever an optional convenience link, buyer_name/tax_id/address are always free text either way,
-  // so picking an existing Tax Invoice customer from the search box must NOT be required to submit.
-  const canSubmit = shipments.length > 0 && lines.length > 0 && totalsMatch && buyerName.trim().length > 0;
+  // Line total no longer has to match the shipments' sell price exactly — some customers are
+  // billed more than the shipment cost. The difference is recorded (shipment_total_snapshot on
+  // the saved receipt) and shown here as an informational indicator, never blocks Submit.
+  const variance = targetTotal != null ? Math.round((linesTotal - targetTotal) * 100) / 100 : null;
+  const hasVariance = variance != null && Math.abs(variance) > 0.01;
+  const canSubmit = shipments.length > 0 && lines.length > 0 && buyerName.trim().length > 0;
   const disabledReason =
     shipments.length === 0
       ? "Add at least one shipment"
       : lines.length === 0
         ? "Add at least one line item"
-        : !totalsMatch
-          ? "Line total must match the sell price total"
-          : buyerName.trim().length === 0
-            ? "Enter a buyer name"
-            : null;
+        : buyerName.trim().length === 0
+          ? "Enter a buyer name"
+          : null;
 
-  // Tax Invoice = yellow, Cash Receipt = dark gray — lets staff tell the two apart at a glance.
-  const isTaxInvoice = docType === "TAX_INVOICE";
-  const accentSolid = isTaxInvoice
-    ? "bg-brand-amber text-slate-900 hover:bg-brand-amber/90"
-    : "bg-brand-navy-dark text-white hover:bg-brand-navy-dark/90";
-  const accentTableHead = isTaxInvoice ? "bg-brand-amber text-slate-900" : "bg-brand-navy-dark text-white/90";
-  const accentText = isTaxInvoice ? "text-brand-amber" : "text-brand-navy-dark";
+  // Saves the typed buyer as a reusable Tax Invoice Customer — mirrors autoSaveAddress on the
+  // Create Shipment page: match an existing record by tax_id first (most reliable identifier),
+  // otherwise by exact name, before creating a brand-new one. Never overwrites/edits in place —
+  // those only happen from the Tax Invoice Customers management page.
+  async function autoSaveBillingCustomer() {
+    const name = buyerName.trim();
+    if (!name || billingCustomerId) return;
+
+    const taxId = buyerTaxId.trim();
+    const normText = (v: string) => v.trim().toLowerCase();
+
+    try {
+      let matchId: number | null = null;
+      if (taxId) {
+        const res = await listBillingCustomers({ q: taxId });
+        matchId = res.data.find((c) => c.tax_id && normText(c.tax_id) === normText(taxId))?.id ?? null;
+      }
+      if (!matchId) {
+        const res = await listBillingCustomers({ q: name });
+        matchId = res.data.find((c) => normText(c.name) === normText(name) && normText(c.tax_id ?? "") === normText(taxId))?.id ?? null;
+      }
+      if (matchId) return;
+
+      await createBillingCustomer({
+        name,
+        tax_id: taxId || undefined,
+        is_head_office: buyerIsHeadOffice,
+        branch_no: buyerBranchNo || undefined,
+        address1: buyerAddress.trim() || undefined,
+      });
+    } catch {
+      // Best-effort background save — never block or surface errors on the receipt flow.
+    }
+  }
 
   async function handleSubmit() {
     setSubmitting(true);
     setSubmitError("");
+    void autoSaveBillingCustomer();
     try {
-      const receipt = await createReceipt({
-        type: docType,
+      const pair = await createReceipt({
         shipment_ids: shipments.map((s) => s.id),
-        billing_customer_id: docType === "TAX_INVOICE" ? billingCustomerId : null,
+        billing_customer_id: billingCustomerId,
         buyer_name: buyerName,
         buyer_tax_id: buyerTaxId || null,
         buyer_address: buyerAddress || null,
@@ -264,7 +320,7 @@ export default function IssueReceiptPage() {
         lines,
         vat_rate: 7,
       });
-      setSuccessReceiptId(receipt.id);
+      setSuccessPair(pair);
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Failed to issue document");
     } finally {
@@ -288,28 +344,43 @@ export default function IssueReceiptPage() {
     );
   }
 
-  if (successReceiptId) {
+  if (successPair) {
     return (
       <div className="mx-auto max-w-lg rounded-2xl border border-emerald-200 bg-emerald-50 p-8 text-center shadow-sm">
-        <p className="mb-4 text-sm font-semibold text-emerald-700">
-          {docType === "TAX_INVOICE" ? "Tax Invoice" : "Cash Receipt"} issued successfully (#{successReceiptId})
-        </p>
-        <div className="flex justify-center gap-2">
-          <button
-            type="button"
-            onClick={() => openReceiptPdf(successReceiptId)}
-            className="rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
-          >
-            Open PDF
-          </button>
-          <button
-            type="button"
-            onClick={() => router.push("/billing/receipts")}
-            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            Go to Receipts List
-          </button>
+        <p className="mb-4 text-sm font-semibold text-emerald-700">Cash Receipt &amp; Tax Invoice issued successfully</p>
+        <div className="mb-4 flex flex-col gap-2">
+          <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-white px-3 py-2 text-left text-sm">
+            <span className="text-slate-600">
+              Cash Receipt <span className="font-mono text-xs text-slate-400">{successPair.cash_receipt.vol_no}/{successPair.cash_receipt.no}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => openReceiptPdf(successPair.cash_receipt.id)}
+              className="rounded-lg bg-brand-navy-dark px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-navy-dark/90"
+            >
+              Open PDF
+            </button>
+          </div>
+          <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-white px-3 py-2 text-left text-sm">
+            <span className="text-slate-600">
+              Tax Invoice <span className="font-mono text-xs text-slate-400">{successPair.tax_invoice.vol_no}/{successPair.tax_invoice.no}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => openReceiptPdf(successPair.tax_invoice.id)}
+              className="rounded-lg bg-brand-amber px-3 py-1.5 text-xs font-semibold text-slate-900 hover:bg-brand-amber/90"
+            >
+              Open PDF
+            </button>
+          </div>
         </div>
+        <button
+          type="button"
+          onClick={() => router.push("/billing/receipts")}
+          className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        >
+          Go to Receipts List
+        </button>
       </div>
     );
   }
@@ -325,29 +396,8 @@ export default function IssueReceiptPage() {
           <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <h1 className="text-xl font-bold text-slate-900">
-                New <span className={accentText}>{docType === "TAX_INVOICE" ? "Tax Invoice" : "Cash Receipt"}</span>
+                New <span className="text-brand-navy-dark">Cash Receipt &amp; Tax Invoice</span>
               </h1>
-              <div className="flex gap-2">
-                {(["CASH_RECEIPT", "TAX_INVOICE"] as ReceiptType[]).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => {
-                      setDocType(t);
-                      setBillingCustomerId(null);
-                    }}
-                    className={`rounded-lg px-3.5 py-1.5 text-sm font-semibold transition ${
-                      docType === t
-                        ? t === "TAX_INVOICE"
-                          ? "bg-brand-amber text-slate-900"
-                          : "bg-brand-navy-dark text-white"
-                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                    }`}
-                  >
-                    {t === "CASH_RECEIPT" ? "Cash Receipt" : "Tax Invoice"}
-                  </button>
-                ))}
-              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -396,7 +446,7 @@ export default function IssueReceiptPage() {
                 type="text"
                 value={pickerQuery}
                 onChange={(e) => setPickerQuery(e.target.value)}
-                placeholder="Search unbilled shipments to add..."
+                placeholder="Search unbilled shipments (tracking no., sender, receiver)..."
                 className={fieldClass}
               />
               {pickerResults.length > 0 && (
@@ -425,46 +475,91 @@ export default function IssueReceiptPage() {
           <Card
             title="Buyer"
             right={
-              isTaxInvoice ? (
-                <Link href="/billing/customers" target="_blank" className="text-xs font-medium text-brand-amber hover:underline">
-                  + Manage Customers
-                </Link>
-              ) : undefined
+              <button
+                type="button"
+                onClick={() => setShowCustomerManager(true)}
+                className="text-xs font-medium text-brand-amber hover:underline"
+              >
+                + Manage Customers
+              </button>
             }
           >
-        {isTaxInvoice && (
-          <div className="relative mb-3">
-            <input
-              type="text"
-              value={customerQuery}
-              onFocus={() => setCustomerDropdownOpen(true)}
-              onChange={(e) => {
-                setCustomerQuery(e.target.value);
-                setCustomerDropdownOpen(true);
-                setBillingCustomerId(null);
-              }}
-              onBlur={() => setTimeout(() => setCustomerDropdownOpen(false), 150)}
-              placeholder="Search Tax Invoice customer..."
-              className={fieldClass}
-            />
-            {customerDropdownOpen && customerResults.length > 0 && (
-              <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
-                {customerResults.map((c) => (
+        <div className="mb-2 flex gap-1.5">
+          <button
+            type="button"
+            onClick={() => setCustomerSearchScope("billing")}
+            className={`inline-flex shrink-0 items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide transition ${
+              customerSearchScope === "billing" ? "bg-brand-amber/15 text-brand-amber" : "bg-slate-100 text-slate-400 hover:bg-slate-200"
+            }`}
+          >
+            Tax Invoice Customers
+          </button>
+          <button
+            type="button"
+            onClick={() => setCustomerSearchScope("shipment")}
+            className={`inline-flex shrink-0 items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide transition ${
+              customerSearchScope === "shipment" ? "bg-brand-amber/15 text-brand-amber" : "bg-slate-100 text-slate-400 hover:bg-slate-200"
+            }`}
+          >
+            Shipment Customers
+          </button>
+        </div>
+        <div className="relative mb-3">
+          <input
+            type="text"
+            value={customerQuery}
+            onFocus={() => setCustomerDropdownOpen(true)}
+            onChange={(e) => {
+              setCustomerQuery(e.target.value);
+              setCustomerDropdownOpen(true);
+              setBillingCustomerId(null);
+            }}
+            onBlur={() => setTimeout(() => setCustomerDropdownOpen(false), 150)}
+            placeholder={customerSearchScope === "billing" ? "Search tax invoice customers..." : "Search shipment customers..."}
+            className={fieldClass}
+          />
+          {customerDropdownOpen && (
+            <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+              {customerSearchScope === "billing" ? (
+                customerResults.length > 0 ? (
+                  customerResults.map((c) => (
+                    <button
+                      type="button"
+                      key={`bc-${c.id}`}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => selectBillingCustomer(c)}
+                      className="flex w-full flex-col items-start border-b border-slate-50 px-3 py-2 text-left text-xs last:border-0 hover:bg-slate-50"
+                    >
+                      <span className="font-medium text-slate-700">{c.name}</span>
+                      <span className="text-slate-400">{c.tax_id}</span>
+                    </button>
+                  ))
+                ) : (
+                  <p className="px-3 py-3 text-center text-xs text-slate-400">
+                    {customerQuery.trim().length < 2 ? "Type to search..." : "No matches"}
+                  </p>
+                )
+              ) : customerAddressResults.length > 0 ? (
+                customerAddressResults.map((a) => (
                   <button
                     type="button"
-                    key={c.id}
+                    key={`addr-${a.id}`}
                     onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => selectBillingCustomer(c)}
+                    onClick={() => selectCustomerAddress(a)}
                     className="flex w-full flex-col items-start border-b border-slate-50 px-3 py-2 text-left text-xs last:border-0 hover:bg-slate-50"
                   >
-                    <span className="font-medium text-slate-700">{c.name}</span>
-                    <span className="text-slate-400">{c.tax_id}</span>
+                    <span className="font-medium text-slate-700">{a.company_name || a.customer?.name || a.contact_name}</span>
+                    <span className="text-slate-400">{[a.customer?.name, a.tax_id].filter(Boolean).join(" · ")}</span>
                   </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+                ))
+              ) : (
+                <p className="px-3 py-3 text-center text-xs text-slate-400">
+                  {customerQuery.trim().length < 2 ? "Type to search..." : "No matches"}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="col-span-2 flex flex-col gap-1">
             <span className={labelClass}>Buyer Name</span>
@@ -474,15 +569,28 @@ export default function IssueReceiptPage() {
             <span className={labelClass}>Tax ID</span>
             <input type="text" value={buyerTaxId} onChange={(e) => setBuyerTaxId(e.target.value)} className={fieldClass} />
           </label>
-          <label className="flex items-center gap-2 pt-5 text-sm text-slate-600">
-            <input
-              type="checkbox"
-              checked={buyerIsHeadOffice}
-              onChange={(e) => setBuyerIsHeadOffice(e.target.checked)}
-              className="h-4 w-4 rounded border-slate-300 accent-brand-amber"
-            />
-            Head Office
-          </label>
+          <div className="flex items-center gap-4 pt-5 text-sm text-slate-600">
+            <label className="flex items-center gap-1.5">
+              <input
+                type="radio"
+                name="buyer-office-scope"
+                checked={buyerIsHeadOffice}
+                onChange={() => setBuyerIsHeadOffice(true)}
+                className="h-4 w-4 accent-brand-amber"
+              />
+              Head Office
+            </label>
+            <label className="flex items-center gap-1.5">
+              <input
+                type="radio"
+                name="buyer-office-scope"
+                checked={!buyerIsHeadOffice}
+                onChange={() => setBuyerIsHeadOffice(false)}
+                className="h-4 w-4 accent-brand-amber"
+              />
+              Branch
+            </label>
+          </div>
           {!buyerIsHeadOffice && (
             <label className="flex flex-col gap-1">
               <span className={labelClass}>Branch No.</span>
@@ -505,13 +613,13 @@ export default function IssueReceiptPage() {
         title="Line Items"
         right={
           <div className="flex gap-3">
-            <button type="button" onClick={mergeIntoOneLine} className={`text-xs font-semibold hover:underline ${accentText}`}>
+            <button type="button" onClick={mergeIntoOneLine} className="text-xs font-semibold text-brand-navy-dark hover:underline">
               {preMergeLines ? "Split into itemized lines" : "Merge into one line"}
             </button>
             <button
               type="button"
               onClick={addLine}
-              className={`flex items-center gap-1 text-xs font-semibold hover:underline ${accentText}`}
+              className="flex items-center gap-1 text-xs font-semibold text-brand-navy-dark hover:underline"
             >
               <Plus className="h-3.5 w-3.5" /> Add Line
             </button>
@@ -520,11 +628,11 @@ export default function IssueReceiptPage() {
       >
         <div className="overflow-hidden rounded-lg border border-slate-200">
           <table className="w-full text-left text-sm">
-            <thead className={`text-xs uppercase ${accentTableHead}`}>
+            <thead className="bg-brand-navy-dark text-xs uppercase text-white/90">
               <tr>
                 <th className="w-auto px-3 py-2 font-medium">Description</th>
-                {docType === "TAX_INVOICE" && <th className="w-32 px-3 py-2 font-medium">Invoice No.</th>}
-                {docType === "TAX_INVOICE" && <th className="w-16 px-3 py-2 text-center font-medium">Non-VAT</th>}
+                <th className="w-32 px-3 py-2 font-medium">Invoice No.</th>
+                <th className="w-16 px-3 py-2 text-center font-medium">Non-VAT</th>
                 <th className="w-32 px-3 py-2 text-right font-medium">Amount</th>
                 <th className="w-10 px-3 py-2"></th>
               </tr>
@@ -543,27 +651,23 @@ export default function IssueReceiptPage() {
                       />
                     </div>
                   </td>
-                  {docType === "TAX_INVOICE" && (
-                    <td className="px-3 py-1.5">
-                      <input
-                        type="text"
-                        value={line.invoice_no ?? ""}
-                        onChange={(e) => updateLine(index, { invoice_no: e.target.value })}
-                        placeholder="optional"
-                        className={underlineClass}
-                      />
-                    </td>
-                  )}
-                  {docType === "TAX_INVOICE" && (
-                    <td className="px-3 py-1.5 text-center">
-                      <input
-                        type="checkbox"
-                        checked={line.is_non_vat ?? false}
-                        onChange={(e) => updateLine(index, { is_non_vat: e.target.checked })}
-                        className="h-4 w-4 accent-brand-amber"
-                      />
-                    </td>
-                  )}
+                  <td className="px-3 py-1.5">
+                    <input
+                      type="text"
+                      value={line.invoice_no ?? ""}
+                      onChange={(e) => updateLine(index, { invoice_no: e.target.value })}
+                      placeholder="optional"
+                      className={underlineClass}
+                    />
+                  </td>
+                  <td className="px-3 py-1.5 text-center">
+                    <input
+                      type="checkbox"
+                      checked={line.is_non_vat ?? false}
+                      onChange={(e) => updateLine(index, { is_non_vat: e.target.checked })}
+                      className="h-4 w-4 accent-brand-amber"
+                    />
+                  </td>
                   <td className="px-3 py-1.5">
                     <input
                       type="number"
@@ -585,29 +689,29 @@ export default function IssueReceiptPage() {
 
         <div className="mt-3 flex justify-end">
           <div className="w-full max-w-xs space-y-1 text-sm">
-            {docType === "TAX_INVOICE" && (
-              <>
-                <div className="flex justify-between text-slate-500">
-                  <span>Subtotal (VAT)</span>
-                  <span>{money(subtotalVat)}</span>
-                </div>
-                <div className="flex justify-between text-slate-500">
-                  <span>Subtotal (Non-VAT)</span>
-                  <span>{money(subtotalNonVat)}</span>
-                </div>
-                <div className="flex justify-between text-slate-500">
-                  <span>VAT 7%</span>
-                  <span>{money(vatAmount)}</span>
-                </div>
-              </>
-            )}
+            <div className="flex justify-between text-slate-500">
+              <span>Subtotal (VAT)</span>
+              <span>{money(subtotalVat)}</span>
+            </div>
+            <div className="flex justify-between text-slate-500">
+              <span>Subtotal (Non-VAT)</span>
+              <span>{money(subtotalNonVat)}</span>
+            </div>
+            <div className="flex justify-between text-slate-500">
+              <span>VAT 7%</span>
+              <span>{money(vatAmount)}</span>
+            </div>
             <div className="flex justify-between border-t border-slate-200 pt-1.5 text-base font-bold text-slate-800">
               <span>Grand Total</span>
               <span>{money(grandTotal)}</span>
             </div>
-            <p className={`text-right text-xs ${totalsMatch ? "text-emerald-600" : "text-red-600"}`}>
-              Lines {money(linesTotal)} / Sell Price {targetTotal != null ? money(targetTotal) : "-"}{" "}
-              {totalsMatch ? "✓ Matched" : "✗ Not matched"}
+            <p className={`text-right text-xs ${hasVariance ? "text-amber-600" : "text-slate-400"}`}>
+              Lines {money(linesTotal)} / Sell Price {targetTotal != null ? money(targetTotal) : "-"}
+              {hasVariance && variance != null && (
+                <> — ส่วนต่าง {variance > 0 ? "+" : ""}
+                  {money(variance)}
+                </>
+              )}
             </p>
           </div>
         </div>
@@ -623,11 +727,21 @@ export default function IssueReceiptPage() {
           type="button"
           onClick={handleSubmit}
           disabled={!canSubmit || submitting}
-          className={`rounded-lg px-6 py-2.5 text-sm font-semibold disabled:opacity-50 ${accentSolid}`}
+          className="rounded-lg bg-brand-navy-dark px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-navy-dark/90 disabled:opacity-50"
         >
-          {submitting ? "Issuing..." : `Issue ${docType === "TAX_INVOICE" ? "Tax Invoice" : "Cash Receipt"}`}
+          {submitting ? "Issuing..." : "Issue Cash Receipt & Tax Invoice"}
         </button>
       </div>
+
+      {showCustomerManager && (
+        <BillingCustomerManagerModal
+          onClose={() => setShowCustomerManager(false)}
+          onSelect={(c) => {
+            selectBillingCustomer(c);
+            setShowCustomerManager(false);
+          }}
+        />
+      )}
     </div>
   );
 }

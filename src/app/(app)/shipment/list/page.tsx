@@ -21,12 +21,15 @@ import {
   Plus,
   MoreVertical,
   Trash2,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import PageLoading from "@/components/ui/PageLoading";
 import CarrierBadge from "@/components/ui/CarrierBadge";
 import SchedulePickupModal from "@/components/pickup/SchedulePickupModal";
 import { getUser } from "@/lib/auth";
+import { listManifestOptions, type ManifestOption } from "@/lib/manifestOptions";
 import {
   listShipments,
   getShipmentStats,
@@ -78,11 +81,16 @@ export default function ShipmentListPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [carrier, setCarrier] = useState<"" | "UPS" | "DHL">("");
+  const [customerType, setCustomerType] = useState("");
+  const [customerTypeOptions, setCustomerTypeOptions] = useState<ManifestOption[]>([]);
   // Quick date-range presets, plus a manual from/to pair for a custom range — "" (All time) means
   // no date filter at all. Picking a manual date clears the quick preset and vice versa.
   const [quickRange, setQuickRange] = useState<"" | "today" | "week" | "month">("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [page, setPage] = useState(1);
+  const [lastPage, setLastPage] = useState(1);
+  const [total, setTotal] = useState(0);
   const [stats, setStats] = useState<ShipmentStats | null>(null);
   const [openingLabelId, setOpeningLabelId] = useState<number | null>(null);
   // All per-row actions live behind a single dropdown, keyed by shipment id (only one open at a
@@ -126,7 +134,7 @@ export default function ShipmentListPage() {
     };
   }, [actionsMenuId]);
 
-  async function load(overrides?: { date_from?: string; date_to?: string }) {
+  async function load(overrides?: { date_from?: string; date_to?: string; page?: number }) {
     setLoading(true);
     setError("");
     try {
@@ -134,15 +142,26 @@ export default function ShipmentListPage() {
         search: search.trim() || undefined,
         status: status || undefined,
         carrier: carrier || undefined,
+        customer_type: customerType || undefined,
         date_from: (overrides?.date_from ?? dateFrom) || undefined,
         date_to: (overrides?.date_to ?? dateTo) || undefined,
+        page: overrides?.page ?? page,
       });
       setShipments(res.data);
+      setLastPage(res.last_page);
+      setTotal(res.total);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load shipments");
     } finally {
       setLoading(false);
     }
+  }
+
+  // Any filter change starts back over at page 1 — otherwise a narrower result set could leave
+  // the list stuck on a now out-of-range page.
+  function handleSearch() {
+    setPage(1);
+    load({ page: 1 });
   }
 
   // KPI cards always reflect today/this-month totals regardless of whatever list filters are
@@ -157,10 +176,21 @@ export default function ShipmentListPage() {
 
   useEffect(() => {
     setName(getUser()?.name ?? "");
-    load();
     loadStats();
+    listManifestOptions("customer_type")
+      .then((opts) => setCustomerTypeOptions(opts.filter((o) => o.status)))
+      .catch(() => {
+        // Non-critical — the filter dropdown just stays empty if this fails.
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Prev/Next only ever change `page` — reload whenever it does. This also covers the initial
+  // mount load (page starts at 1).
+  useEffect(() => {
+    load({ page });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
 
   // Quick presets fill in dateFrom/dateTo (Y-m-d) and immediately reload (passing the computed
   // dates directly to load() to avoid a stale-state race) — picking a manual date input instead
@@ -184,7 +214,8 @@ export default function ShipmentListPage() {
     }
     setDateFrom(from);
     setDateTo(to);
-    load({ date_from: from, date_to: to });
+    setPage(1);
+    load({ date_from: from, date_to: to, page: 1 });
   }
 
   async function handleViewLabel(shipment: Shipment) {
@@ -251,7 +282,10 @@ export default function ShipmentListPage() {
   }
 
   async function handleOpenDocument(shipment: Shipment, kind: "waybill" | "invoice") {
-    const storageKey = kind === "waybill" ? shipment.waybill_storage_key : shipment.commercial_invoice_storage_key;
+    // Waybill is built on-the-fly from label_storage_key (DIY Shipper's Copy) — see
+    // ShipmentController::buildDhlDiyWaybill / buildUpsDiyWaybill. Invoice comes from
+    // commercial_invoice_storage_key stored by the carrier.
+    const storageKey = kind === "waybill" ? shipment.label_storage_key : shipment.commercial_invoice_storage_key;
     if (!storageKey) return;
     const key = `${shipment.id}:${kind}`;
     setOpeningDocKey(key);
@@ -401,8 +435,8 @@ export default function ShipmentListPage() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && load()}
-            placeholder="Tracking No."
+            onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+            placeholder="Tracking No. / Sender / Receiver"
             className="w-56 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
           />
         </label>
@@ -429,6 +463,21 @@ export default function ShipmentListPage() {
             <option value="">All</option>
             <option value="UPS">UPS</option>
             <option value="DHL">DHL</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-slate-600">Customer Type</span>
+          <select
+            value={customerType}
+            onChange={(e) => setCustomerType(e.target.value)}
+            className="w-40 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
+          >
+            <option value="">All</option>
+            {customerTypeOptions.map((opt) => (
+              <option key={opt.id} value={opt.code}>
+                {opt.name} ({opt.code})
+              </option>
+            ))}
           </select>
         </label>
         <label className="flex flex-col gap-1.5">
@@ -481,7 +530,7 @@ export default function ShipmentListPage() {
         </div>
         <button
           type="button"
-          onClick={() => load()}
+          onClick={handleSearch}
           className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
         >
           <Search className="h-4 w-4" />
@@ -612,7 +661,14 @@ export default function ShipmentListPage() {
                     )}
                   </td>
                   <td className="px-5 py-3 text-slate-500">
-                    {[s.origin?.contact_name, s.origin?.company].filter(Boolean).join(" · ") || "-"}
+                    <div className="flex flex-col gap-1">
+                      <span>{[s.origin?.contact_name, s.origin?.company].filter(Boolean).join(" · ") || "-"}</span>
+                      {s.customer_type && (
+                        <span className="w-fit rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-600">
+                          {s.customer_type}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-5 py-3 text-slate-500">
                     {[s.destination?.contact_name, s.destination?.city, s.destination?.country].filter(Boolean).join(", ") || "-"}
@@ -738,7 +794,7 @@ export default function ShipmentListPage() {
                               handleOpenDocument(s, "waybill");
                               setActionsMenuId(null);
                             }}
-                            disabled={!s.waybill_storage_key || openingDocKey === `${s.id}:waybill`}
+                            disabled={!s.label_storage_key || openingDocKey === `${s.id}:waybill`}
                             className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                           >
                             {openingDocKey === `${s.id}:waybill` ? (
@@ -746,7 +802,7 @@ export default function ShipmentListPage() {
                             ) : (
                               <Receipt className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                             )}
-                            {s.waybill_storage_key ? "Open UPS Waybill (Shipper's Copy)" : "No Waybill available"}
+                            {s.label_storage_key ? "Open Waybill (Shipper's Copy)" : "No Waybill available"}
                           </button>
                           <button
                             type="button"
@@ -821,6 +877,32 @@ export default function ShipmentListPage() {
           </tbody>
         </table>
       </div>
+      )}
+
+      {!loading && shipments.length > 0 && (
+        <div className="mt-4 flex items-center justify-between text-sm text-slate-500">
+          <span>
+            Page {page} / {lastPage} ({total.toLocaleString()} shipments)
+          </span>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ChevronLeft className="h-4 w-4" /> Previous
+            </button>
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
+              disabled={page >= lastPage}
+              className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Next <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
       )}
 
       {pickupModalOpen && firstSelected && (

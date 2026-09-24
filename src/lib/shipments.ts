@@ -19,12 +19,26 @@ export type BookShipmentPackageInput = {
   insurance_addon_item_id?: number | null;
 };
 
+// Free-form Commercial Invoice product line — NOT tied 1:1 to physical packages, a real invoice
+// usually lists products, not boxes. Used to build DHL's mandatory exportDeclaration.lineItems.
+// `weight` is per-item net weight in kg (matches DHL's own MyDHL+ portal — every manually-typed
+// invoice line item there is REQUIRED to have a weight, not just quantity + unit value).
+export type BookShipmentInvoiceLine = {
+  description: string;
+  quantity: number;
+  unit_value: number;
+  weight?: number;
+  country_of_origin?: string;
+  hs_code?: string;
+};
+
 export type BookShipmentAddonLine = {
   name: string;
   category?: string;
   quantity: number;
   unit_price: number;
 };
+
 
 export type BookShipmentInput = {
   agent_account_id: number;
@@ -49,6 +63,8 @@ export type BookShipmentInput = {
     tax_id?: string;
     country: string;
     city: string;
+    // Required by UPS's real booking API for US/CA ship-to addresses.
+    state?: string;
     postcode?: string;
     address?: string;
     address2?: string;
@@ -59,6 +75,22 @@ export type BookShipmentInput = {
   };
   packages: BookShipmentPackageInput[];
   declared_value_currency?: string;
+  // Commercial Invoice step — invoice_lines is ALWAYS sent (min 1 row) to build the carrier's
+  // mandatory customs declaration (DHL's own MyDHL+ portal proves this is required regardless of
+  // any file attachment). commercial_invoice_upload_key is a SEPARATE, optional supplementary
+  // PDF/image attachment (documentImages typeCode CIN on DHL), not a replacement for the lines.
+  // `invoice_mode` is kept only for backward compatibility with saved shipment records — always
+  // defaults to "FORM" now (the previous "UPLOAD" mode was the wrong mental model, see
+  // buildExportDeclaration in DhlShipmentService).
+  invoice_mode?: "FORM" | "UPLOAD";
+  invoice_lines?: BookShipmentInvoiceLine[];
+  commercial_invoice_upload_key?: string | null;
+  // DHL Optional Services (live-verified serviceCodes) — same list sent at Check Rate, kept
+  // consistent through to the real booking. Defaults to ["SF"] (Direct Signature) server-side.
+  dhl_optional_services?: string[];
+  // UPS Optional Services (SATURDAY, DCIS1/2/3 signature options, ADDRESSEE_ONLY, DIRECT_ONLY) —
+  // same pattern as dhl_optional_services; defaults to none if omitted.
+  ups_optional_services?: string[];
   addon_lines?: BookShipmentAddonLine[];
   freight_amount: number;
   addon_total: number;
@@ -201,6 +233,7 @@ export const listShipments = (params?: {
   search?: string;
   carrier?: "UPS" | "DHL";
   status?: string;
+  customer_type?: string;
   page?: number;
   date_from?: string;
   date_to?: string;
@@ -212,6 +245,7 @@ export const listShipments = (params?: {
   if (params?.search) query.set("search", params.search);
   if (params?.carrier) query.set("carrier", params.carrier);
   if (params?.status) query.set("status", params.status);
+  if (params?.customer_type) query.set("customer_type", params.customer_type);
   if (params?.page) query.set("page", String(params.page));
   if (params?.date_from) query.set("date_from", params.date_from);
   if (params?.date_to) query.set("date_to", params.date_to);
@@ -233,6 +267,15 @@ export type ShipmentStats = {
 export const getShipmentStats = () => apiClient.get<ShipmentStats>("/shipments/stats");
 
 export const bookShipment = (data: BookShipmentInput) => apiClient.post<Shipment>("/shipments", data);
+
+// Uploads a staff-provided Commercial Invoice file BEFORE booking (Commercial Invoice step's
+// Upload option) — the returned storage key is then passed as `commercial_invoice_upload_key`
+// in the main bookShipment() call.
+export const uploadCommercialInvoiceFile = (file: File) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiClient.upload<{ storage_key: string }>("/shipments/upload-commercial-invoice", formData);
+};
 
 export const getShipment = (id: number) => apiClient.get<Shipment>(`/shipments/${id}`);
 
@@ -310,31 +353,52 @@ export async function openShipmentLabel(shipmentId: number, trackingNumber?: str
     return;
   }
 
-  if (contentType.startsWith("image/")) {
-    printWindow.document.write(
-      `<!DOCTYPE html><html><head><title>Shipping Label</title><style>
-        html,body{margin:0;height:100%;background:#525659;display:flex;align-items:center;justify-content:center;}
-        img{transform:rotate(90deg);max-width:90vh;max-height:90vw;}
-        @media print{html,body{background:#fff;}}
-      </style></head><body><img id="label-img" src="${url}" /></body></html>`,
-    );
-    printWindow.document.close();
-    const img = printWindow.document.getElementById("label-img") as HTMLImageElement | null;
-    if (img) img.onload = () => printWindow.print();
-  } else {
-    printWindow.document.write(
-      `<!DOCTYPE html><html><head><title>Shipping Label</title><style>
-        html,body,iframe{margin:0;padding:0;width:100%;height:100%;border:0;}
-      </style></head><body><iframe id="label-frame" src="${url}"></iframe></body></html>`,
-    );
-    printWindow.document.close();
-    const frame = printWindow.document.getElementById("label-frame") as HTMLIFrameElement | null;
-    if (frame) {
-      frame.onload = () => {
-        frame.contentWindow?.focus();
-        frame.contentWindow?.print();
-      };
+  // The popup can become script-inaccessible during the fetch above (e.g. a browser
+  // extension or process-isolation change re-homes it into another origin/process) — any
+  // access to it then throws a SecurityError even though we opened it ourselves. Fall back
+  // to a plain tab rather than surface that as an app error.
+  try {
+    if (contentType.startsWith("image/")) {
+      // No auto-print here — window.print() opens a native dialog that's modal to the WHOLE
+      // browser window (not just this tab), silently blocking clicks on the main app page until
+      // dismissed. Give the user their own on-screen button so printing only happens if they ask.
+      printWindow.document.write(
+        `<!DOCTYPE html><html><head><title>Shipping Label</title><style>
+          html,body{margin:0;height:100%;background:#525659;display:flex;align-items:center;justify-content:center;}
+          img{transform:rotate(90deg);max-width:90vh;max-height:90vw;}
+          .print-btn{position:fixed;top:12px;right:12px;padding:8px 16px;border:0;border-radius:6px;background:#fff;font-family:system-ui,sans-serif;font-size:14px;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.3);}
+          @media print{.print-btn{display:none;}html,body{background:#fff;}}
+        </style></head><body><button class="print-btn" onclick="window.print()">Print</button><img id="label-img" src="${url}" /></body></html>`,
+      );
+      printWindow.document.close();
+    } else {
+      printWindow.document.write(
+        `<!DOCTYPE html><html><head><title>Shipping Label</title><style>
+          html,body,iframe{margin:0;padding:0;width:100%;height:100%;border:0;}
+        </style></head><body><iframe id="label-frame" src="${url}"></iframe></body></html>`,
+      );
+      printWindow.document.close();
+      const frame = printWindow.document.getElementById("label-frame") as HTMLIFrameElement | null;
+      if (frame) {
+        frame.onload = () => {
+          // Chrome's built-in PDF viewer renders in a non-scriptable context and already has its
+          // own print button in its toolbar — don't auto-print, just try to focus the tab (this
+          // itself throws a SecurityError for the built-in viewer, which is fine to ignore).
+          try {
+            frame.contentWindow?.focus();
+          } catch {
+            // ignore — expected for the built-in PDF viewer
+          }
+        };
+      }
     }
+  } catch {
+    try {
+      printWindow.close();
+    } catch {
+      // already inaccessible/closed — nothing to clean up
+    }
+    window.open(url, "_blank");
   }
 }
 
@@ -365,31 +429,52 @@ async function openShipmentDocument(path: string, title: string, notFoundMessage
     return;
   }
 
-  if (contentType.startsWith("image/")) {
-    printWindow.document.write(
-      `<!DOCTYPE html><html><head><title>${title}</title><style>
-        html,body{margin:0;height:100%;background:#525659;display:flex;align-items:center;justify-content:center;}
-        img{max-width:95vw;max-height:95vh;}
-        @media print{html,body{background:#fff;}}
-      </style></head><body><img id="doc-img" src="${url}" /></body></html>`,
-    );
-    printWindow.document.close();
-    const img = printWindow.document.getElementById("doc-img") as HTMLImageElement | null;
-    if (img) img.onload = () => printWindow.print();
-  } else {
-    printWindow.document.write(
-      `<!DOCTYPE html><html><head><title>${title}</title><style>
-        html,body,iframe{margin:0;padding:0;width:100%;height:100%;border:0;}
-      </style></head><body><iframe id="doc-frame" src="${url}"></iframe></body></html>`,
-    );
-    printWindow.document.close();
-    const frame = printWindow.document.getElementById("doc-frame") as HTMLIFrameElement | null;
-    if (frame) {
-      frame.onload = () => {
-        frame.contentWindow?.focus();
-        frame.contentWindow?.print();
-      };
+  // The popup can become script-inaccessible during the fetch above (e.g. a browser
+  // extension or process-isolation change re-homes it into another origin/process) — any
+  // access to it then throws a SecurityError even though we opened it ourselves. Fall back
+  // to a plain tab rather than surface that as an app error.
+  try {
+    if (contentType.startsWith("image/")) {
+      // No auto-print here — window.print() opens a native dialog that's modal to the WHOLE
+      // browser window (not just this tab), silently blocking clicks on the main app page until
+      // dismissed. Give the user their own on-screen button so printing only happens if they ask.
+      printWindow.document.write(
+        `<!DOCTYPE html><html><head><title>${title}</title><style>
+          html,body{margin:0;height:100%;background:#525659;display:flex;align-items:center;justify-content:center;}
+          img{max-width:95vw;max-height:95vh;}
+          .print-btn{position:fixed;top:12px;right:12px;padding:8px 16px;border:0;border-radius:6px;background:#fff;font-family:system-ui,sans-serif;font-size:14px;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.3);}
+          @media print{.print-btn{display:none;}html,body{background:#fff;}}
+        </style></head><body><button class="print-btn" onclick="window.print()">Print</button><img id="doc-img" src="${url}" /></body></html>`,
+      );
+      printWindow.document.close();
+    } else {
+      printWindow.document.write(
+        `<!DOCTYPE html><html><head><title>${title}</title><style>
+          html,body,iframe{margin:0;padding:0;width:100%;height:100%;border:0;}
+        </style></head><body><iframe id="doc-frame" src="${url}"></iframe></body></html>`,
+      );
+      printWindow.document.close();
+      const frame = printWindow.document.getElementById("doc-frame") as HTMLIFrameElement | null;
+      if (frame) {
+        frame.onload = () => {
+          // Chrome's built-in PDF viewer renders in a non-scriptable context and already has its
+          // own print button in its toolbar — don't auto-print, just try to focus the tab (this
+          // itself throws a SecurityError for the built-in viewer, which is fine to ignore).
+          try {
+            frame.contentWindow?.focus();
+          } catch {
+            // ignore — expected for the built-in PDF viewer
+          }
+        };
+      }
     }
+  } catch {
+    try {
+      printWindow.close();
+    } catch {
+      // already inaccessible/closed — nothing to clean up
+    }
+    window.open(url, "_blank");
   }
 }
 

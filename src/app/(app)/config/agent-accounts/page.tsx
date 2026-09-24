@@ -114,6 +114,8 @@ export default function AgentAccountsPage() {
   const [fixedLoading, setFixedLoading] = useState(false);
   const [fixedError, setFixedError] = useState("");
   const [newFixedCodeId, setNewFixedCodeId] = useState<number | "">("");
+  const [newFixedCodeQuery, setNewFixedCodeQuery] = useState("");
+  const [newFixedCodeDropdownOpen, setNewFixedCodeDropdownOpen] = useState(false);
   const [newFixedAmount, setNewFixedAmount] = useState("");
   const [newFixedUnit, setNewFixedUnit] = useState<"THB" | "PERCENTAGE">("THB");
   const [newOverrideType, setNewOverrideType] = useState<"FIXED" | "FORMULA">("FIXED");
@@ -231,6 +233,8 @@ export default function AgentAccountsPage() {
   async function openFixedCharges(account: AgentAccount) {
     setFixedChargesAccount(account);
     setNewFixedCodeId("");
+    setNewFixedCodeQuery("");
+    setNewFixedCodeDropdownOpen(false);
     setNewFixedAmount("");
     setNewFixedUnit("THB");
     setNewOverrideType("FIXED");
@@ -279,6 +283,7 @@ export default function AgentAccountsPage() {
         formula: newOverrideType === "FORMULA" ? newFormula.trim() : null,
       });
       setNewFixedCodeId("");
+      setNewFixedCodeQuery("");
       setNewFixedAmount("");
       setNewFixedUnit("THB");
       setNewFormula("");
@@ -322,7 +327,8 @@ export default function AgentAccountsPage() {
   // Swaps {CODE} references for their human-readable label, purely for display in the table.
   function describeFormula(formula: string): string {
     return formula.replace(/\{([^{}]+)\}/g, (_match, code) => {
-      const match = fixedChargeCodes.find((c) => c.code === code.trim());
+      const trimmed = code.trim();
+      const match = fixedChargeCodes.find((c) => c.code === trimmed);
       return match ? match.label : code;
     });
   }
@@ -795,22 +801,56 @@ export default function AgentAccountsPage() {
 
                 <div className="flex flex-col gap-2.5 rounded-lg border border-slate-200 bg-slate-50 p-3">
                   <div className="flex flex-wrap items-end gap-3">
-                    <label className="flex flex-1 min-w-[200px] flex-col gap-1.5">
+                    <label className="relative flex flex-1 min-w-[200px] flex-col gap-1.5">
                       <span className="text-xs font-medium text-slate-600">Charge Code</span>
-                      <select
-                        value={newFixedCodeId}
-                        onChange={(e) => setNewFixedCodeId(e.target.value ? Number(e.target.value) : "")}
+                      <input
+                        type="text"
+                        value={
+                          newFixedCodeDropdownOpen
+                            ? newFixedCodeQuery
+                            : (() => {
+                                const selected = fixedChargeCodes.find((c) => c.id === newFixedCodeId);
+                                return selected ? `${selected.label} (${selected.code})` : newFixedCodeQuery;
+                              })()
+                        }
+                        onFocus={() => {
+                          setNewFixedCodeQuery("");
+                          setNewFixedCodeDropdownOpen(true);
+                        }}
+                        onChange={(e) => setNewFixedCodeQuery(e.target.value)}
+                        onBlur={() => setTimeout(() => setNewFixedCodeDropdownOpen(false), 150)}
+                        placeholder="พิมพ์ค้นหา Charge Code..."
                         className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
-                      >
-                        <option value="">Select charge code...</option>
-                        {fixedChargeCodes
-                          .filter((c) => !fixedOverrides.some((o) => o.charge_code_id === c.id))
-                          .map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.label} ({c.code})
-                            </option>
-                          ))}
-                      </select>
+                      />
+                      {newFixedCodeDropdownOpen && (
+                        <div className="absolute top-full z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                          {(() => {
+                            const q = newFixedCodeQuery.trim().toLowerCase();
+                            const options = fixedChargeCodes
+                              .filter((c) => !fixedOverrides.some((o) => o.charge_code_id === c.id))
+                              .filter((c) => !q || `${c.label} ${c.code}`.toLowerCase().includes(q));
+                            if (options.length === 0) {
+                              return <p className="px-3 py-2 text-xs text-slate-400">ไม่พบ Charge Code ที่ตรงกัน</p>;
+                            }
+                            return options.map((c) => (
+                              <button
+                                type="button"
+                                key={c.id}
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() => {
+                                  setNewFixedCodeId(c.id);
+                                  setNewFixedCodeQuery("");
+                                  setNewFixedCodeDropdownOpen(false);
+                                }}
+                                className="block w-full border-b border-slate-50 px-3 py-2 text-left text-xs last:border-0 hover:bg-slate-50"
+                              >
+                                <span className="font-medium text-slate-700">{c.label}</span>{" "}
+                                <span className="text-slate-400">({c.code})</span>
+                              </button>
+                            ));
+                          })()}
+                        </div>
+                      )}
                     </label>
                     <div className="flex gap-1 rounded-lg border border-slate-300 bg-white p-1">
                       <button
@@ -873,7 +913,7 @@ export default function AgentAccountsPage() {
                   ) : (
                     <div className="flex flex-col gap-1.5">
                       <span className="text-xs font-medium text-slate-600">
-                        Formula — คลิก Charge Code ด้านล่างเพื่อแทรก เช่น Excel
+                        Formula — คลิก Charge Code ด้านล่างเพื่อแทรก เช่น Excel (รองรับตัวแปรพิเศษ {"{BILLED_WEIGHT}"}, {"{TOTAL}"} ด้วย)
                       </span>
                       <textarea
                         ref={formulaInputRef}

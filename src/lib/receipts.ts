@@ -19,6 +19,9 @@ export type ReceiptLine = {
 export type Receipt = {
   id: number;
   type: ReceiptType;
+  // Links a Cash Receipt <-> Tax Invoice issued together as one inseparable pair — null for
+  // legacy documents issued before paired-issuance was introduced.
+  receipt_group_id: string | null;
   branch_id: number;
   vol_no: string;
   no: string;
@@ -35,6 +38,11 @@ export type Receipt = {
   vat_amount: string | number;
   grand_total: string | number;
   grand_total_words: string | null;
+  // Sum of the selected shipments' order_total at issue time — null for documents issued before
+  // this was tracked. variance_amount = grand_total - shipment_total_snapshot (positive = buyer
+  // was billed more than the shipment cost, negative = less), also null in that same case.
+  shipment_total_snapshot: string | number | null;
+  variance_amount: string | number | null;
   payment_method: string | null;
   payment_reference: string | null;
   status: "ISSUED" | "VOIDED";
@@ -55,6 +63,13 @@ export type PaginatedReceipts = {
   current_page: number;
   last_page: number;
   total: number;
+};
+
+// Every issuance now always creates BOTH documents together, sharing the same buyer info and
+// line items but with independent vol_no/no numbering and independent PDF downloads.
+export type ReceiptPair = {
+  cash_receipt: Receipt;
+  tax_invoice: Receipt;
 };
 
 export const listReceipts = (params?: {
@@ -84,7 +99,7 @@ export type PreviewLinesResult = {
   branch_id: number;
   target_total: number;
   lines: { description: string; is_non_vat: boolean; amount: number }[];
-  cash_receipt_buyer_suggestion: { name: string; tax_id: string | null; address: string };
+  buyer_suggestion: { name: string; tax_id: string | null; address: string };
 };
 
 export const previewReceiptLines = (shipmentIds: number[]) =>
@@ -93,7 +108,6 @@ export const previewReceiptLines = (shipmentIds: number[]) =>
 export type ReceiptLineInput = { description: string; invoice_no?: string | null; is_non_vat?: boolean; amount: number };
 
 export type CreateReceiptInput = {
-  type: ReceiptType;
   shipment_ids: number[];
   billing_customer_id?: number | null;
   buyer_name: string;
@@ -107,7 +121,7 @@ export type CreateReceiptInput = {
   payment_reference?: string | null;
 };
 
-export const createReceipt = (data: CreateReceiptInput) => apiClient.post<Receipt>("/receipts", data);
+export const createReceipt = (data: CreateReceiptInput) => apiClient.post<ReceiptPair>("/receipts", data);
 
 export type UpdateReceiptInput = {
   billing_customer_id?: number | null;
@@ -122,10 +136,10 @@ export type UpdateReceiptInput = {
   payment_reference?: string | null;
 };
 
-export const updateReceipt = (id: number, data: UpdateReceiptInput) => apiClient.put<Receipt>(`/receipts/${id}`, data);
+export const updateReceipt = (id: number, data: UpdateReceiptInput) => apiClient.put<ReceiptPair>(`/receipts/${id}`, data);
 
 export const voidReceipt = (id: number, voidNote?: string) =>
-  apiClient.post<Receipt>(`/receipts/${id}/void`, { void_note: voidNote });
+  apiClient.post<ReceiptPair>(`/receipts/${id}/void`, { void_note: voidNote });
 
 // Permanently deletes a Receipt/Tax Invoice — only allowed by the backend when `is_test` is true.
 // Unlike voidReceipt(), this also releases the shipment(s) so they can be billed again fresh.
@@ -133,14 +147,61 @@ export const deleteReceipt = (id: number) => apiClient.delete<void>(`/receipts/$
 
 /** Opens the generated PDF (each document type is a standalone 1-page PDF) in a new tab. */
 export async function openReceiptPdf(id: number) {
+  // Must open synchronously within the click handler, before the async fetch, or popup blockers
+  // will silently swallow it (leaving a frozen-looking blank about:blank tab instead).
+  let printWindow = window.open("", "_blank");
+  try {
+    if (printWindow) {
+      printWindow.document.write(
+        `<!DOCTYPE html><html><head><title>Loading...</title><style>
+          html,body{margin:0;height:100%;background:#525659;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;}
+          .spinner{width:36px;height:36px;border:4px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;animation:spin 0.8s linear infinite;}
+          p{position:absolute;margin-top:64px;color:#fff;font-size:14px;}
+          @keyframes spin{to{transform:rotate(360deg);}}
+        </style></head><body><div class="spinner"></div><p>กำลังโหลด PDF...</p></body></html>`,
+      );
+      printWindow.document.close();
+    }
+  } catch {
+    // Popup became script-inaccessible (e.g. a browser extension or process-isolation
+    // change re-homes it into another origin/process) — fall back to a plain tab below.
+    printWindow = null;
+  }
+
   const res = await fetch(`${API_URL}/receipts/${id}/pdf`, {
     headers: { Authorization: `Bearer ${getToken()}` },
   });
   if (!res.ok) {
+    try {
+      printWindow?.close();
+    } catch {
+      // already inaccessible — nothing to clean up
+    }
     alert("ไม่สามารถโหลด PDF ได้");
     return;
   }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
-  window.open(url, "_blank");
+
+  if (!printWindow) {
+    // Popup blocked — fall back to a plain new tab.
+    window.open(url, "_blank");
+    return;
+  }
+
+  try {
+    printWindow.document.write(
+      `<!DOCTYPE html><html><head><title>Receipt</title><style>
+        html,body,iframe{margin:0;padding:0;width:100%;height:100%;border:0;}
+      </style></head><body><iframe src="${url}"></iframe></body></html>`,
+    );
+    printWindow.document.close();
+  } catch {
+    try {
+      printWindow.close();
+    } catch {
+      // already inaccessible/closed — nothing to clean up
+    }
+    window.open(url, "_blank");
+  }
 }

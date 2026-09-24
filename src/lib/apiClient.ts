@@ -25,7 +25,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const data = await res.json().catch(() => null);
 
   if (!res.ok) {
-    const message = data?.message ?? "เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง";
+    // Laravel returns 422 ValidationException as { message, errors: { field: [msg,...] } } —
+    // surface the first field's first message instead of the generic top-level "The given data was invalid."
+    const firstErrorMessage = data?.errors
+      ? Object.values(data.errors as Record<string, string[]>).flat()[0]
+      : undefined;
+    const message = firstErrorMessage ?? data?.message ?? "เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง";
     throw new ApiError(message, res.status);
   }
 

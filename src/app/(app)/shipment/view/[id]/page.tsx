@@ -319,7 +319,7 @@ export default function ShipmentViewPage() {
                   Open label
                 </button>
               )}
-              {s.waybill_storage_key && (
+              {s.label_storage_key && (
                 <button type="button" onClick={handleOpenWaybill} disabled={openingWaybill} className={headerBtn}>
                   {openingWaybill ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Receipt className="h-3.5 w-3.5" />}
                   Open waybill
