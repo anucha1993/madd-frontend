@@ -137,7 +137,6 @@ export default function BranchPage() {
     }
   }
 
-  const DOC_TYPE_LABEL: Record<string, string> = { CASH_RECEIPT: "ใบเสร็จเงินสด", TAX_INVOICE: "ใบกำกับภาษี" };
   const DOC_FIELD_LABEL: Record<string, string> = { vol_no: "เล่มที่ (Vol.No)", no: "เลขที่ (No.)" };
 
   return (
@@ -284,11 +283,15 @@ export default function BranchPage() {
                 วัน) และตัวเลขในวงเล็บปีกกา เช่น{" "}
                 {"{00001}"} คือตัวรันเลขอัตโนมัติ (จำนวนหลัก = ความกว้างของเลขนั้น) เช่น MADD-{"{YY}"}-{"{MM}"}-{"{00001}"}
               </p>
+              <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                ใบเสร็จเงินสดและใบกำกับภาษีที่ออกคู่กันจะใช้เลขที่เอกสารชุดเดียวกันเสมอ ไม่ได้รันแยกกันอีกต่อไป
+              </p>
               {docError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{docError}</p>}
               {docSequences.map((seq, index) => (
                 <div key={seq.id} className="grid grid-cols-3 gap-3 rounded-lg border border-slate-200 p-3">
                   <div className="col-span-3 text-sm font-medium text-slate-600">
-                    {DOC_TYPE_LABEL[seq.document_type] ?? seq.document_type} — {DOC_FIELD_LABEL[seq.field] ?? seq.field}
+                    {DOC_FIELD_LABEL[seq.field] ?? seq.field}{" "}
+                    <span className="font-normal text-slate-400">(ใช้ร่วมกันทั้งใบเสร็จเงินสด/ใบกำกับภาษี)</span>
                   </div>
                   <label className="col-span-2 flex flex-col gap-1.5">
                     <span className="text-xs text-slate-500">Pattern</span>

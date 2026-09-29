@@ -14,12 +14,15 @@ type Props = {
   // by the Country of Origin picker on Commercial Invoice lines so Thailand (usually
   // disabled as a valid DESTINATION) is still selectable as the goods' origin country.
   alwaysInclude?: string[];
+  // Draws a red border — used to flag this field when an external validation (e.g. UPS
+  // Address Validation) reports a problem likely related to Country.
+  invalid?: boolean;
 };
 
 /** Searchable Country dropdown — shows "Name (ISO2)" and filters as you type.
  * Sourced from our own `countries` table (synced from restcountries.com), not a
  * hardcoded list, so it reflects whatever is toggled active in Country Settings. */
-export default function CountrySelect({ value, onChange, compact, alwaysInclude }: Props) {
+export default function CountrySelect({ value, onChange, compact, alwaysInclude, invalid }: Props) {
   const [countries, setCountries] = useState<Country[]>([]);
   const selected = countries.find((c) => c.iso2 === value);
   const [query, setQuery] = useState("");
@@ -104,9 +107,11 @@ export default function CountrySelect({ value, onChange, compact, alwaysInclude 
           }}
           onFocus={() => setOpen(true)}
           placeholder="Search country..."
-          className={`w-full rounded-lg border border-slate-300 bg-slate-50 text-slate-800 outline-none transition focus:border-brand-navy focus:bg-white focus:ring-2 focus:ring-brand-navy/15 ${
-            compact ? "py-1 pl-7 pr-2 text-xs" : "py-1.5 pl-9 pr-3 text-sm"
-          }`}
+          className={`w-full rounded-lg border bg-slate-50 text-slate-800 outline-none transition focus:bg-white focus:ring-2 ${
+            invalid
+              ? "border-red-400 focus:border-red-500 focus:ring-red-200"
+              : "border-slate-300 focus:border-brand-navy focus:ring-brand-navy/15"
+          } ${compact ? "py-1 pl-7 pr-2 text-xs" : "py-1.5 pl-9 pr-3 text-sm"}`}
         />
       </div>
 

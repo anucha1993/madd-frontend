@@ -103,6 +103,14 @@ export type BookShipmentInput = {
   payment_method?: string;
   bill_transportation_to?: string;
   bill_duty_tax_to?: string;
+  // Required whenever billing isn't to our own Shipper account — the OTHER party's own carrier
+  // account number (UPS BillReceiver/BillThirdParty, DHL payer/duties-taxes typeCode).
+  bill_transportation_account_number?: string;
+  bill_transportation_third_party_country?: string;
+  bill_transportation_third_party_postal_code?: string;
+  bill_duty_tax_account_number?: string;
+  bill_duty_tax_third_party_country?: string;
+  bill_duty_tax_third_party_postal_code?: string;
   ref_invoice_no?: string;
   ref_insurance_no?: string;
   ref_purchase_no?: string;
@@ -178,11 +186,23 @@ export type Shipment = {
   addon_total: number;
   order_total: number;
   currency: string;
+  // The carrier's own pre-markup quoted total (negotiated rate, or published if no negotiated
+  // rate applies) — the real cost reference, independent of freight_amount/order_total above
+  // which already have markup baked in as the customer-facing sell price. Null for shipments
+  // booked before this was tracked (2026-09-24).
+  cost_amount?: number | null;
+  cost_currency?: string | null;
   customer_type?: string | null;
   entity_type?: string | null;
   payment_method?: string | null;
   bill_transportation_to?: string | null;
   bill_duty_tax_to?: string | null;
+  bill_transportation_account_number?: string | null;
+  bill_transportation_third_party_country?: string | null;
+  bill_transportation_third_party_postal_code?: string | null;
+  bill_duty_tax_account_number?: string | null;
+  bill_duty_tax_third_party_country?: string | null;
+  bill_duty_tax_third_party_postal_code?: string | null;
   ref_invoice_no?: string | null;
   ref_insurance_no?: string | null;
   ref_purchase_no?: string | null;
@@ -197,6 +217,12 @@ export type Shipment = {
   // Full raw booking response from the carrier (UPS/DHL) — kept as evidence of what was
   // actually returned when the shipment was created.
   raw_response?: Record<string, unknown> | null;
+  // The exact request body we sent to the carrier — kept alongside raw_response as dispute
+  // evidence (e.g. proving we requested BillReceiver but the carrier billed it wrong).
+  raw_request?: Record<string, unknown> | null;
+  // HTTP status code the carrier returned for the booking request itself (e.g. 200) — explicit
+  // confirmation the request was actually received/accepted, without digging through raw_response.
+  carrier_http_status?: number | null;
   // Active (status="requested") Pickups this shipment is already attached to — non-empty means
   // it can't be added to ANOTHER Pickup until the existing one is cancelled (see
   // PickupController's matching server-side guard). Only ever loaded from `listShipments()`.

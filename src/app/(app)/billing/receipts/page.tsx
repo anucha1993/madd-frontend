@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
-import { FileCheck, FileText, Loader2, MoreVertical, Plus, Printer, Trash2, XCircle } from "lucide-react";
+import { FileCheck, FileText, Loader2, MoreVertical, Plus, Printer, Trash2, XCircle, Columns3, SlidersHorizontal, ChevronDown, ChevronUp, RotateCcw } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import PageLoading from "@/components/ui/PageLoading";
-import { listReceipts, voidReceipt, deleteReceipt, openReceiptPdf, type Receipt } from "@/lib/receipts";
+import ManageColumnsModal from "@/components/ui/ManageColumnsModal";
+import { useManageColumns, type ColumnDef } from "@/hooks/useManageColumns";
+import { listReceipts, voidReceipt, deleteReceipt, openReceiptPdf, printReceiptsBatch, type Receipt, type ReceiptType } from "@/lib/receipts";
+import { listBranches, type Branch } from "@/lib/branches";
 
 const inputClass =
   "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15";
@@ -21,6 +24,165 @@ type ReceiptPairRow = {
   cashReceipt?: Receipt;
   taxInvoice?: Receipt;
 };
+
+// The Actions column is structural (not data), so it's always shown and left out of this list —
+// every other field the Receipt record can supply is offered here, incl. ones not shown by
+// default, so the user can turn any of them on via Manage Columns.
+type ReceiptColumn = ColumnDef & { align?: "right"; render: (row: ReceiptPairRow, rep: Receipt) => ReactNode };
+
+const RECEIPT_COLUMNS: ReceiptColumn[] = [
+  { id: "date", label: "Date", render: (_row, rep) => new Date(rep.issued_date).toLocaleDateString() },
+  {
+    id: "receipt",
+    label: "Receipt",
+    render: (row) =>
+      row.cashReceipt ? (
+        <span className="font-mono text-xs whitespace-nowrap">
+          {row.cashReceipt.vol_no} / {row.cashReceipt.no}
+        </span>
+      ) : (
+        <span className="text-slate-300">-</span>
+      ),
+  },
+  {
+    id: "tax_invoice",
+    label: "Tax Invoice",
+    render: (row, rep) => (
+      <>
+        {row.taxInvoice ? (
+          <span className="font-mono text-xs whitespace-nowrap">
+            {row.taxInvoice.vol_no} / {row.taxInvoice.no}
+          </span>
+        ) : (
+          <span className="text-slate-300">-</span>
+        )}
+        {rep.is_test && (
+          <span className="ml-1.5 w-fit rounded-full bg-purple-50 px-2 py-0.5 text-[10px] font-medium text-purple-600">TEST</span>
+        )}
+      </>
+    ),
+  },
+  {
+    id: "branch",
+    label: "Branch",
+    render: (_row, rep) =>
+      rep.branch ? (
+        <span className="whitespace-nowrap">
+          <span className="font-mono text-xs font-semibold text-slate-600">{rep.branch.code}</span> {rep.branch.name}
+        </span>
+      ) : (
+        "-"
+      ),
+  },
+  { id: "buyer", label: "Buyer", render: (_row, rep) => rep.buyer_name },
+  {
+    id: "sell_price",
+    label: "Sell Price",
+    align: "right",
+    render: (_row, rep) => (rep.shipment_total_snapshot != null ? money(rep.shipment_total_snapshot) : "-"),
+  },
+  {
+    id: "grand_total",
+    label: "Grand Total",
+    align: "right",
+    render: (_row, rep) => (
+      <>
+        <span className="font-semibold text-slate-800">{money(rep.grand_total)}</span>
+        {rep.variance_amount != null && Math.abs(Number(rep.variance_amount)) > 0.01 && (
+          <span
+            className={`ml-1.5 block text-[11px] font-medium ${Number(rep.variance_amount) > 0 ? "text-amber-600" : "text-red-500"}`}
+            title={`ยอด Shipment เดิม ${money(rep.shipment_total_snapshot)}`}
+          >
+            ส่วนต่าง {Number(rep.variance_amount) > 0 ? "+" : ""}
+            {money(rep.variance_amount)}
+          </span>
+        )}
+      </>
+    ),
+  },
+  {
+    id: "cost_price",
+    label: "Cost",
+    align: "right",
+    render: (_row, rep) => {
+      const withCost = (rep.shipments ?? []).filter((s) => s.cost_amount != null);
+      if (withCost.length === 0) return <span className="text-slate-300">-</span>;
+      const total = withCost.reduce((sum, s) => sum + Number(s.cost_amount), 0);
+      const partial = withCost.length !== (rep.shipments?.length ?? 0);
+      return (
+        <>
+          {money(total)} {withCost[0].cost_currency ?? ""}
+          {partial && (
+            <span className="ml-1 text-amber-600" title="บาง Shipment ในใบนี้ยังไม่มีข้อมูลต้นทุน">
+              *
+            </span>
+          )}
+        </>
+      );
+    },
+  },
+  {
+    id: "status",
+    label: "Status",
+    render: (_row, rep) => (
+      <span
+        className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+          rep.status === "ISSUED" ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-500"
+        }`}
+      >
+        {rep.status === "ISSUED" ? "Issued" : "Voided"}
+      </span>
+    ),
+  },
+  { id: "buyer_tax_id", label: "Buyer Tax ID", render: (_row, rep) => rep.buyer_tax_id ?? "-" },
+  { id: "buyer_address", label: "Buyer Address", render: (_row, rep) => rep.buyer_address ?? "-" },
+  { id: "subtotal_non_vat", label: "Subtotal (Non-VAT)", align: "right", render: (_row, rep) => money(rep.subtotal_non_vat) },
+  { id: "subtotal_vat", label: "Subtotal (VAT)", align: "right", render: (_row, rep) => money(rep.subtotal_vat) },
+  { id: "vat_rate", label: "VAT Rate", align: "right", render: (_row, rep) => `${Number(rep.vat_rate ?? 0)}%` },
+  { id: "vat_amount", label: "VAT Amount", align: "right", render: (_row, rep) => money(rep.vat_amount) },
+  {
+    id: "variance",
+    label: "Variance",
+    align: "right",
+    render: (_row, rep) => (rep.variance_amount != null ? money(rep.variance_amount) : "-"),
+  },
+  { id: "payment_method", label: "Payment Method", render: (_row, rep) => rep.payment_method ?? "-" },
+  { id: "payment_reference", label: "Payment Reference", render: (_row, rep) => rep.payment_reference ?? "-" },
+  {
+    id: "voided",
+    label: "Voided",
+    render: (_row, rep) => (rep.voided_at ? `${new Date(rep.voided_at).toLocaleDateString()}${rep.void_note ? ` — ${rep.void_note}` : ""}` : "-"),
+  },
+  { id: "created_at", label: "Created At", render: (_row, rep) => new Date(rep.created_at).toLocaleDateString() },
+  { id: "test_mode", label: "Test Mode", render: (_row, rep) => (rep.is_test ? "Yes" : "No") },
+  {
+    id: "shipments",
+    label: "Linked Shipments",
+    render: (_row, rep) => {
+      const list = rep.shipments ?? [];
+      if (list.length === 0) {
+        const manual = rep.manual_shipment_refs ?? [];
+        if (manual.length === 0) return "-";
+        const first = `${manual[0]} (manual)`;
+        if (manual.length === 1) return first;
+        return (
+          <>
+            {first} <span className="text-slate-400" title={manual.slice(1).join(", ")}>+{manual.length - 1} more</span>
+          </>
+        );
+      }
+      const first = list[0].tracking_number ?? `#${list[0].id}`;
+      if (list.length === 1) return first;
+      const rest = list.slice(1).map((s) => s.tracking_number ?? `#${s.id}`).join(", ");
+      return (
+        <>
+          {first} <span className="text-slate-400" title={rest}>+{list.length - 1} more</span>
+        </>
+      );
+    },
+  },
+  { id: "grand_total_words", label: "Grand Total (Words)", render: (_row, rep) => rep.grand_total_words ?? "-" },
+];
 
 function groupReceipts(receipts: Receipt[]): ReceiptPairRow[] {
   const rows: ReceiptPairRow[] = [];
@@ -51,12 +213,42 @@ export default function ReceiptsListPage() {
   const [search, setSearch] = useState("");
   const [voidingId, setVoidingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  // Mass Print — keyed by row.key (the Cash Receipt + Tax Invoice pair, or a standalone document's
+  // own key) so selecting one row grabs BOTH documents in that pair for the combined PDF.
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const [printingBatch, setPrintingBatch] = useState(false);
+
+  // Advanced filters — collapsed by default so the page doesn't look cluttered until staff
+  // actually need them (see billing/receipts/new layout lesson: don't cram controls up front).
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [type, setType] = useState<"" | ReceiptType>("");
+  const [branchId, setBranchId] = useState<number | "">("");
+  const [branches, setBranches] = useState<Branch[]>([]);
+  // No quick-range preset selected by default means no date filter at all. Picking a manual
+  // date clears the active preset and vice versa (same pattern as shipment/list).
+  const [quickRange, setQuickRange] = useState<"" | "today" | "week" | "month">("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("");
+  const [minTotal, setMinTotal] = useState("");
+  const [maxTotal, setMaxTotal] = useState("");
+
+  const advancedFilterCount = [type, branchId, dateFrom, dateTo, paymentMethod, minTotal, maxTotal].filter(
+    (v) => v !== "" && v != null,
+  ).length;
 
   // All per-row actions live behind a single dropdown, keyed by row key (only one open at a
   // time), rendered via a portal at a fixed position so the table's own overflow never clips it.
   const [actionsMenuKey, setActionsMenuKey] = useState<string | null>(null);
   const [actionsMenuPos, setActionsMenuPos] = useState<{ top: number; right: number } | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
+  const columnsMgr = useManageColumns("receipts-list", RECEIPT_COLUMNS);
+
+  useEffect(() => {
+    listBranches()
+      .then(setBranches)
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (actionsMenuKey == null) return;
@@ -93,6 +285,13 @@ export default function ReceiptsListPage() {
       const res = await listReceipts({
         status: status || undefined,
         search: search || undefined,
+        type: type || undefined,
+        branch_id: branchId ? Number(branchId) : undefined,
+        date_from: dateFrom || undefined,
+        date_to: dateTo || undefined,
+        payment_method: paymentMethod || undefined,
+        min_total: minTotal ? Number(minTotal) : undefined,
+        max_total: maxTotal ? Number(maxTotal) : undefined,
       });
       setReceipts(res.data);
     } catch (err) {
@@ -105,7 +304,43 @@ export default function ReceiptsListPage() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, search]);
+  }, [status, search, type, branchId, dateFrom, dateTo, paymentMethod, minTotal, maxTotal]);
+
+  // Quick presets fill in dateFrom/dateTo (Y-m-d) — picking a manual date input instead clears
+  // the active preset (see the date <input> onChange handlers below).
+  function applyQuickRange(range: "" | "today" | "week" | "month") {
+    setQuickRange(range);
+    const now = new Date();
+    const toYmd = (d: Date) => d.toISOString().slice(0, 10);
+    if (range === "today") {
+      setDateFrom(toYmd(now));
+      setDateTo(toYmd(now));
+    } else if (range === "week") {
+      const start = new Date(now);
+      start.setDate(now.getDate() - 6);
+      setDateFrom(toYmd(start));
+      setDateTo(toYmd(now));
+    } else if (range === "month") {
+      setDateFrom(toYmd(new Date(now.getFullYear(), now.getMonth(), 1)));
+      setDateTo(toYmd(now));
+    } else {
+      setDateFrom("");
+      setDateTo("");
+    }
+  }
+
+  function resetFilters() {
+    setStatus("");
+    setSearch("");
+    setType("");
+    setBranchId("");
+    setQuickRange("");
+    setDateFrom("");
+    setDateTo("");
+    setPaymentMethod("");
+    setMinTotal("");
+    setMaxTotal("");
+  }
 
   async function handleVoid(receipt: Receipt) {
     const note = prompt("Reason for voiding (optional):") ?? undefined;
@@ -133,6 +368,40 @@ export default function ReceiptsListPage() {
     }
   }
 
+  const groupedRows = groupReceipts(receipts);
+  const selectedCashReceiptCount = groupedRows.filter((r) => selectedKeys.has(r.key) && r.cashReceipt).length;
+  const selectedTaxInvoiceCount = groupedRows.filter((r) => selectedKeys.has(r.key) && r.taxInvoice).length;
+
+  function toggleRowSelected(key: string) {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    setSelectedKeys((prev) => (prev.size === groupedRows.length ? new Set() : new Set(groupedRows.map((r) => r.key))));
+  }
+
+  async function handlePrintSelected(docType: "CASH_RECEIPT" | "TAX_INVOICE") {
+    // Kept as two SEPARATE print jobs (never combined) — Cash Receipt is half-A4 and Tax Invoice
+    // is full A4, so mixing them into one PDF means the physical printer's loaded paper size is
+    // wrong for half the pages.
+    const ids = groupedRows
+      .filter((row) => selectedKeys.has(row.key))
+      .map((row) => (docType === "CASH_RECEIPT" ? row.cashReceipt?.id : row.taxInvoice?.id))
+      .filter((id): id is number => id != null);
+    if (ids.length === 0) return;
+    setPrintingBatch(true);
+    try {
+      await printReceiptsBatch(ids);
+    } finally {
+      setPrintingBatch(false);
+    }
+  }
+
   return (
     <div>
       <div className="mb-6 flex items-start justify-between">
@@ -146,28 +415,208 @@ export default function ReceiptsListPage() {
         </Link>
       </div>
 
-      <div className="mb-4 flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium text-slate-600">Status</span>
-          <select value={status} onChange={(e) => setStatus(e.target.value)} className={inputClass}>
-            <option value="">All</option>
-            <option value="ISSUED">Issued</option>
-            <option value="VOIDED">Voided</option>
-          </select>
-        </label>
-        <label className="flex flex-1 min-w-[200px] flex-col gap-1.5">
-          <span className="text-sm font-medium text-slate-600">Search</span>
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Vol.No / No. / Buyer name..."
-            className={inputClass}
-          />
-        </label>
+      <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-slate-600">Status</span>
+              <select value={status} onChange={(e) => setStatus(e.target.value)} className={inputClass}>
+                <option value="">All</option>
+                <option value="ISSUED">Issued</option>
+                <option value="VOIDED">Voided</option>
+              </select>
+            </label>
+            <label className="flex flex-1 min-w-[200px] flex-col gap-1.5">
+              <span className="text-sm font-medium text-slate-600">Search</span>
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Vol.No / No. / Buyer name..."
+                className={inputClass}
+              />
+            </label>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setAdvancedOpen((v) => !v)}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+            >
+              <SlidersHorizontal className="h-4 w-4" />
+              Advanced Filters
+              {advancedFilterCount > 0 && (
+                <span className="rounded-full bg-brand-navy px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                  {advancedFilterCount}
+                </span>
+              )}
+              {advancedOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
+            <button
+              type="button"
+              onClick={columnsMgr.openModal}
+              className="flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+            >
+              <Columns3 className="h-4 w-4" />
+              Manage Columns
+            </button>
+          </div>
+        </div>
+
+        {advancedOpen && (
+          <div className="mt-4 flex flex-wrap items-end gap-3 border-t border-slate-100 pt-4">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-slate-600">Document Type</span>
+              <select value={type} onChange={(e) => setType(e.target.value as "" | ReceiptType)} className={inputClass}>
+                <option value="">All</option>
+                <option value="CASH_RECEIPT">Cash Receipt</option>
+                <option value="TAX_INVOICE">Tax Invoice</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-slate-600">Branch</span>
+              <select
+                value={branchId}
+                onChange={(e) => setBranchId(e.target.value ? Number(e.target.value) : "")}
+                className={inputClass}
+              >
+                <option value="">All</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.code} - {b.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-slate-600">From</span>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => {
+                  setQuickRange("");
+                  setDateFrom(e.target.value);
+                }}
+                className={inputClass}
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-slate-600">To</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => {
+                  setQuickRange("");
+                  setDateTo(e.target.value);
+                }}
+                className={inputClass}
+              />
+            </label>
+            <div className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-slate-600">Quick Range</span>
+              <div className="flex gap-1">
+                {(
+                  [
+                    ["", "All"],
+                    ["today", "Today"],
+                    ["week", "This Week"],
+                    ["month", "This Month"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => applyQuickRange(value)}
+                    className={`rounded-lg border px-2.5 py-2 text-xs font-medium ${
+                      quickRange === value ? "border-brand-navy bg-brand-navy/10 text-brand-navy" : "border-slate-300 text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-slate-600">Payment Method / Bank</span>
+              <input
+                type="text"
+                value={paymentMethod}
+                onChange={(e) => setPaymentMethod(e.target.value)}
+                placeholder="e.g. Bangkok Bank"
+                className={`${inputClass} w-44`}
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-slate-600">Grand Total Min</span>
+              <input
+                type="number"
+                value={minTotal}
+                onChange={(e) => setMinTotal(e.target.value)}
+                placeholder="0"
+                className={`${inputClass} w-28`}
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-slate-600">Grand Total Max</span>
+              <input
+                type="number"
+                value={maxTotal}
+                onChange={(e) => setMaxTotal(e.target.value)}
+                placeholder="999999"
+                className={`${inputClass} w-28`}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-500 hover:bg-slate-50"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Reset
+            </button>
+          </div>
+        )}
       </div>
 
+      {columnsMgr.isOpen && (
+        <ManageColumnsModal
+          columns={columnsMgr.orderedColumns}
+          visible={columnsMgr.visible}
+          groupOf={columnsMgr.groupOf}
+          onCancel={columnsMgr.closeModal}
+          onSave={columnsMgr.save}
+        />
+      )}
+
       {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
+
+      {receipts.length > 0 && (
+        <div className="mb-3 flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-2">
+          <span className="text-sm text-slate-500">
+            {selectedKeys.size > 0 ? `${selectedKeys.size} selected` : "Select documents to Mass Print"}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handlePrintSelected("CASH_RECEIPT")}
+              disabled={selectedCashReceiptCount === 0 || printingBatch}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {printingBatch ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+              Mass Print Receipts{selectedCashReceiptCount > 0 ? ` (${selectedCashReceiptCount})` : ""}
+            </button>
+            <button
+              type="button"
+              onClick={() => handlePrintSelected("TAX_INVOICE")}
+              disabled={selectedTaxInvoiceCount === 0 || printingBatch}
+              className="flex items-center gap-1.5 rounded-lg bg-brand-navy-dark px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-navy-dark/90 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {printingBatch ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+              Mass Print Tax Invoices{selectedTaxInvoiceCount > 0 ? ` (${selectedTaxInvoiceCount})` : ""}
+            </button>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <PageLoading label="Loading..." />
@@ -181,77 +630,56 @@ export default function ReceiptsListPage() {
           <table className="w-full text-left text-sm">
             <thead className="bg-gradient-to-r from-brand-navy-dark to-brand-navy text-xs uppercase tracking-wide text-white/90">
               <tr>
-                <th className="px-5 py-3 font-medium">Date</th>
-                <th className="px-5 py-3 font-medium">Receipt</th>
-                <th className="px-5 py-3 font-medium">Tax Invoice</th>
-                <th className="px-5 py-3 font-medium">Branch</th>
-                <th className="px-5 py-3 font-medium">Buyer</th>
-                <th className="px-5 py-3 font-medium text-right">Grand Total</th>
-                <th className="px-5 py-3 font-medium">Status</th>
+                <th className="w-10 px-5 py-3">
+                  <input
+                    type="checkbox"
+                    checked={groupedRows.length > 0 && selectedKeys.size === groupedRows.length}
+                    onChange={toggleSelectAll}
+                    className="h-4 w-4 rounded border-white/40"
+                    aria-label="Select all"
+                  />
+                </th>
+                {columnsMgr.columnSlots.map((slot) => (
+                  <th
+                    key={slot.map((c) => c.id).join("+")}
+                    className={`px-5 py-3 font-medium ${slot.length === 1 && slot[0].align === "right" ? "text-right" : ""}`}
+                  >
+                    {slot.map((c) => c.label).join(" / ")}
+                  </th>
+                ))}
                 <th className="px-5 py-3 font-medium text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {groupReceipts(receipts).map((row) => {
+              {groupedRows.map((row) => {
                 const rep = (row.cashReceipt ?? row.taxInvoice)!;
                 return (
                   <tr key={row.key} className="border-b border-slate-100 align-middle last:border-0 hover:bg-slate-50/70">
-                    <td className="px-5 py-4 align-middle text-slate-500">{new Date(rep.issued_date).toLocaleDateString()}</td>
-                    <td className="px-5 py-4 align-middle font-medium text-slate-700">
-                      {row.cashReceipt ? (
-                        <span className="font-mono text-xs whitespace-nowrap">
-                          {row.cashReceipt.vol_no} / {row.cashReceipt.no}
-                        </span>
-                      ) : (
-                        <span className="text-slate-300">-</span>
-                      )}
-                    </td>
-                    <td className="px-5 py-4 align-middle font-medium text-slate-700">
-                      {row.taxInvoice ? (
-                        <span className="font-mono text-xs whitespace-nowrap">
-                          {row.taxInvoice.vol_no} / {row.taxInvoice.no}
-                        </span>
-                      ) : (
-                        <span className="text-slate-300">-</span>
-                      )}
-                      {rep.is_test && (
-                        <span className="ml-1.5 w-fit rounded-full bg-purple-50 px-2 py-0.5 text-[10px] font-medium text-purple-600">TEST</span>
-                      )}
-                    </td>
-                    <td className="px-5 py-4 align-middle text-slate-500">
-                      {rep.branch ? (
-                        <span className="whitespace-nowrap">
-                          <span className="font-mono text-xs font-semibold text-slate-600">{rep.branch.code}</span>{" "}
-                          {rep.branch.name}
-                        </span>
-                      ) : (
-                        "-"
-                      )}
-                    </td>
-                    <td className="px-5 py-4 align-middle text-slate-500">{rep.buyer_name}</td>
-                    <td className="px-5 py-4 align-middle text-right">
-                      <span className="font-semibold text-slate-800">{money(rep.grand_total)}</span>
-                      {rep.variance_amount != null && Math.abs(Number(rep.variance_amount)) > 0.01 && (
-                        <span
-                          className={`ml-1.5 block text-[11px] font-medium ${
-                            Number(rep.variance_amount) > 0 ? "text-amber-600" : "text-red-500"
-                          }`}
-                          title={`ยอด Shipment เดิม ${money(rep.shipment_total_snapshot)}`}
-                        >
-                          ส่วนต่าง {Number(rep.variance_amount) > 0 ? "+" : ""}
-                          {money(rep.variance_amount)}
-                        </span>
-                      )}
-                    </td>
                     <td className="px-5 py-4 align-middle">
-                      <span
-                        className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                          rep.status === "ISSUED" ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-500"
-                        }`}
-                      >
-                        {rep.status === "ISSUED" ? "Issued" : "Voided"}
-                      </span>
+                      <input
+                        type="checkbox"
+                        checked={selectedKeys.has(row.key)}
+                        onChange={() => toggleRowSelected(row.key)}
+                        className="h-4 w-4 rounded border-slate-300"
+                        aria-label="Select row"
+                      />
                     </td>
+                    {columnsMgr.columnSlots.map((slot) => (
+                      <td
+                        key={slot.map((c) => c.id).join("+")}
+                        className={`px-5 py-4 align-middle text-slate-500 ${slot.length === 1 && slot[0].align === "right" ? "text-right" : ""}`}
+                      >
+                        {slot.length === 1 ? (
+                          slot[0].render(row, rep)
+                        ) : (
+                          <div className="flex flex-col gap-0.5">
+                            {slot.map((c) => (
+                              <div key={c.id}>{c.render(row, rep)}</div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                    ))}
                     <td className="px-5 py-4 align-middle text-right">
                       <button
                         type="button"

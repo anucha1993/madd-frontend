@@ -21,6 +21,9 @@ export type AgentAccount = {
   has_basic_auth_password: boolean;
   status: boolean;
   mode: "test" | "production";
+  // false = a carrier with no real API integration (e.g. Kerry, Flash) \u2014 excluded from
+  // rate-checking/booking on Shipment creation, but still selectable when issuing a Receipt.
+  is_api_enabled: boolean;
 };
 
 export type AgentAccountInput = {
@@ -33,12 +36,17 @@ export type AgentAccountInput = {
   basic_auth_password?: string;
   status?: boolean;
   mode?: "test" | "production";
+  is_api_enabled?: boolean;
 };
 
 export const listAgents = () => apiClient.get<Agent[]>("/agents");
 
+export const createAgent = (data: { agent_name: string; agent_code: string; logo_url?: string | null }) =>
+  apiClient.post<Agent>("/agents", data);
+
 export const updateAgent = (id: number, data: { logo_url?: string | null }) =>
   apiClient.put<Agent>(`/agents/${id}`, data);
+
 
 export const listAgentAccounts = () => apiClient.get<AgentAccount[]>("/agent-accounts");
 

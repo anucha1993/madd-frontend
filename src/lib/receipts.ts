@@ -42,6 +42,10 @@ export type Receipt = {
   // this was tracked. variance_amount = grand_total - shipment_total_snapshot (positive = buyer
   // was billed more than the shipment cost, negative = less), also null in that same case.
   shipment_total_snapshot: string | number | null;
+  // Free-text tracking/shipment numbers for shipments booked with other carriers that are never
+  // tracked as a real Shipment row in this system (2026-09-25) — null/empty when every shipment
+  // on this document is a real system one.
+  manual_shipment_refs?: string[] | null;
   variance_amount: string | number | null;
   payment_method: string | null;
   payment_reference: string | null;
@@ -51,7 +55,13 @@ export type Receipt = {
   created_at: string;
   branch?: { id: number; name: string; code: string } | null;
   lines?: ReceiptLine[];
-  shipments?: { id: number; tracking_number: string | null }[];
+  shipments?: {
+    id: number;
+    tracking_number: string | null;
+    order_total?: string | number | null;
+    cost_amount?: string | number | null;
+    cost_currency?: string | null;
+  }[];
   // True only when EVERY shipment on this document was booked via a Test-mode Agent Account —
   // only these documents can be permanently deleted (see deleteReceipt()); real documents can
   // only ever be Voided.
@@ -79,6 +89,9 @@ export const listReceipts = (params?: {
   search?: string;
   date_from?: string;
   date_to?: string;
+  payment_method?: string;
+  min_total?: number;
+  max_total?: number;
   page?: number;
 }) => {
   const query = new URLSearchParams();
@@ -88,6 +101,9 @@ export const listReceipts = (params?: {
   if (params?.search) query.set("search", params.search);
   if (params?.date_from) query.set("date_from", params.date_from);
   if (params?.date_to) query.set("date_to", params.date_to);
+  if (params?.payment_method) query.set("payment_method", params.payment_method);
+  if (params?.min_total != null) query.set("min_total", String(params.min_total));
+  if (params?.max_total != null) query.set("max_total", String(params.max_total));
   if (params?.page) query.set("page", String(params.page));
   const qs = query.toString();
   return apiClient.get<PaginatedReceipts>(`/receipts${qs ? `?${qs}` : ""}`);
@@ -109,6 +125,10 @@ export type ReceiptLineInput = { description: string; invoice_no?: string | null
 
 export type CreateReceiptInput = {
   shipment_ids: number[];
+  manual_shipment_refs?: string[];
+  // Defaults to the selected shipments' own branch on the backend when omitted — only required
+  // when issuing a manual-only receipt with no real shipment to infer it from.
+  branch_id?: number | null;
   billing_customer_id?: number | null;
   buyer_name: string;
   buyer_tax_id?: string | null;
@@ -192,6 +212,66 @@ export async function openReceiptPdf(id: number) {
   try {
     printWindow.document.write(
       `<!DOCTYPE html><html><head><title>Receipt</title><style>
+        html,body,iframe{margin:0;padding:0;width:100%;height:100%;border:0;}
+      </style></head><body><iframe src="${url}"></iframe></body></html>`,
+    );
+    printWindow.document.close();
+  } catch {
+    try {
+      printWindow.close();
+    } catch {
+      // already inaccessible/closed — nothing to clean up
+    }
+    window.open(url, "_blank");
+  }
+}
+
+/** Mass Print — same open-a-tab technique as openReceiptPdf(), but ONE combined PDF covering
+ * every selected Receipt/Tax Invoice id (see ReceiptController::printBatch/ReceiptPdfService::
+ * renderBatch), so staff get one print job instead of a tab per document. */
+export async function printReceiptsBatch(ids: number[]) {
+  let printWindow = window.open("", "_blank");
+  try {
+    if (printWindow) {
+      printWindow.document.write(
+        `<!DOCTYPE html><html><head><title>Loading...</title><style>
+          html,body{margin:0;height:100%;background:#525659;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;}
+          .spinner{width:36px;height:36px;border:4px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;animation:spin 0.8s linear infinite;}
+          p{position:absolute;margin-top:64px;color:#fff;font-size:14px;}
+          @keyframes spin{to{transform:rotate(360deg);}}
+        </style></head><body><div class="spinner"></div><p>กำลังรวม PDF...</p></body></html>`,
+      );
+      printWindow.document.close();
+    }
+  } catch {
+    printWindow = null;
+  }
+
+  const res = await fetch(`${API_URL}/receipts/print-batch`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ receipt_ids: ids }),
+  });
+  if (!res.ok) {
+    try {
+      printWindow?.close();
+    } catch {
+      // already inaccessible — nothing to clean up
+    }
+    alert("ไม่สามารถรวม PDF ได้");
+    return;
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+
+  if (!printWindow) {
+    window.open(url, "_blank");
+    return;
+  }
+
+  try {
+    printWindow.document.write(
+      `<!DOCTYPE html><html><head><title>Receipts</title><style>
         html,body,iframe{margin:0;padding:0;width:100%;height:100%;border:0;}
       </style></head><body><iframe src="${url}"></iframe></body></html>`,
     );

@@ -133,6 +133,8 @@ export default function ShipmentViewPage() {
   const [openingInvoice, setOpeningInvoice] = useState(false);
   const [voiding, setVoiding] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [showRawResponse, setShowRawResponse] = useState(false);
+  const [showRawRequest, setShowRawRequest] = useState(false);
   useEffect(() => {
     // Was: return early without clearing loading, so a non-numeric id left the
     // spinner running forever.
@@ -601,6 +603,58 @@ export default function ShipmentViewPage() {
           </Section>
         </aside>
       </div>
+
+      {s.raw_request && (
+        <Section title="Raw Request Sent to Carrier">
+          {s.carrier_http_status && (
+            <p className="mb-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[12px] font-semibold text-emerald-700">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              {s.carrier} accepted the request — HTTP {s.carrier_http_status}
+            </p>
+          )}
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] text-slate-500">
+              Exact request body sent to {s.carrier} when booking — dispute evidence proving what
+              billing party/account was actually requested (e.g. Bill Duty and Tax to Receiver),
+              in case {s.carrier} bills it differently on their end.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowRawRequest((v) => !v)}
+              className="shrink-0 rounded-lg border border-slate-300 px-2.5 py-1 text-[12px] font-medium text-slate-600 hover:bg-slate-50"
+            >
+              {showRawRequest ? "Hide" : "Show"}
+            </button>
+          </div>
+          {showRawRequest && (
+            <pre className="mt-3 max-h-96 overflow-auto rounded-lg bg-slate-900 p-3 text-[11px] leading-5 text-slate-100">
+              {JSON.stringify(s.raw_request, null, 2)}
+            </pre>
+          )}
+        </Section>
+      )}
+
+      {s.raw_response && (
+        <Section title="Raw Carrier Response">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] text-slate-500">
+              Full {s.carrier} API response from when this shipment was booked — kept as evidence.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowRawResponse((v) => !v)}
+              className="shrink-0 rounded-lg border border-slate-300 px-2.5 py-1 text-[12px] font-medium text-slate-600 hover:bg-slate-50"
+            >
+              {showRawResponse ? "Hide" : "Show"}
+            </button>
+          </div>
+          {showRawResponse && (
+            <pre className="mt-3 max-h-96 overflow-auto rounded-lg bg-slate-900 p-3 text-[11px] leading-5 text-slate-100">
+              {JSON.stringify(s.raw_response, null, 2)}
+            </pre>
+          )}
+        </Section>
+      )}
     </div>
   );
 }

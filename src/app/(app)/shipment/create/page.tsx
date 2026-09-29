@@ -19,6 +19,8 @@ import { listManifestOptions, type ManifestOption } from "@/lib/manifestOptions"
 import { getThaiSubdistrictsByZipCode } from "@/lib/thaiSubdistricts";
 import { checkRate, type CheckRateInput, type RateChargeLine, type RateQuote, type ShipmentPackageInput } from "@/lib/shipping";
 import { lookupInsuranceCountryCap, type InsuranceCountryCap } from "@/lib/insuranceCountryCaps";
+import { validateAddress, type AddressValidationResult } from "@/lib/addressValidation";
+import { ApiError } from "@/lib/apiClient";
 import { bookShipment, describeShipmentPieces, openShipmentCommercialInvoice, openShipmentLabel, openShipmentWaybill, printAllShipmentLabels, uploadCommercialInvoiceFile, type BookShipmentInput, type Shipment } from "@/lib/shipments";
 import { getShipmentDraft, createShipmentDraft, updateShipmentDraft, deleteShipmentDraft } from "@/lib/shipmentDrafts";
 import { getUser } from "@/lib/auth";
@@ -51,6 +53,44 @@ function formatMarkupBasis(line: RateChargeLine): string | null {
       : `${line.markupValue}%`;
   }
   return `+${line.markupValue.toLocaleString(undefined, { maximumFractionDigits: 2 })} flat`;
+}
+
+// Which Ship To input a guessed field hint (see explainAddressValidationError) maps to, so the
+// matching input can be highlighted with a red border — "address" covers Address 1/2/3 together
+// since UPS's message never specifies which of the 3 lines it means.
+type AddressValidationFieldKey = "country" | "city" | "state" | "postcode" | "address" | null;
+
+// UPS's XAV error message is one raw string with no structured field attribution — this does
+// best-effort keyword matching to guess which field it's about, and flags the known UPS
+// Sandbox/CIE limitation (this exact wording fires for EVERY test-mode request regardless of
+// address content — see madd-notes.md) so staff don't mistake it for a real address typo.
+function explainAddressValidationError(message: string): {
+  fieldKey: AddressValidationFieldKey;
+  fieldLabel: string | null;
+  isSandboxLimitation: boolean;
+} {
+  const lower = message.toLowerCase();
+  const isSandboxLimitation = lower.includes("customer integration environment");
+  const fieldKey: AddressValidationFieldKey =
+    lower.includes("state") || lower.includes("province")
+      ? "state"
+      : lower.includes("postal") || lower.includes("zip") || lower.includes("postcode")
+        ? "postcode"
+        : lower.includes("city")
+          ? "city"
+          : lower.includes("country")
+            ? "country"
+            : lower.includes("address")
+              ? "address"
+              : null;
+  const fieldLabel: Record<Exclude<AddressValidationFieldKey, null>, string> = {
+    country: "Country",
+    city: "City",
+    state: "State / Province",
+    postcode: "Postcode",
+    address: "Address",
+  };
+  return { fieldKey, fieldLabel: fieldKey ? fieldLabel[fieldKey] : null, isSandboxLimitation };
 }
 
 function levenshteinDistance(a: string, b: string): number {
@@ -120,10 +160,12 @@ type ProductType = "SILVER" | "NON_SILVER" | "OTHER" | null;
 type PackageRow = ShipmentPackageInput & {
   key: number;
   forcedWeightBandId: number | null;
-  // The CPM band's fixed billing weight (kg), captured from the Supply at the moment it was
-  // applied — sent to the carrier instead of the (still freely editable) `weight` field above,
-  // since staff may legitimately type the box's real physical weight for their own records while
-  // the carrier must always be billed at the fixed CPM weight regardless (see billedWeightFor()).
+  // The CPM band's fixed SELLING weight (kg), captured from the Supply at the moment it was
+  // applied. A CPM box (e.g. CPM10) is always SOLD at at least this weight, even if the real
+  // typed weight is lower — but if the real weight is heavier, the heavier real weight is what
+  // gets sold instead (see sellWeightFor()). The REAL carrier API booking always uses the plain
+  // `weight` field as typed, regardless of this forced band — selling weight and booking weight
+  // are deliberately allowed to differ (see buildBookingPayload()).
   forcedWeightBandWeight: number | null;
   insured: boolean;
   productType: ProductType;
@@ -179,10 +221,15 @@ const newRow = (): PackageRow => ({
   forcedWeightBandWeight: null,
 });
 
-// What to actually bill the carrier for this package — the fixed CPM weight when one is forced
-// (ignores whatever real weight is typed/edited in the row), otherwise the row's own weight.
-function billedWeightFor(pkg: Pick<PackageRow, "weight" | "forcedWeightBandId" | "forcedWeightBandWeight">): number {
-  return pkg.forcedWeightBandId && pkg.forcedWeightBandWeight ? pkg.forcedWeightBandWeight : Number(pkg.weight) || 0;
+// The weight used to compute what we SELL/charge the customer (Check Rate + "Shipment Weight
+// Range" display) — a CPM-forced box is always sold at (at least) its fixed CPM weight (e.g.
+// CPM10 = 10kg), but if the real typed weight is heavier, we sell at the heavier real weight
+// instead (per business rule: "CPM10 ขายที่ 10kg เสมอ แต่ถ้าบรรจุเกิน เช่น 12kg ก็คิด 12kg").
+// This is DIFFERENT from what's actually sent to the carrier's real Ship API — see
+// buildBookingPayload(), which always sends the plain real `weight` field, never this value.
+function sellWeightFor(pkg: Pick<PackageRow, "weight" | "forcedWeightBandId" | "forcedWeightBandWeight">): number {
+  const real = Number(pkg.weight) || 0;
+  return pkg.forcedWeightBandId && pkg.forcedWeightBandWeight ? Math.max(pkg.forcedWeightBandWeight, real) : real;
 }
 
 // The single source of truth for "how much is this whole row (all `quantity` boxes) insured
@@ -300,6 +347,91 @@ export default function ShipmentCreatePage() {
   const [destinationEmail, setDestinationEmail] = useState("");
   const [destinationNotes, setDestinationNotes] = useState("");
 
+  // Address Validation (UPS Street Level, Ship To only) — must pass (or be explicitly
+  // overridden by staff) before Step 1's Next button is enabled. UPS's XAV product only ever
+  // validates US/Puerto Rico addresses (confirmed via UPS's own docs — every other country
+  // fails structurally regardless of payload, it's not a fixable request-shape bug) — for any
+  // other destination country this is skipped entirely, surfaced as "notApplicable".
+  const [addressValidationStatus, setAddressValidationStatus] = useState<
+    "idle" | "checking" | "ok" | "ambiguous" | "invalid" | "error" | "notApplicable"
+  >("idle");
+  const [addressValidationResult, setAddressValidationResult] = useState<AddressValidationResult | null>(null);
+  const [addressValidationError, setAddressValidationError] = useState("");
+  const [addressValidationOverridden, setAddressValidationOverridden] = useState(false);
+  // Which Ship To input the error message is guessed to be about (see
+  // explainAddressValidationError) — used to draw a red border on that specific input.
+  const addressValidationErrorField =
+    addressValidationStatus === "error" ? explainAddressValidationError(addressValidationError).fieldKey : null;
+
+  // Any edit to the Ship To address fields invalidates a previous validation result — staff
+  // must re-check (or re-override) before Next is enabled again.
+  useEffect(() => {
+    setAddressValidationStatus("idle");
+    setAddressValidationResult(null);
+    setAddressValidationError("");
+    setAddressValidationOverridden(false);
+  }, [destinationCountry, destinationCity, destinationState, destinationPostcode, destinationAddress, destinationAddress2, destinationAddress3]);
+
+  const runAddressValidation = async (): Promise<"ok" | "ambiguous" | "invalid" | "error" | "notApplicable"> => {
+    if (!destinationCountry.trim() || !destinationCity.trim()) {
+      setAddressValidationStatus("error");
+      setAddressValidationError("กรุณากรอก Country และ City ก่อนตรวจสอบที่อยู่");
+      return "error";
+    }
+    // UPS's Street Level Address Validation only supports US/Puerto Rico destinations — never
+    // call it (and never block Next on it) for any other country.
+    if (destinationCountry !== "US" && destinationCountry !== "PR") {
+      setAddressValidationStatus("notApplicable");
+      return "notApplicable";
+    }
+    setAddressValidationStatus("checking");
+    setAddressValidationError("");
+    try {
+      const result = await validateAddress({
+        country: destinationCountry,
+        city: destinationCity,
+        state_code: destinationState || undefined,
+        postcode: destinationPostcode || undefined,
+        address: destinationAddress || undefined,
+        address2: destinationAddress2 || undefined,
+        address3: destinationAddress3 || undefined,
+      });
+      setAddressValidationResult(result);
+      setAddressValidationOverridden(false);
+      const status = result.valid ? "ok" : result.ambiguous ? "ambiguous" : "invalid";
+      setAddressValidationStatus(status);
+      return status;
+    } catch (e) {
+      setAddressValidationStatus("error");
+      setAddressValidationError(e instanceof ApiError ? e.message : "ตรวจสอบที่อยู่ไม่สำเร็จ กรุณาลองใหม่");
+      return "error";
+    }
+  };
+
+  // Next itself triggers the address check — proceeds straight through when already valid/
+  // overridden, otherwise runs validation and only advances if it comes back valid.
+  const handleStep1Next = async () => {
+    if (canProceedFromStep1) {
+      setStep(2);
+      return;
+    }
+    const status = await runAddressValidation();
+    if (status === "ok" || status === "notApplicable") setStep(2);
+  };
+
+  const applyAddressValidationCandidate = (candidate: AddressValidationResult["candidates"][number]) => {
+    if (candidate.city) setDestinationCity(candidate.city);
+    if (candidate.state) setDestinationState(candidate.state);
+    if (candidate.postcode) setDestinationPostcode(candidate.postcode);
+    if (candidate.addressLines[0]) setDestinationAddress(candidate.addressLines[0]);
+    if (candidate.addressLines[1]) setDestinationAddress2(candidate.addressLines[1]);
+    setAddressValidationStatus("ok");
+    setAddressValidationOverridden(true);
+  };
+
+  const canProceedFromStep1 =
+    addressValidationStatus === "ok" || addressValidationStatus === "notApplicable" || addressValidationOverridden;
+
   const [packages, setPackages] = useState<PackageRow[]>([newRow()]);
   // Which package row Common Sizes / dimension edits apply to — only one row is "unlocked" at a time.
   const [activePackageKey, setActivePackageKey] = useState<number | null>(packages[0]?.key ?? null);
@@ -358,11 +490,25 @@ export default function ShipmentCreatePage() {
   const [paymentMethod, setPaymentMethod] = useState("");
   const [billTransportationOptions, setBillTransportationOptions] = useState<ManifestOption[]>([]);
   const [billTransportationTo, setBillTransportationTo] = useState("");
+  const [billTransportationAccountNumber, setBillTransportationAccountNumber] = useState("");
+  const [billTransportationThirdPartyCountry, setBillTransportationThirdPartyCountry] = useState("");
+  const [billTransportationThirdPartyPostalCode, setBillTransportationThirdPartyPostalCode] = useState("");
   const [billDutyTaxOptions, setBillDutyTaxOptions] = useState<ManifestOption[]>([]);
   const [billDutyTaxTo, setBillDutyTaxTo] = useState("");
+  const [billDutyTaxAccountNumber, setBillDutyTaxAccountNumber] = useState("");
+  const [billDutyTaxThirdPartyCountry, setBillDutyTaxThirdPartyCountry] = useState("");
+  const [billDutyTaxThirdPartyPostalCode, setBillDutyTaxThirdPartyPostalCode] = useState("");
   const [refInvoiceNo, setRefInvoiceNo] = useState("");
   const [refInsuranceNo, setRefInsuranceNo] = useState("");
   const [refPurchaseNo, setRefPurchaseNo] = useState("");
+
+  // Blocks "สร้าง Shipment" until any account number/third-party address the carrier actually
+  // requires (UPS BillReceiver/BillThirdParty, DHL payer/duties-taxes) has been filled in — see
+  // UpsShipmentService::buildPaymentInformation / DhlShipmentService::buildAccounts on the backend.
+  const paymentInfoValid =
+    (billTransportationTo !== "RECEIVER" && billTransportationTo !== "THIRD_PARTY" ? true : billTransportationAccountNumber.trim() !== "") &&
+    (billTransportationTo !== "THIRD_PARTY" ? true : billTransportationThirdPartyCountry.trim() !== "") &&
+    (billDutyTaxTo !== "THIRD_PARTY" ? true : billDutyTaxAccountNumber.trim() !== "" && billDutyTaxThirdPartyCountry.trim() !== "");
 
   // Third-party insurance coverage cap / sanction note for the destination country — see /config/insurance-caps.
   const [insuranceCap, setInsuranceCap] = useState<InsuranceCountryCap | null>(null);
@@ -803,8 +949,11 @@ export default function ShipmentCreatePage() {
 
   // A shipment must be all-Box or all-Document — neither UPS nor DHL accepts a mix (confirmed
   // via live rate check) — so a newly added row always inherits the shipment's existing type
-  // instead of defaulting to Box, which would silently create a mix.
+  // instead of defaulting to Box, which would silently create a mix. A CPM box (fixed-weight
+  // sold product) must always be the shipment's ONLY package — refuse to add another row
+  // whenever one already exists (defense-in-depth alongside the button's own disabled state).
   function addPackage() {
+    if (packages.some((p) => p.forcedWeightBandId != null)) return;
     const row = { ...newRow(), is_document: packages[0]?.is_document ?? false };
     setPackages((prev) => [...prev, row]);
     setActivePackageKey(row.key);
@@ -1276,12 +1425,20 @@ export default function ShipmentCreatePage() {
   const activeRow = packages.find((p) => p.key === activePackageKey) ?? packages[0];
 
   // Shipment Weight Range — auto-matched from total weight (legacy system required manually
-  // picking this from a radio list; here it's derived automatically instead). Uses the BILLED
-  // weight (billedWeightFor) so a CPM-forced row's fixed weight — not whatever real weight staff
-  // typed for their own records — feeds the total.
-  const totalShipmentWeight = packages.reduce((sum, p) => sum + billedWeightFor(p) * (Number(p.quantity) || 1), 0);
+  // picking this from a radio list; here it's derived automatically instead). Uses the SELL
+  // weight (sellWeightFor) so a CPM-forced row's fixed-or-heavier sell weight — not whatever
+  // real weight staff typed for their own records — feeds the total.
+  const totalShipmentWeight = packages.reduce((sum, p) => sum + sellWeightFor(p) * (Number(p.quantity) || 1), 0);
+  // The weight actually declared to the carrier at real booking time (see buildBookingPayload) —
+  // shown to staff alongside the sell weight above so a CPM box's "sell 10kg, book 3kg" divergence
+  // is visible BEFORE Confirm, not just discovered afterward on the carrier's own label/invoice.
+  const totalRealBookingWeight = packages.reduce((sum, p) => sum + (Number(p.weight) || 0) * (Number(p.quantity) || 1), 0);
   const totalPackageQuantity = packages.reduce((sum, p) => sum + (Number(p.quantity) || 1), 0);
   const overallPackageType: "box" | "document" = packages.every((p) => p.is_document) ? "document" : "box";
+  // A CPM box (e.g. CPM10/CPM25) is always sold as exactly ONE fixed-weight box — a shipment
+  // with a CPM package can never add more packages or raise that row's Qty above 1 (see
+  // addPackage's disabled state and the Qty input below).
+  const hasCpmPackage = packages.some((p) => p.forcedWeightBandId != null);
   // Confirmed empirically (live rate check, not guessed): UPS's Rating API rejects EVERY
   // service code with "The requested service is not valid for shipments with the requested
   // packaging" whenever a shipment mixes Document (Packaging 01) and Box (Packaging 02)
@@ -1300,10 +1457,16 @@ export default function ShipmentCreatePage() {
 
   // Applying a stock size only fills in the dimensions as a guide — it does not add a purchase.
   // Targets whichever package row is currently "active" (unlocked), not always the first one.
-  // If the supply is linked to a fixed Weight Range (CPM10/CPM25), that row now forces it — and
-  // the carrier is always billed at that fixed weight (see billedWeightFor), never whatever real
-  // weight staff later types into the row for their own records.
+  // If the supply is linked to a fixed Weight Range (CPM10/CPM25), that row now forces it — sold
+  // at (at least) that fixed weight (see sellWeightFor), but always BOOKED with the carrier at
+  // the real weight typed in the row (see buildBookingPayload). A CPM box must be the shipment's
+  // ONLY package, so applying one is blocked when other package rows already exist, and its Qty
+  // is pinned to 1.
   function applyStockSize(supply: Supply) {
+    if (supply.weight_band_id && packages.length > 1) {
+      alert("กล่อง CPM ต้องเป็นกล่องเดียวใน Shipment เท่านั้น — กรุณาลบกล่องอื่นออกก่อน แล้วค่อยเลือกกล่อง CPM นี้");
+      return;
+    }
     setStockSupplyId(supply.id);
     const targetKey = activePackageKey ?? packages[0].key;
     updatePackage(targetKey, {
@@ -1312,6 +1475,7 @@ export default function ShipmentCreatePage() {
       width: Number(supply.width) || undefined,
       height: Number(supply.height) || undefined,
       is_document: false,
+      ...(supply.weight_band_id ? { quantity: 1 } : {}),
       forcedWeightBandId: supply.weight_band_id ?? null,
       forcedWeightBandWeight: supply.weight_band_id ? Number(supply.weight) || null : null,
     });
@@ -1360,16 +1524,18 @@ export default function ShipmentCreatePage() {
       // as a COST reference now, never the actual sell price — so it's fine to send for every
       // Product Type; the real sell price is computed separately from the Insurance Add-on item.
       const sendDeclaredValue = p.insured;
+      // Check Rate drives the customer-facing SELL price — a CPM-forced row is quoted at its
+      // sell weight (see sellWeightFor), not necessarily its real typed weight.
       return p.is_document
         ? {
-            weight: billedWeightFor(p),
+            weight: sellWeightFor(p),
             quantity: p.quantity,
             description: p.description,
             is_document: true,
             declared_value: sendDeclaredValue ? packageTotalDeclaredValue(p) : undefined,
           }
         : {
-            weight: billedWeightFor(p),
+            weight: sellWeightFor(p),
             length: p.length,
             width: p.width,
             height: p.height,
@@ -1464,8 +1630,12 @@ export default function ShipmentCreatePage() {
         // Which Insurance item was sold for THIS package — lets the backend tell the carrier
         // apart from third-party UPSC (see ShipmentController::store's useCarrierInsurance).
         const insuranceRow = addonRows.find((r) => r.packageKey === p.key && r.category === "Insurance");
+        // The REAL carrier booking always uses the plain typed weight — even for a CPM-forced
+        // row — never the sell weight used for Check Rate/pricing (see sellWeightFor). Selling
+        // weight and the weight actually declared to the carrier are intentionally allowed to
+        // differ for CPM boxes (fixed-price product sold by our own system, not the carrier's).
         return {
-          weight: billedWeightFor(p),
+          weight: Number(p.weight) || 0,
           length: p.is_document ? undefined : p.length,
           width: p.is_document ? undefined : p.width,
           height: p.is_document ? undefined : p.height,
@@ -1507,6 +1677,12 @@ export default function ShipmentCreatePage() {
       payment_method: paymentMethod || undefined,
       bill_transportation_to: billTransportationTo || undefined,
       bill_duty_tax_to: billDutyTaxTo || undefined,
+      bill_transportation_account_number: billTransportationAccountNumber.trim() || undefined,
+      bill_transportation_third_party_country: billTransportationThirdPartyCountry || undefined,
+      bill_transportation_third_party_postal_code: billTransportationThirdPartyPostalCode.trim() || undefined,
+      bill_duty_tax_account_number: billDutyTaxAccountNumber.trim() || undefined,
+      bill_duty_tax_third_party_country: billDutyTaxThirdPartyCountry || undefined,
+      bill_duty_tax_third_party_postal_code: billDutyTaxThirdPartyPostalCode.trim() || undefined,
       ref_invoice_no: refInvoiceNo.trim() || undefined,
       ref_insurance_no: refInsuranceNo.trim() || undefined,
       ref_purchase_no: refPurchaseNo.trim() || undefined,
@@ -1612,6 +1788,11 @@ export default function ShipmentCreatePage() {
   const inputClass =
     "w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-sm text-slate-800 outline-none transition focus:border-brand-navy focus:bg-white focus:ring-2 focus:ring-brand-navy/15";
   const labelClass = "text-sm font-medium text-slate-600";
+  // Red border override for the Ship To input the Address Validation error is guessed to be about.
+  // Tailwind v4 important modifier is a trailing "!" (not a leading one) — needed here since it
+  // must win over inputClass's own border-slate-300/focus:border-brand-navy utilities.
+  const errorInputClass = (field: AddressValidationFieldKey) =>
+    addressValidationErrorField === field ? "border-red-400! focus:border-red-500! ring-1! ring-red-200!" : "";
 
   const okResults = (results ?? []).filter((r) => !r.error).sort((a, b) => (a.negotiated ?? a.published ?? Infinity) - (b.negotiated ?? b.published ?? Infinity));
   // Every failed account/service call, deduped by carrier+message — surfaced to staff instead of
@@ -2302,13 +2483,13 @@ export default function ShipmentCreatePage() {
             </label>
             <label className="flex flex-col gap-1">
               <span className={labelClass}>Country</span>
-              <CountrySelect value={destinationCountry} onChange={setDestinationCountry} />
+              <CountrySelect value={destinationCountry} onChange={setDestinationCountry} invalid={addressValidationErrorField === "country"} />
             </label>
             <div className="grid grid-cols-2 gap-2.5">
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>City</span>
                 <div className="relative">
-                  <input type="text" value={destinationCity} onChange={(e) => setDestinationCity(e.target.value)} placeholder="e.g. Singapore" className={`${inputClass} ${destinationCity ? "pr-8" : ""}`} />
+                  <input type="text" value={destinationCity} onChange={(e) => setDestinationCity(e.target.value)} placeholder="e.g. Singapore" className={`${inputClass} ${errorInputClass("city")} ${destinationCity ? "pr-8" : ""}`} />
                   {destinationCity && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
                 </div>
               </label>
@@ -2323,7 +2504,7 @@ export default function ShipmentCreatePage() {
                     onChange={(e) => setDestinationState(e.target.value.toUpperCase())}
                     placeholder="e.g. NY"
                     maxLength={10}
-                    className={`${inputClass} ${destinationState ? "pr-8" : ""}`}
+                    className={`${inputClass} ${errorInputClass("state")} ${destinationState ? "pr-8" : ""}`}
                   />
                   {destinationState && (
                     <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />
@@ -2339,7 +2520,7 @@ export default function ShipmentCreatePage() {
                   value={destinationPostcode}
                   onChange={(e) => setDestinationPostcode(e.target.value)}
                   placeholder="e.g. 018956"
-                  className={`${inputClass} ${destinationPostcode ? "pr-8" : ""}`}
+                  className={`${inputClass} ${errorInputClass("postcode")} ${destinationPostcode ? "pr-8" : ""}`}
                 />
                 {destinationPostcode && (
                   <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />
@@ -2354,7 +2535,7 @@ export default function ShipmentCreatePage() {
                   value={destinationAddress}
                   onChange={(e) => setDestinationAddress(e.target.value)}
                   placeholder="House no., street"
-                  className={`${inputClass} ${destinationAddress ? "pr-8" : ""}`}
+                  className={`${inputClass} ${errorInputClass("address")} ${destinationAddress ? "pr-8" : ""}`}
                 />
                 {destinationAddress && (
                   <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />
@@ -2393,6 +2574,7 @@ export default function ShipmentCreatePage() {
                 </div>
               </label>
             </div>
+
             <div className="grid grid-cols-2 gap-2.5">
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>Telephone</span>
@@ -2439,13 +2621,134 @@ export default function ShipmentCreatePage() {
         </div>
       </div>
 
-      <div className="mt-4 flex justify-end">
+      <div className="mt-4 flex flex-col items-end gap-2">
+        <div
+          className={`flex w-full max-w-md flex-col gap-1.5 rounded-lg border px-3 py-2 text-xs sm:w-auto ${
+            addressValidationStatus === "ok"
+              ? "border-emerald-200 bg-emerald-50"
+              : addressValidationStatus === "idle" || addressValidationStatus === "checking" || addressValidationStatus === "notApplicable"
+                ? "border-slate-200 bg-slate-50"
+                : "border-amber-200 bg-amber-50"
+          }`}
+        >
+          <div className="flex items-center gap-1.5 font-medium text-slate-600">
+            <ShieldCheck className="h-3.5 w-3.5 shrink-0" /> Address Validation (UPS)
+          </div>
+
+          {addressValidationStatus === "idle" && <p className="text-slate-400">ระบบจะตรวจสอบที่อยู่นี้อัตโนมัติเมื่อกด Next</p>}
+
+          {addressValidationStatus === "checking" && (
+            <p className="flex items-center gap-1 text-slate-400">
+              <Loader2 className="h-3 w-3 animate-spin" /> กำลังตรวจสอบที่อยู่...
+            </p>
+          )}
+
+          {addressValidationStatus === "notApplicable" && (
+            <p className="text-slate-400">
+              UPS ตรวจสอบที่อยู่ได้เฉพาะปลายทาง US/Puerto Rico เท่านั้น — ปลายทางนี้ ({destinationCountry || "-"}) ไม่ต้องตรวจสอบ
+            </p>
+          )}
+
+          {addressValidationStatus === "ok" && (
+            <p className="flex items-center gap-1.5 font-medium text-emerald-600">
+              <CheckCircle2 className="h-3.5 w-3.5" /> ที่อยู่นี้ผ่านการตรวจสอบกับ UPS แล้ว
+            </p>
+          )}
+
+          {addressValidationStatus === "error" && (() => {
+            const { fieldLabel, isSandboxLimitation } = explainAddressValidationError(addressValidationError);
+            return (
+            <>
+              <p className="flex items-center gap-1.5 font-medium text-amber-700">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> {addressValidationError}
+              </p>
+              {isSandboxLimitation ? (
+                <p className="text-slate-500">
+                  * นี่คือข้อจำกัดของบัญชี UPS โหมดทดสอบ (Sandbox/CIE) เอง ไม่ใช่ที่อยู่ผิด — UPS ไม่รองรับ Address Validation
+                  แบบเต็มรูปแบบในโหมดนี้ (ขึ้นข้อความนี้ทุกครั้งไม่ว่าที่อยู่จะถูกหรือผิด) กรุณายืนยันใช้ที่อยู่เดิมด้านล่างได้เลย
+                </p>
+              ) : (
+                fieldLabel && (
+                  <p className="text-slate-500">
+                    ข้อความนี้น่าจะเกี่ยวข้องกับช่อง <strong>{fieldLabel}</strong> (ขึ้นกรอบสีแดงไว้ให้ด้านบน) — ลองตรวจสอบ/แก้ไขช่องนั้นอีกครั้งก่อนยืนยันใช้ที่อยู่เดิม
+                  </p>
+                )
+              )}
+              <button
+                type="button"
+                onClick={() => setAddressValidationOverridden(true)}
+                className="self-start font-medium text-slate-500 underline hover:text-slate-700"
+              >
+                ตรวจสอบไม่สำเร็จ ยืนยันใช้ที่อยู่เดิมต่อไป
+              </button>
+            </>
+            );
+          })()}
+
+          {addressValidationStatus === "invalid" && (
+            <>
+              <p className="flex items-center gap-1.5 font-medium text-amber-700">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> UPS ไม่พบที่อยู่นี้ในระบบ กรุณาตรวจสอบอีกครั้ง
+              </p>
+              <button
+                type="button"
+                onClick={() => setAddressValidationOverridden(true)}
+                className="self-start font-medium text-slate-500 underline hover:text-slate-700"
+              >
+                ยืนยันใช้ที่อยู่เดิมต่อไป (ไม่แนะนำ)
+              </button>
+            </>
+          )}
+
+          {addressValidationStatus === "ambiguous" && addressValidationResult && (
+            <>
+              <p className="flex items-center gap-1.5 font-medium text-amber-700">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> UPS พบที่อยู่ใกล้เคียง เลือกที่อยู่ที่ถูกต้อง หรือยืนยันใช้ที่อยู่เดิม
+              </p>
+              <div className="flex flex-col gap-1">
+                {addressValidationResult.candidates.map((candidate, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => applyAddressValidationCandidate(candidate)}
+                    className="rounded-md border border-amber-300 bg-white px-2.5 py-1.5 text-left text-slate-700 hover:bg-amber-100"
+                  >
+                    {[...candidate.addressLines, candidate.city, candidate.state, candidate.postcode, candidate.country]
+                      .filter(Boolean)
+                      .join(", ")}
+                    <span className="ml-1.5 text-[10px] uppercase text-slate-400">({candidate.classification})</span>
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setAddressValidationOverridden(true)}
+                className="self-start font-medium text-slate-500 underline hover:text-slate-700"
+              >
+                ยืนยันใช้ที่อยู่เดิมต่อไป
+              </button>
+            </>
+          )}
+
+          {addressValidationOverridden && addressValidationStatus !== "ok" && (
+            <p className="text-slate-500">* ยืนยันใช้ที่อยู่เดิมโดยไม่มีการแก้ไขแล้ว</p>
+          )}
+        </div>
         <button
           type="button"
-          onClick={() => setStep(2)}
-          className="flex items-center gap-2 rounded-lg bg-brand-amber px-6 py-2.5 text-sm font-semibold text-brand-navy-dark shadow-sm hover:bg-brand-amber/90"
+          onClick={handleStep1Next}
+          disabled={addressValidationStatus === "checking"}
+          className="flex items-center gap-2 rounded-lg bg-brand-amber px-6 py-2.5 text-sm font-semibold text-brand-navy-dark shadow-sm hover:bg-brand-amber/90 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Next <ChevronRight className="h-4 w-4" />
+          {addressValidationStatus === "checking" ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" /> กำลังตรวจสอบที่อยู่...
+            </>
+          ) : (
+            <>
+              Next <ChevronRight className="h-4 w-4" />
+            </>
+          )}
         </button>
       </div>
         </>
@@ -2469,6 +2772,13 @@ export default function ShipmentCreatePage() {
             คำนวณอัตโนมัติจากน้ำหนักรวมและประเภทกล่องที่เลือกในหัวข้อ Packages ด้านล่าง — ถ้าเลือกกล่อง CPM ระบบจะบังคับใช้ช่วงน้ำหนักของกล่องนั้นเสมอ
           </p>
         </div>
+        {hasCpmPackage && totalRealBookingWeight !== totalShipmentWeight && (
+          <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            ⚠ กล่อง CPM: ราคาขายลูกค้าคิดที่ <strong>{totalShipmentWeight.toLocaleString()} kg</strong> (ตามช่วงน้ำหนักคงที่ของกล่อง) แต่น้ำหนักที่จะ{" "}
+            <strong>Book จริงกับ Carrier</strong> คือน้ำหนักที่กรอกในช่อง Weight = <strong>{totalRealBookingWeight.toLocaleString()} kg</strong>{" "}
+            เท่านั้น — สองค่านี้ไม่จำเป็นต้องเท่ากัน
+          </p>
+        )}
       </div>
 
       <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
@@ -2645,10 +2955,10 @@ export default function ShipmentCreatePage() {
                     {pkg.forcedWeightBandId && (
                       <span
                         className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700"
-                        title="คิดค่าขนส่งที่น้ำหนักนี้เสมอ 2 ไม่ว่าจะระบุน้ำหนักจริงเท่าไรก็ตาม"
+                        title="ราคาขายลูกค้าคิดที่น้ำหนักนี้เป็นอย่างน้อยเสมอ (ถ้าน้ำหนักจริงเกินจะขายตามน้ำหนักจริงแทน) — แต่ Book กับ carrier จริงจะใช้น้ำหนักที่กรอกในช่อง Weight เสมอ"
                       >
                         Fixed Weight Range: {weightBands.find((b) => b.id === pkg.forcedWeightBandId)?.label}
-                        {pkg.forcedWeightBandWeight ? ` (คิดที่ ${pkg.forcedWeightBandWeight}kg)` : ""}
+                        {pkg.forcedWeightBandWeight ? ` (ขายอย่างน้อย ${pkg.forcedWeightBandWeight}kg)` : ""}
                       </span>
                     )}
                   </div>
@@ -2710,7 +3020,7 @@ export default function ShipmentCreatePage() {
                       disabled={!isActive}
                       title={
                         pkg.forcedWeightBandWeight
-                          ? `บันทึกน้ำหนักจริงไว้ได้ตามต้องการ — ค่าขนส่งจะคิดที่ ${pkg.forcedWeightBandWeight}kg เสมอ (CPM)`
+                          ? `น้ำหนักจริงที่กรอกนี้คือน้ำหนักที่จะส่งให้ carrier ตอน Book จริง — ราคาขายลูกค้ายังคิดที่อย่างน้อย ${pkg.forcedWeightBandWeight}kg เสมอ (CPM) แต่ถ้าน้ำหนักจริงเกินก็จะขายตามน้ำหนักจริงแทน`
                           : undefined
                       }
                       onChange={(e) => updatePackage(pkg.key, { weight: Number(e.target.value) })}
@@ -2766,7 +3076,8 @@ export default function ShipmentCreatePage() {
                       type="number"
                       min={1}
                       value={pkg.quantity}
-                      disabled={!isActive}
+                      disabled={!isActive || !!pkg.forcedWeightBandId}
+                      title={pkg.forcedWeightBandId ? "กล่อง CPM ต้องมี Qty = 1 เสมอ ไม่สามารถเพิ่มได้" : undefined}
                       onChange={(e) => updatePackage(pkg.key, { quantity: Number(e.target.value) })}
                       className={`w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15 disabled:bg-slate-100 ${
                         !isActive ? "pointer-events-none" : ""
@@ -2907,7 +3218,9 @@ export default function ShipmentCreatePage() {
             <button
               type="button"
               onClick={addPackage}
-              className="flex items-center gap-1 text-sm font-medium text-amber-600 hover:underline"
+              disabled={hasCpmPackage}
+              title={hasCpmPackage ? "กล่อง CPM ต้องเป็นกล่องเดียวใน Shipment เท่านั้น — เพิ่มกล่องอื่นไม่ได้" : undefined}
+              className="flex items-center gap-1 text-sm font-medium text-amber-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-400 disabled:no-underline"
             >
               <Plus className="h-4 w-4" /> Add package
             </button>
@@ -3043,6 +3356,9 @@ export default function ShipmentCreatePage() {
                             Billed Weight: <span className="font-medium text-slate-500">{r.billedWeight} {r.billedWeightUnit}</span>
                             {r.volumetricWeight != null && (
                               <span> · Volumetric: <span className="font-medium text-slate-500">{r.volumetricWeight} {r.billedWeightUnit}</span></span>
+                            )}
+                            {hasCpmPackage && totalRealBookingWeight !== totalShipmentWeight && (
+                              <span className="text-amber-600"> · Book จริง: {totalRealBookingWeight.toLocaleString()} kg (CPM)</span>
                             )}
                           </p>
                         )}
@@ -3421,6 +3737,7 @@ export default function ShipmentCreatePage() {
               ))}
             </select>
           </label>
+          <div className={billTransportationTo === "RECEIVER" || billTransportationTo === "THIRD_PARTY" ? "grid grid-cols-2 gap-3" : ""}>
           <label className="flex flex-col gap-1">
             <span className={labelClass}>Bill Transportation to</span>
             <select value={billTransportationTo} onChange={(e) => setBillTransportationTo(e.target.value)} className={inputClass}>
@@ -3431,6 +3748,49 @@ export default function ShipmentCreatePage() {
               ))}
             </select>
           </label>
+          {(billTransportationTo === "RECEIVER" || billTransportationTo === "THIRD_PARTY") && (
+            <label className="flex flex-col gap-1">
+              <span className={labelClass}>Account No. *</span>
+              <input
+                type="text"
+                value={billTransportationAccountNumber}
+                onChange={(e) => setBillTransportationAccountNumber(e.target.value)}
+                placeholder="Account Number"
+                className={inputClass}
+              />
+            </label>
+          )}
+          </div>
+          {billTransportationTo === "THIRD_PARTY" && (
+            <>
+              <label className="flex flex-col gap-1">
+                <span className={labelClass}>Country *</span>
+                <select
+                  value={billTransportationThirdPartyCountry}
+                  onChange={(e) => setBillTransportationThirdPartyCountry(e.target.value)}
+                  className={inputClass}
+                >
+                  <option value="">- Select Country -</option>
+                  {countries.map((c) => (
+                    <option key={c.id} value={c.iso2}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className={labelClass}>Postal Code</span>
+                <input
+                  type="text"
+                  value={billTransportationThirdPartyPostalCode}
+                  onChange={(e) => setBillTransportationThirdPartyPostalCode(e.target.value)}
+                  placeholder="e.g. 30005"
+                  className={inputClass}
+                />
+              </label>
+            </>
+          )}
+          <div className={billDutyTaxTo === "THIRD_PARTY" ? "grid grid-cols-2 gap-3" : ""}>
           <label className="flex flex-col gap-1">
             <span className={labelClass}>Bill Duty and Tax to</span>
             <select value={billDutyTaxTo} onChange={(e) => setBillDutyTaxTo(e.target.value)} className={inputClass}>
@@ -3441,6 +3801,48 @@ export default function ShipmentCreatePage() {
               ))}
             </select>
           </label>
+          {billDutyTaxTo === "THIRD_PARTY" && (
+            <label className="flex flex-col gap-1">
+              <span className={labelClass}>Account No. *</span>
+              <input
+                type="text"
+                value={billDutyTaxAccountNumber}
+                onChange={(e) => setBillDutyTaxAccountNumber(e.target.value)}
+                placeholder="Account Number"
+                className={inputClass}
+              />
+            </label>
+          )}
+          </div>
+          {billDutyTaxTo === "THIRD_PARTY" && (
+            <>
+              <label className="flex flex-col gap-1">
+                <span className={labelClass}>Country *</span>
+                <select
+                  value={billDutyTaxThirdPartyCountry}
+                  onChange={(e) => setBillDutyTaxThirdPartyCountry(e.target.value)}
+                  className={inputClass}
+                >
+                  <option value="">- Select Country -</option>
+                  {countries.map((c) => (
+                    <option key={c.id} value={c.iso2}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className={labelClass}>Postal Code</span>
+                <input
+                  type="text"
+                  value={billDutyTaxThirdPartyPostalCode}
+                  onChange={(e) => setBillDutyTaxThirdPartyPostalCode(e.target.value)}
+                  placeholder="e.g. 30005"
+                  className={inputClass}
+                />
+              </label>
+            </>
+          )}
           <label className="flex flex-col gap-1">
             <span className={labelClass}>Ref. Invoice No.</span>
             <input
@@ -3484,7 +3886,7 @@ export default function ShipmentCreatePage() {
         </button>
         <button
           type="button"
-          disabled={!selectedQuote}
+          disabled={!selectedQuote || !paymentInfoValid}
           onClick={() => {
             setBookedShipment(null);
             setBookingError("");

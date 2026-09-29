@@ -5,9 +5,13 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Plus, Trash2, X } from "lucide-react";
 import PageLoading from "@/components/ui/PageLoading";
+import Modal from "@/components/ui/Modal";
 import CarrierBadge from "@/components/ui/CarrierBadge";
 import BillingCustomerManagerModal from "@/components/config/BillingCustomerManagerModal";
 import { listShipments, getShipment, type Shipment } from "@/lib/shipments";
+import { listBranches, type Branch } from "@/lib/branches";
+import BranchSelect from "@/components/shipment/BranchSelect";
+import { listAgentAccounts, type AgentAccount } from "@/lib/agentAccounts";
 import {
   listBillingCustomers,
   createBillingCustomer,
@@ -22,6 +26,32 @@ import {
   type ReceiptPair,
   type ReceiptLineInput,
 } from "@/lib/receipts";
+import { listReceiptLineTemplates, type ReceiptLineTemplate } from "@/lib/receiptLineTemplates";
+import { evaluateFormula, normalizeLineName } from "@/lib/formulaEval";
+
+// Extends the plain payload shape with a client-only `formula` (from a Template's line) that
+// drives live recalculation — stripped out again right before sending to createReceipt() (the
+// backend only ever stores the final computed `amount`, never the formula itself).
+type LineWithFormula = ReceiptLineInput & { formula?: string | null };
+
+// Re-evaluates every formula line TOP TO BOTTOM against the lines above it (by description,
+// case-insensitive) — call this after ANY change to `lines` so formula lines always reflect the
+// current value of whatever they reference, exactly like a spreadsheet recalculating on edit.
+function recomputeFormulas(lines: LineWithFormula[]): LineWithFormula[] {
+  const values: Record<string, number> = {};
+
+  return lines.map((line) => {
+    if (line.formula && line.formula.trim()) {
+      const { value } = evaluateFormula(line.formula, values);
+      if (line.description.trim()) values[normalizeLineName(line.description)] = value;
+
+      return { ...line, amount: value };
+    }
+    if (line.description.trim()) values[normalizeLineName(line.description)] = Number(line.amount) || 0;
+
+    return line;
+  });
+}
 
 const fieldClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm leading-tight outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15";
@@ -69,11 +99,28 @@ export default function IssueReceiptPage() {
   );
 
   const [shipments, setShipments] = useState<Shipment[]>([]);
-  const [lines, setLines] = useState<ReceiptLineInput[]>([]);
+  // Shipment/tracking numbers for OTHER carriers never tracked as a real Shipment row in this
+  // system (2026-09-25) — lets staff issue a receipt for them too, entered as plain text.
+  const [manualRefs, setManualRefs] = useState<string[]>([]);
+  const [manualRefInput, setManualRefInput] = useState("");
+  // Carriers with no real API integration (is_api_enabled=false on their Agent Account, e.g.
+  // Kerry/Flash) — offered here as a pick-list so staff tag the manual ref with a proper carrier
+  // name instead of typing it every time (see /config/agent-accounts "ปิดใช้งาน API" toggle).
+  const [manualCarrierAccounts, setManualCarrierAccounts] = useState<AgentAccount[]>([]);
+  const [manualCarrierAccountId, setManualCarrierAccountId] = useState<number | "">("");
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchId, setBranchId] = useState<number | null>(null);
+  const [lines, setLines] = useState<LineWithFormula[]>([]);
   // Set right before collapsing lines via the "Merge into one line" toggle, so pressing it again
   // restores the itemized breakdown instead of losing it. Cleared whenever the shipment set
   // changes (the itemized data would be stale).
-  const [preMergeLines, setPreMergeLines] = useState<ReceiptLineInput[] | null>(null);
+  const [preMergeLines, setPreMergeLines] = useState<LineWithFormula[] | null>(null);
+  const [templates, setTemplates] = useState<ReceiptLineTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | "">("");
+  // Index of the line whose formula is currently being edited in the popup Modal (the inline
+  // table cell is too small to comfortably type/read a formula in) — null when closed.
+  const [formulaModalIndex, setFormulaModalIndex] = useState<number | null>(null);
+  const [formulaDraft, setFormulaDraft] = useState("");
   const [targetTotal, setTargetTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -127,6 +174,9 @@ export default function IssueReceiptPage() {
     setBuyerName(preview.buyer_suggestion.name.toUpperCase());
     setBuyerTaxId(preview.buyer_suggestion.tax_id ?? "");
     setBuyerAddress(preview.buyer_suggestion.address.toUpperCase());
+    // Only DEFAULTS the Branch to the shipments' own branch — never overwrites a value staff
+    // already picked/changed themselves (2026-09-25: Branch can be freely overridden).
+    setBranchId((prev) => prev ?? preview.branch_id);
   }
 
   useEffect(() => {
@@ -135,6 +185,13 @@ export default function IssueReceiptPage() {
     refreshShipments(initialShipmentIds)
       .catch((err) => setLoadError(err instanceof Error ? err.message : "Failed to load selected shipments"))
       .finally(() => setLoading(false));
+    listBranches().then(setBranches).catch(() => {});
+    listReceiptLineTemplates()
+      .then((all) => setTemplates(all.filter((t) => t.status)))
+      .catch(() => {});
+    listAgentAccounts()
+      .then((accounts) => setManualCarrierAccounts(accounts.filter((a) => !a.is_api_enabled && a.status)))
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -191,6 +248,29 @@ export default function IssueReceiptPage() {
     }
   }
 
+  function addManualRef() {
+    const value = manualRefInput.trim();
+    if (!value) return;
+    const carrier = manualCarrierAccounts.find((a) => a.id === manualCarrierAccountId);
+    const ref = carrier ? `${manualCarrierLabel(carrier)}: ${value}` : value;
+    if (manualRefs.includes(ref)) return;
+    setManualRefs((prev) => [...prev, ref]);
+    setManualRefInput("");
+  }
+
+  function removeManualRef(value: string) {
+    setManualRefs((prev) => prev.filter((v) => v !== value));
+  }
+
+  // Appends the account's own username_acc whenever the same carrier has more than one Agent
+  // Account configured (e.g. two Kerry accounts for two branches) so they're distinguishable
+  // in the picker instead of showing the same carrier name twice.
+  function manualCarrierLabel(account: AgentAccount): string {
+    const name = account.agent?.agent_name ?? account.username_acc;
+    const siblingCount = manualCarrierAccounts.filter((a) => a.agent_id === account.agent_id).length;
+    return siblingCount > 1 ? `${name} - ${account.username_acc}` : name;
+  }
+
   function selectBillingCustomer(c: BillingCustomer) {
     setBillingCustomerId(c.id);
     setBuyerName(c.name.toUpperCase());
@@ -230,44 +310,107 @@ export default function IssueReceiptPage() {
   }
 
   function addLine() {
-    setLines((prev) => [...prev, { description: "", is_non_vat: false, amount: 0 }]);
+    setLines((prev) => recomputeFormulas([...prev, { description: "", is_non_vat: false, amount: 0 }]));
   }
 
   function removeLine(index: number) {
-    setLines((prev) => prev.filter((_, i) => i !== index));
+    setLines((prev) => recomputeFormulas(prev.filter((_, i) => i !== index)));
   }
 
-  function updateLine(index: number, patch: Partial<ReceiptLineInput>) {
-    setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
+  function updateLine(index: number, patch: Partial<LineWithFormula>) {
+    setLines((prev) => recomputeFormulas(prev.map((l, i) => (i === index ? { ...l, ...patch } : l))));
   }
 
-  const linesTotal = useMemo(() => lines.reduce((sum, l) => sum + (Number(l.amount) || 0), 0), [lines]);
-  // Shipment sell prices are already VAT-INCLUSIVE — VAT is only ever EXTRACTED from the
-  // vat-marked lines for the Tax Invoice's legal breakdown, never added on top, so Grand Total
-  // always equals exactly what was entered (matches the shipment's sell price with no markup).
-  const vatInclusiveAmount = useMemo(
-    () => lines.filter((l) => !l.is_non_vat).reduce((s, l) => s + (Number(l.amount) || 0), 0),
-    [lines],
-  );
-  const subtotalNonVat = linesTotal - vatInclusiveAmount;
-  const subtotalVat = Math.round((vatInclusiveAmount / 1.07) * 100) / 100;
-  const vatAmount = Math.round((vatInclusiveAmount - subtotalVat) * 100) / 100;
+  // Replaces the CURRENT line items entirely with the chosen Template's lines (plain lines start
+  // at 0, staff types the real number in; formula lines compute live from there on) — confirms
+  // first since this discards whatever suggested/typed lines were already there.
+  function applyTemplate(templateId: number) {
+    const template = templates.find((t) => t.id === templateId);
+    if (!template) return;
+    if (lines.length > 0 && !confirm("การเลือก Template จะแทนที่รายการปัจจุบันทั้งหมด ดำเนินการต่อไหม?")) {
+      setSelectedTemplateId("");
+      return;
+    }
+    setPreMergeLines(null);
+    const newLines: LineWithFormula[] = template.items.map((item) => ({
+      description: item.description,
+      is_non_vat: item.is_non_vat,
+      amount: 0,
+      formula: item.formula,
+    }));
+    setLines(recomputeFormulas(newLines));
+  }
+
+  function openFormulaModal(index: number) {
+    setFormulaModalIndex(index);
+    setFormulaDraft(lines[index]?.formula ?? "");
+  }
+
+  function saveFormulaModal() {
+    if (formulaModalIndex === null) return;
+    updateLine(formulaModalIndex, { formula: formulaDraft });
+    setFormulaModalIndex(null);
+  }
+
+  // Every line ABOVE the one being edited — the only ones a formula is allowed to reference
+  // (see recomputeFormulas: values are built top-to-bottom).
+  const formulaModalAvailableRefs =
+    formulaModalIndex !== null ? lines.slice(0, formulaModalIndex).filter((l) => l.description.trim()) : [];
+  const formulaModalPreview = formulaDraft.trim() ? evaluateFormula(formulaDraft, (() => {
+    const values: Record<string, number> = {};
+    for (const l of formulaModalAvailableRefs) values[normalizeLineName(l.description)] = Number(l.amount) || 0;
+    return values;
+  })()) : null;
+
+  // A line NOT marked Non-VAT is entered as its PRE-TAX (exclusive) amount — VAT is ADDED on top
+  // of it, so Grand Total ends up HIGHER than the raw sum of entered line amounts whenever any
+  // VAT-applicable line exists (matches the backend's ReceiptController::computeTotals()).
+  // Per-line formula error text (e.g. an unresolved {NAME} reference) — recomputed for DISPLAY
+  // only; `lines[i].amount` itself is already kept correct via recomputeFormulas() on every edit.
+  const lineErrors = useMemo(() => {
+    const values: Record<string, number> = {};
+
+    return lines.map((line) => {
+      if (line.formula && line.formula.trim()) {
+        const { value, error } = evaluateFormula(line.formula, values);
+        if (line.description.trim()) values[normalizeLineName(line.description)] = value;
+
+        return error;
+      }
+      if (line.description.trim()) values[normalizeLineName(line.description)] = Number(line.amount) || 0;
+
+      return null;
+    });
+  }, [lines]);
+
+  const subtotalNonVat = useMemo(() => lines.filter((l) => l.is_non_vat).reduce((s, l) => s + (Number(l.amount) || 0), 0), [lines]);
+  const subtotalVat = useMemo(() => lines.filter((l) => !l.is_non_vat).reduce((s, l) => s + (Number(l.amount) || 0), 0), [lines]);
+  const vatAmount = Math.round(subtotalVat * 0.07 * 100) / 100;
   const grandTotal = Math.round((subtotalNonVat + subtotalVat + vatAmount) * 100) / 100;
 
-  // Line total no longer has to match the shipments' sell price exactly — some customers are
-  // billed more than the shipment cost. The difference is recorded (shipment_total_snapshot on
-  // the saved receipt) and shown here as an informational indicator, never blocks Submit.
-  const variance = targetTotal != null ? Math.round((linesTotal - targetTotal) * 100) / 100 : null;
+  // Grand Total (the actual amount billed, VAT included) no longer has to match the shipments'
+  // sell price exactly — some customers are billed more than the shipment cost. The difference is
+  // recorded (shipment_total_snapshot on the saved receipt) and shown here as an informational
+  // indicator, never blocks Submit.
+  const variance = targetTotal != null ? Math.round((grandTotal - targetTotal) * 100) / 100 : null;
   const hasVariance = variance != null && Math.abs(variance) > 0.01;
-  const canSubmit = shipments.length > 0 && lines.length > 0 && buyerName.trim().length > 0;
+  // Carrier's actual cost (negotiated/published rate, pre-markup) for reference only — never
+  // saved on the receipt itself, and only ever available for real system shipments (null on
+  // shipments booked before cost tracking was added, see Shipment.cost_amount).
+  const shipmentsWithCost = shipments.filter((s) => s.cost_amount != null);
+  const totalCost =
+    shipmentsWithCost.length > 0 ? shipmentsWithCost.reduce((sum, s) => sum + Number(s.cost_amount), 0) : null;
+  const canSubmit = (shipments.length > 0 || manualRefs.length > 0) && branchId != null && lines.length > 0 && buyerName.trim().length > 0;
   const disabledReason =
-    shipments.length === 0
+    shipments.length === 0 && manualRefs.length === 0
       ? "Add at least one shipment"
-      : lines.length === 0
-        ? "Add at least one line item"
-        : buyerName.trim().length === 0
-          ? "Enter a buyer name"
-          : null;
+      : branchId == null
+        ? "Select a branch"
+        : lines.length === 0
+          ? "Add at least one line item"
+          : buyerName.trim().length === 0
+            ? "Enter a buyer name"
+            : null;
 
   // Saves the typed buyer as a reusable Tax Invoice Customer — mirrors autoSaveAddress on the
   // Create Shipment page: match an existing record by tax_id first (most reliable identifier),
@@ -311,13 +454,15 @@ export default function IssueReceiptPage() {
     try {
       const pair = await createReceipt({
         shipment_ids: shipments.map((s) => s.id),
+        manual_shipment_refs: manualRefs.length > 0 ? manualRefs : undefined,
+        branch_id: branchId,
         billing_customer_id: billingCustomerId,
         buyer_name: buyerName,
         buyer_tax_id: buyerTaxId || null,
         buyer_address: buyerAddress || null,
         buyer_is_head_office: buyerIsHeadOffice,
         buyer_branch_no: buyerBranchNo || null,
-        lines,
+        lines: lines.map(({ formula: _formula, ...line }) => line),
         vat_rate: 7,
       });
       setSuccessPair(pair);
@@ -409,13 +554,21 @@ export default function IssueReceiptPage() {
                 <p className={labelClass}>Document Date</p>
                 <p className="mt-1 text-sm text-slate-700">{new Date().toLocaleDateString()}</p>
               </div>
+              <div>
+                <p className={labelClass}>Cost (Carrier)</p>
+                <p className="mt-1 text-sm text-slate-700">{totalCost != null ? money(totalCost) : "-"}</p>
+              </div>
             </div>
+            <label className="mt-3 flex flex-col gap-1">
+              <span className={labelClass}>Branch</span>
+              <BranchSelect branches={branches} value={branchId} onChange={setBranchId} className="w-full" />
+            </label>
             <p className="mt-2 text-xs text-slate-400">Vol.No / No. assigned on submit</p>
           </section>
 
           <Card title="Shipments">
             {refreshError && <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{refreshError}</p>}
-            {shipments.length === 0 ? (
+            {shipments.length === 0 && manualRefs.length === 0 ? (
               <p className="mb-2 text-sm text-slate-400">No shipments selected yet — search below to add one.</p>
             ) : (
               <ul className="mb-3 divide-y divide-slate-100 rounded-lg border border-slate-200">
@@ -439,8 +592,71 @@ export default function IssueReceiptPage() {
                     </div>
                   </li>
                 ))}
+                {manualRefs.map((ref) => (
+                  <li key={ref} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                    <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                      <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                        Manual
+                      </span>
+                      <span className="truncate font-mono text-slate-700">{ref}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeManualRef(ref)}
+                      className="shrink-0 rounded p-0.5 text-slate-400 hover:bg-red-50 hover:text-red-500"
+                      aria-label="Remove"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </li>
+                ))}
               </ul>
             )}
+            <div className="mb-3 flex flex-col gap-1.5">
+              <select
+                value={manualCarrierAccountId}
+                onChange={(e) => setManualCarrierAccountId(e.target.value ? Number(e.target.value) : "")}
+                disabled={manualCarrierAccounts.length === 0}
+                className={`${fieldClass} disabled:cursor-not-allowed disabled:opacity-50`}
+                title={
+                  manualCarrierAccounts.length === 0
+                    ? "ยังไม่มีขนส่งที่ปิดใช้งาน API — เพิ่มได้ที่ /config/agent-accounts"
+                    : "เลือกชื่อขนส่ง (ถ้ามี)"
+                }
+              >
+                <option value="">
+                  {manualCarrierAccounts.length === 0 ? "No carrier configured — see /config/agent-accounts" : "Other carrier (optional)..."}
+                </option>
+                {manualCarrierAccounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {manualCarrierLabel(a)}
+                  </option>
+                ))}
+              </select>
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  value={manualRefInput}
+                  onChange={(e) => setManualRefInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addManualRef();
+                    }
+                  }}
+                  placeholder="Type Shipment/Tracking No. manually..."
+                  className={fieldClass}
+                />
+                <button
+                  type="button"
+                  onClick={addManualRef}
+                  disabled={!manualRefInput.trim()}
+                  className="shrink-0 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-200 disabled:opacity-40"
+                >
+                  <Plus className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
             <div className="relative">
               <input
                 type="text"
@@ -612,7 +828,25 @@ export default function IssueReceiptPage() {
       <Card
         title="Line Items"
         right={
-          <div className="flex gap-3">
+          <div className="flex items-center gap-3">
+            {templates.length > 0 && (
+              <select
+                value={selectedTemplateId}
+                onChange={(e) => {
+                  const id = Number(e.target.value);
+                  setSelectedTemplateId(id || "");
+                  if (id) applyTemplate(id);
+                }}
+                className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-600"
+              >
+                <option value="">Use Template...</option>
+                {templates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            )}
             <button type="button" onClick={mergeIntoOneLine} className="text-xs font-semibold text-brand-navy-dark hover:underline">
               {preMergeLines ? "Split into itemized lines" : "Merge into one line"}
             </button>
@@ -649,7 +883,37 @@ export default function IssueReceiptPage() {
                         onChange={(e) => updateLine(index, { description: e.target.value.toUpperCase() })}
                         className={underlineClass}
                       />
+                      {typeof line.formula === "string" ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => openFormulaModal(index)}
+                            title={line.formula || "คลิกเพื่อกำหนดสูตร"}
+                            className="shrink-0 max-w-[160px] truncate rounded border border-dashed border-slate-300 px-1.5 py-0.5 font-mono text-[11px] text-slate-500 hover:bg-slate-50"
+                          >
+                            {line.formula.trim() ? line.formula : "คลิกเพื่อกำหนดสูตร..."}
+                          </button>
+                          <button
+                            type="button"
+                            title="เปลี่ยนเป็นตัวเลขคงที่ (เลิกใช้สูตร)"
+                            onClick={() => updateLine(index, { formula: null })}
+                            className="shrink-0 rounded border border-slate-300 px-1 py-0.5 text-[10px] font-medium text-slate-500 hover:bg-slate-50"
+                          >
+                            123
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          title="ใช้สูตรคำนวณ เช่น {FREIGHT CHARGE} * 12%"
+                          onClick={() => openFormulaModal(index)}
+                          className="shrink-0 rounded border border-slate-300 px-1 py-0.5 text-[10px] font-medium text-slate-500 hover:bg-slate-50"
+                        >
+                          fx
+                        </button>
+                      )}
                     </div>
+                    {lineErrors[index] && <p className="mt-0.5 text-[11px] text-red-500">{lineErrors[index]}</p>}
                   </td>
                   <td className="px-3 py-1.5">
                     <input
@@ -669,12 +933,16 @@ export default function IssueReceiptPage() {
                     />
                   </td>
                   <td className="px-3 py-1.5">
-                    <input
-                      type="number"
-                      value={line.amount}
-                      onChange={(e) => updateLine(index, { amount: Number(e.target.value) })}
-                      className={`${underlineClass} text-right`}
-                    />
+                    {typeof line.formula === "string" ? (
+                      <span className="block text-right tabular-nums text-slate-600">{money(line.amount)}</span>
+                    ) : (
+                      <input
+                        type="number"
+                        value={line.amount}
+                        onChange={(e) => updateLine(index, { amount: Number(e.target.value) })}
+                        className={`${underlineClass} text-right`}
+                      />
+                    )}
                   </td>
                   <td className="px-3 py-1.5 text-right">
                     <button type="button" onClick={() => removeLine(index)} className="rounded-lg p-1.5 text-red-500 hover:bg-red-50">
@@ -706,7 +974,7 @@ export default function IssueReceiptPage() {
               <span>{money(grandTotal)}</span>
             </div>
             <p className={`text-right text-xs ${hasVariance ? "text-amber-600" : "text-slate-400"}`}>
-              Lines {money(linesTotal)} / Sell Price {targetTotal != null ? money(targetTotal) : "-"}
+              Lines {money(grandTotal)} / Sell Price {targetTotal != null ? money(targetTotal) : "-"}
               {hasVariance && variance != null && (
                 <> — ส่วนต่าง {variance > 0 ? "+" : ""}
                   {money(variance)}
@@ -741,6 +1009,71 @@ export default function IssueReceiptPage() {
             setShowCustomerManager(false);
           }}
         />
+      )}
+
+      {formulaModalIndex !== null && (
+        <Modal title={`กำหนดสูตร: ${lines[formulaModalIndex]?.description || "(ยังไม่ตั้งชื่อบรรทัด)"}`} onClose={() => setFormulaModalIndex(null)}>
+          <div className="flex flex-col gap-3">
+            <label className="flex flex-col gap-1.5">
+              <span className={labelClass}>Formula</span>
+              <input
+                type="text"
+                autoFocus
+                value={formulaDraft}
+                onChange={(e) => setFormulaDraft(e.target.value)}
+                placeholder='{FREIGHT CHARGE} * 12%'
+                className={`${fieldClass} font-mono`}
+              />
+            </label>
+
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+              {formulaModalPreview?.error ? (
+                <span className="text-red-500">{formulaModalPreview.error}</span>
+              ) : (
+                <span className="text-slate-600">
+                  ผลลัพธ์ = <span className="font-semibold text-slate-800">{money(formulaModalPreview?.value ?? 0)}</span>
+                </span>
+              )}
+            </div>
+
+            {formulaModalAvailableRefs.length > 0 && (
+              <div>
+                <p className={`${labelClass} mb-1.5`}>คลิกเพื่อแทรกชื่อบรรทัด</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {formulaModalAvailableRefs.map((l, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => setFormulaDraft((prev) => `${prev}{${l.description.trim()}}`)}
+                      className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      {l.description} = {money(Number(l.amount) || 0)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <p className="text-xs text-slate-400">รองรับ + − × ÷ ( ) และ % (เปอร์เซ็นต์) — อ้างอิงได้เฉพาะบรรทัดที่อยู่ก่อนหน้าเท่านั้น</p>
+
+            <div className="mt-2 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setFormulaModalIndex(null)}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveFormulaModal}
+                className="rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );

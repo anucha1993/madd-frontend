@@ -20,6 +20,7 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
   const [basicAuthPassword, setBasicAuthPassword] = useState("");
   const [status, setStatus] = useState(initial?.status ?? true);
   const [mode, setMode] = useState<"test" | "production">(initial?.mode ?? "production");
+  const [isApiEnabled, setIsApiEnabled] = useState(initial?.is_api_enabled ?? true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -44,6 +45,7 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
         basic_auth_password: basicAuthPassword.trim() || undefined,
         status,
         mode,
+        is_api_enabled: isApiEnabled,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
@@ -143,6 +145,21 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
           className="h-4 w-4 rounded border-slate-300 accent-brand-amber"
         />
         เปิดใช้งานบัญชีนี้
+      </label>
+
+      <label className="flex flex-col gap-1.5 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3">
+        <span className="flex items-center gap-2 text-sm font-medium text-slate-700">
+          <input
+            type="checkbox"
+            checked={!isApiEnabled}
+            onChange={(e) => setIsApiEnabled(!e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300 accent-brand-amber"
+          />
+          ปิดใช้งาน API (สำหรับขนส่งที่ไม่มีการเชื่อมต่อ API จริง เช่น Kerry, Flash)
+        </span>
+        <span className="pl-6 text-xs text-slate-400">
+          บัญชีนี้จะไม่แสดงให้เลือกตอนเช็คราคา/สร้าง Shipment แต่จะยังแสดงให้เลือกเป็นชื่อขนส่งตอนออกใบเสร็จได้
+        </span>
       </label>
 
       {error && (

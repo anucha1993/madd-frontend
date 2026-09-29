@@ -15,6 +15,7 @@ import {
   type ChargeFixedOverride,
 } from "@/lib/chargeFixedOverrides";
 import {
+  createAgent,
   createAgentAccount,
   deleteAgentAccount,
   listAgentAccounts,
@@ -107,6 +108,14 @@ export default function AgentAccountsPage() {
   const [logoEditAgent, setLogoEditAgent] = useState<Agent | null>(null);
   const [logoUrlInput, setLogoUrlInput] = useState("");
   const [logoSaving, setLogoSaving] = useState(false);
+
+  // Registers a brand-new carrier (e.g. Kerry, Flash — no real API integration) so staff can
+  // then add an "ปิดใช้งาน API" account under it — see AgentAccountForm's is_api_enabled toggle.
+  const [newAgentModalOpen, setNewAgentModalOpen] = useState(false);
+  const [newAgentName, setNewAgentName] = useState("");
+  const [newAgentCode, setNewAgentCode] = useState("");
+  const [newAgentSaving, setNewAgentSaving] = useState(false);
+  const [newAgentError, setNewAgentError] = useState("");
 
   const [fixedChargesAccount, setFixedChargesAccount] = useState<AgentAccount | null>(null);
   const [fixedOverrides, setFixedOverrides] = useState<ChargeFixedOverride[]>([]);
@@ -227,6 +236,31 @@ export default function AgentAccountsPage() {
       setError(err instanceof Error ? err.message : "บันทึกโลโก้ไม่สำเร็จ");
     } finally {
       setLogoSaving(false);
+    }
+  }
+
+  function openNewAgentModal() {
+    setNewAgentName("");
+    setNewAgentCode("");
+    setNewAgentError("");
+    setNewAgentModalOpen(true);
+  }
+
+  async function handleCreateAgent() {
+    if (!newAgentName.trim() || !newAgentCode.trim()) {
+      setNewAgentError("กรุณากรอกชื่อขนส่งและรหัส (Code) ให้ครบ");
+      return;
+    }
+    setNewAgentSaving(true);
+    setNewAgentError("");
+    try {
+      await createAgent({ agent_name: newAgentName.trim(), agent_code: newAgentCode.trim().toUpperCase() });
+      setNewAgentModalOpen(false);
+      await loadAll();
+    } catch (err) {
+      setNewAgentError(err instanceof Error ? err.message : "เพิ่มขนส่งไม่สำเร็จ");
+    } finally {
+      setNewAgentSaving(false);
     }
   }
 
@@ -414,8 +448,16 @@ export default function AgentAccountsPage() {
   return (
     <div className="relative min-h-[360px]">
       <div className="mb-6 flex items-start justify-between">
-        <PageHeader title="บัญชี Agent (UPS/DHL)" description="จัดการบัญชีขนส่งที่ใช้สำหรับเช็คราคาและสร้างพัสดุ" />
+        <PageHeader title="บัญชี Agent (UPS/DHL และขนส่งอื่นที่ไม่มี API)" description="จัดการบัญชีขนส่งที่ใช้สำหรับเช็คราคาและสร้างพัสดุ หรือเพิ่มชื่อขนส่งอื่นไว้เลือกตอนออกใบเสร็จ (ไม่ต้องมี API)" />
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={openNewAgentModal}
+            className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+          >
+            <Plus className="h-4 w-4" />
+            เพิ่มชื่อขนส่ง
+          </button>
           <button
             type="button"
             onClick={toggleBulkEditMode}
@@ -527,6 +569,7 @@ export default function AgentAccountsPage() {
                         <th className="px-5 py-2.5 font-medium">ชื่อบัญชี</th>
                         <th className="px-5 py-2.5 font-medium">Client ID</th>
                         <th className="px-5 py-2.5 font-medium">Credentials</th>
+                        <th className="px-5 py-2.5 font-medium">API</th>
                         <th className="px-5 py-2.5 font-medium">Mode</th>
                         <th className="px-5 py-2.5 font-medium">สถานะ</th>
                         <th className="px-5 py-2.5 font-medium">ผลทดสอบ</th>
@@ -567,6 +610,20 @@ export default function AgentAccountsPage() {
                                 </span>
                               )}
                             </div>
+                          </td>
+                          <td className="px-5 py-3">
+                            <span
+                              title={
+                                account.is_api_enabled
+                                  ? "เชื่อมต่อ API จริง — ใช้เช็คราคา/สร้าง Shipment ได้"
+                                  : "ไม่มี API — จะไม่แสดงตอนออก Shipment แต่เลือกได้ตอนออกใบเสร็จ"
+                              }
+                              className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                                account.is_api_enabled ? "bg-blue-50 text-blue-600" : "bg-slate-100 text-slate-500"
+                              }`}
+                            >
+                              {account.is_api_enabled ? "API" : "ไม่มี API"}
+                            </span>
                           </td>
                           <td className="px-5 py-3">
                             <span
@@ -671,6 +728,54 @@ export default function AgentAccountsPage() {
             onSubmit={handleSubmit}
             onCancel={() => setModalAccount(null)}
           />
+        </Modal>
+      )}
+
+      {newAgentModalOpen && (
+        <Modal title="เพิ่มชื่อขนส่ง (Agent)" onClose={() => setNewAgentModalOpen(false)}>
+          <div className="flex flex-col gap-4">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-slate-600">ชื่อขนส่ง</span>
+              <input
+                type="text"
+                value={newAgentName}
+                onChange={(e) => setNewAgentName(e.target.value)}
+                placeholder="เช่น Kerry Express"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-slate-600">รหัส (Code)</span>
+              <input
+                type="text"
+                value={newAgentCode}
+                onChange={(e) => setNewAgentCode(e.target.value)}
+                placeholder="เช่น KERRY"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase text-slate-800 outline-none transition focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
+              />
+              <span className="text-xs text-slate-400">
+                ใช้แยกแยะขนส่งแต่ละเจ้าในระบบเท่านั้น ไม่ต้องตรงกับรหัสของผู้ให้บริการจริง
+              </span>
+            </label>
+            {newAgentError && <p className="text-sm text-red-600">{newAgentError}</p>}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setNewAgentModalOpen(false)}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateAgent}
+                disabled={newAgentSaving}
+                className="rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90 disabled:opacity-60"
+              >
+                {newAgentSaving ? "กำลังบันทึก..." : "บันทึก"}
+              </button>
+            </div>
+          </div>
         </Modal>
       )}
 

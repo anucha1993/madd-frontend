@@ -160,19 +160,18 @@ export default function EditReceiptPage() {
   const isVoided = receipt?.status === "VOIDED";
   const shipmentTotalSnapshot = receipt?.shipment_total_snapshot != null ? Number(receipt.shipment_total_snapshot) : null;
 
-  const linesTotal = useMemo(() => lines.reduce((sum, l) => sum + (Number(l.amount) || 0), 0), [lines]);
-  const vatInclusiveAmount = useMemo(
-    () => (isTaxInvoice ? lines.filter((l) => !l.is_non_vat).reduce((s, l) => s + (Number(l.amount) || 0), 0) : 0),
-    [lines, isTaxInvoice],
-  );
-  const subtotalNonVat = isTaxInvoice ? linesTotal - vatInclusiveAmount : 0;
-  const subtotalVat = isTaxInvoice ? Math.round((vatInclusiveAmount / 1.07) * 100) / 100 : 0;
-  const vatAmount = isTaxInvoice ? Math.round((vatInclusiveAmount - subtotalVat) * 100) / 100 : 0;
-  const grandTotal = isTaxInvoice ? Math.round((subtotalNonVat + subtotalVat + vatAmount) * 100) / 100 : linesTotal;
+  // A line NOT marked Non-VAT is entered as its PRE-TAX (exclusive) amount — VAT is ADDED on top
+  // of it (matches ReceiptController::computeTotals()). Applies regardless of which paired
+  // document (Cash Receipt or Tax Invoice) is currently being edited, since the backend always
+  // saves the SAME recomputed grand_total to both.
+  const subtotalNonVat = useMemo(() => lines.filter((l) => l.is_non_vat).reduce((s, l) => s + (Number(l.amount) || 0), 0), [lines]);
+  const subtotalVat = useMemo(() => lines.filter((l) => !l.is_non_vat).reduce((s, l) => s + (Number(l.amount) || 0), 0), [lines]);
+  const vatAmount = Math.round(subtotalVat * 0.07 * 100) / 100;
+  const grandTotal = Math.round((subtotalNonVat + subtotalVat + vatAmount) * 100) / 100;
 
   // Line-item total no longer has to match the document's original total exactly — billing
   // more/less than the shipment cost is allowed, the difference just shows as a variance below.
-  const variance = shipmentTotalSnapshot != null ? Math.round((linesTotal - shipmentTotalSnapshot) * 100) / 100 : null;
+  const variance = shipmentTotalSnapshot != null ? Math.round((grandTotal - shipmentTotalSnapshot) * 100) / 100 : null;
   const hasVariance = variance != null && Math.abs(variance) > 0.01;
   const canSave = !isVoided && lines.length > 0 && buyerName.trim().length > 0;
   const disabledReason = isVoided
@@ -297,11 +296,19 @@ export default function EditReceiptPage() {
           </section>
 
           <Card title="Shipments (locked)">
-            {receipt.shipments && receipt.shipments.length > 0 ? (
+            {(receipt.shipments && receipt.shipments.length > 0) || (receipt.manual_shipment_refs && receipt.manual_shipment_refs.length > 0) ? (
               <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
-                {receipt.shipments.map((s) => (
+                {receipt.shipments?.map((s) => (
                   <li key={s.id} className="px-3 py-1.5 text-sm font-mono text-slate-700">
                     {s.tracking_number ?? `#${s.id}`}
+                  </li>
+                ))}
+                {receipt.manual_shipment_refs?.map((ref) => (
+                  <li key={ref} className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-mono text-slate-700">
+                    <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                      Manual
+                    </span>
+                    {ref}
                   </li>
                 ))}
               </ul>
@@ -625,7 +632,7 @@ export default function EditReceiptPage() {
                   <span>{money(grandTotal)}</span>
                 </div>
                 <p className={`text-right text-xs ${hasVariance ? "text-amber-600" : "text-slate-400"}`}>
-                  Lines {money(linesTotal)} / Sell Price {shipmentTotalSnapshot != null ? money(shipmentTotalSnapshot) : "-"}
+                  Lines {money(grandTotal)} / Sell Price {shipmentTotalSnapshot != null ? money(shipmentTotalSnapshot) : "-"}
                   {hasVariance && variance != null && (
                     <> — ส่วนต่าง {variance > 0 ? "+" : ""}
                       {money(variance)}

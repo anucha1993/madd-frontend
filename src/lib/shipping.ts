@@ -93,6 +93,12 @@ export type RateQuote = {
   // Sum of MarkupRule adjustments already baked into published/negotiated/chargeBreakdown above
   // (see ChargeMarkupService) — only present when a markup rule actually applied to this quote.
   markupTotal?: number | null;
+  // The carrier's own published/negotiated totals and breakdown, snapshotted BEFORE any fixed
+  // override/markup mutates published/negotiated/chargeBreakdown above — the real cost
+  // reference (see ChargeMarkupService::applyToResults, Shipment.cost_amount). Never marked up.
+  costPublished?: number | null;
+  costNegotiated?: number | null;
+  costBreakdown?: RateChargeLine[];
   error?: string | null;
   // Raw carrier API response for this specific quote — only for staff-facing debugging (see
   // "Raw" button on each Rate Quotes candidate card), never shown to customers.
