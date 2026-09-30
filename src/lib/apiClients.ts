@@ -1,4 +1,6 @@
 import { apiClient } from "./apiClient";
+import { API_URL } from "./apiUrl";
+import { getToken } from "./auth";
 
 // Public Rate API keys for external sites (madd-backend ApiClientController). The plain
 // `api_key` is only ever returned by create / regenerate.
@@ -67,6 +69,27 @@ export const deleteApiClient = (id: number) => apiClient.delete<void>(`/api-clie
 
 export const testApiClient = (id: number, body: unknown) =>
   apiClient.post<{ options: PublicRateOption[]; disclaimer: string }>(`/api-clients/${id}/test`, body);
+
+export type WordPressPlugin = { slug: string; name: string; version: string | null; summary: string; updated_at: string };
+
+export const listWordPressPlugins = () => apiClient.get<WordPressPlugin[]>("/wordpress-plugins");
+
+// Blob download (the endpoint needs the Bearer token, so a plain <a href> can't be used).
+export async function downloadWordPressPlugin(plugin: WordPressPlugin) {
+  const token = getToken();
+  const res = await fetch(`${API_URL}/wordpress-plugins/${plugin.slug}/download`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error("ดาวน์โหลด Plugin ไม่สำเร็จ");
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${plugin.slug}-${plugin.version ?? "latest"}.zip`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 export const listApiRequestLogs = (filters: { api_client_id?: number; status?: "ok" | "failed"; endpoint?: "rates" | "tracking"; page?: number }) => {
   const q = new URLSearchParams();
