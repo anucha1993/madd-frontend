@@ -65,6 +65,7 @@ const ROUTE_PERMISSIONS: { pattern: RegExp; permission: string | string[] }[] = 
   { pattern: /^\/config\/users(\/|$)/, permission: "user.manage" },
   { pattern: /^\/config\/roles(\/|$)/, permission: "user.roles" },
   { pattern: /^\/config\/audit-logs(\/|$)/, permission: "user.audit" },
+  { pattern: /^\/config\/system-alerts(\/|$)/, permission: "config.system_alerts" },
   { pattern: /^\/config\/integrations(\/|$)/, permission: "config.integrations" },
   { pattern: /^\/config\/tracking-sync(\/|$)/, permission: "config.tracking_sync" },
   { pattern: /^\/config\/report-schedules(\/|$)/, permission: "config.report_schedules" },

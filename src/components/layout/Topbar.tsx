@@ -2,8 +2,16 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, LogOut, Menu, User } from "lucide-react";
+import Link from "next/link";
+import { BellRing, ChevronDown, LogOut, Menu, User } from "lucide-react";
+import { useAccess } from "@/components/auth/AccessProvider";
 import { getUser, removeAuth } from "@/lib/auth";
+import {
+  getSystemAlertSummary,
+  SYSTEM_ALERTS_CHANGED,
+} from "@/lib/systemAlerts";
+
+const ALERT_POLL_MS = 5 * 60 * 1000;
 
 type Props = {
   onMenuClick: () => void;
@@ -14,6 +22,27 @@ export default function Topbar({ onMenuClick }: Props) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
+  const { can } = useAccess();
+  const canSeeAlerts = can("config.system_alerts");
+  const [openAlerts, setOpenAlerts] = useState(0);
+
+  // Unresolved System Alerts badge — polled, and refreshed when the alerts page resolves some.
+  useEffect(() => {
+    if (!canSeeAlerts) return;
+    let cancelled = false;
+    const refresh = () =>
+      getSystemAlertSummary()
+        .then((res) => !cancelled && setOpenAlerts(res.open))
+        .catch(() => {});
+    refresh();
+    const timer = window.setInterval(refresh, ALERT_POLL_MS);
+    window.addEventListener(SYSTEM_ALERTS_CHANGED, refresh);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener(SYSTEM_ALERTS_CHANGED, refresh);
+    };
+  }, [canSeeAlerts]);
 
   useEffect(() => {
     setName(getUser()?.name ?? "");
@@ -47,34 +76,61 @@ export default function Topbar({ onMenuClick }: Props) {
 
       <div className="hidden lg:block" />
 
-      <div className="relative" ref={menuRef}>
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-100"
-        >
-          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-navy text-white">
-            <User className="h-4.5 w-4.5" />
-          </span>
-          <span className="hidden text-sm font-medium text-slate-700 sm:inline">{name}</span>
-          <ChevronDown className="h-4 w-4 text-slate-400" />
-        </button>
-
-        {open && (
-          <div className="absolute right-0 mt-2 w-44 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
-            <a href="/profile" className="block px-4 py-2.5 text-sm text-slate-600 hover:bg-slate-50">
-              โปรไฟล์ของฉัน
-            </a>
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="flex w-full items-center gap-2 border-t border-slate-100 px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50"
-            >
-              <LogOut className="h-4 w-4" />
-              ออกจากระบบ
-            </button>
-          </div>
+      <div className="flex items-center gap-2">
+        {canSeeAlerts && (
+          <Link
+            href="/config/system-alerts"
+            className="relative rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+            aria-label="System Alerts"
+            title={
+              openAlerts > 0
+                ? `ระบบทำงานพลาด ${openAlerts} รายการที่ยังไม่แก้ไข`
+                : "System Alerts"
+            }
+          >
+            <BellRing className="h-5 w-5" />
+            {openAlerts > 0 && (
+              <span className="absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[11px] font-semibold text-white">
+                {openAlerts > 99 ? "99+" : openAlerts}
+              </span>
+            )}
+          </Link>
         )}
+
+        <div className="relative" ref={menuRef}>
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-100"
+          >
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-navy text-white">
+              <User className="h-4.5 w-4.5" />
+            </span>
+            <span className="hidden text-sm font-medium text-slate-700 sm:inline">
+              {name}
+            </span>
+            <ChevronDown className="h-4 w-4 text-slate-400" />
+          </button>
+
+          {open && (
+            <div className="absolute right-0 mt-2 w-44 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
+              <a
+                href="/profile"
+                className="block px-4 py-2.5 text-sm text-slate-600 hover:bg-slate-50"
+              >
+                โปรไฟล์ของฉัน
+              </a>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="flex w-full items-center gap-2 border-t border-slate-100 px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50"
+              >
+                <LogOut className="h-4 w-4" />
+                ออกจากระบบ
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </header>
   );
