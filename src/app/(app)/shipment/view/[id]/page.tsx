@@ -13,6 +13,7 @@ import {
   openShipmentCommercialInvoice,
   unvoidShipment,
   confirmCarrierCancel,
+  requestCarrierCancel,
   deleteShipment,
   type Shipment,
 } from "@/lib/shipments";
@@ -222,6 +223,17 @@ export default function ShipmentViewPage() {
       setShipment({ ...shipment, ...updated });
     } catch (err) {
       alert(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ");
+    }
+  }
+
+  async function handleRequestCarrierCancel() {
+    if (!shipment) return;
+    try {
+      const res = await requestCarrierCancel(shipment.id);
+      setShipment({ ...shipment, ...res });
+      alert(res.carrier_notice.message);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "ส่งอีเมลไม่สำเร็จ");
     }
   }
 
@@ -441,7 +453,7 @@ export default function ShipmentViewPage() {
             <div className="space-y-0.5">
               <p className="font-semibold">
                 ยกเลิกแล้ว
-                {s.carrier_cancel_status === "pending" && " — รอแจ้งยกเลิกกับ DHL"}
+                {s.carrier_cancel_status === "pending" && (s.carrier_cancel_requested_at ? " — แจ้ง DHL แล้ว รอ DHL ยืนยัน" : " — ยังไม่ได้แจ้ง DHL")}
                 {s.carrier_cancel_status === "confirmed" && " — DHL ยืนยันการยกเลิกแล้ว"}
                 {s.carrier === "UPS" && " — ยกเลิกกับ UPS ผ่าน API แล้ว"}
               </p>
@@ -450,6 +462,11 @@ export default function ShipmentViewPage() {
                 {s.voided_at && ` · ${new Date(s.voided_at).toLocaleString()}`}
                 {s.void_reason && ` · เหตุผล: ${s.void_reason}`}
               </p>
+              {s.carrier_cancel_requested_at && (
+                <p>
+                  ส่งอีเมลขอยกเลิกถึง {s.carrier_cancel_requested_to} · {new Date(s.carrier_cancel_requested_at).toLocaleString()}
+                </p>
+              )}
               {s.carrier_cancel_status === "confirmed" && (
                 <p>
                   DHL ยืนยันโดย {typeof s.carrier_cancel_confirmed_by === "object" && s.carrier_cancel_confirmed_by ? s.carrier_cancel_confirmed_by.name : "—"}
@@ -461,6 +478,9 @@ export default function ShipmentViewPage() {
             {s.carrier_cancel_status === "pending" && can("shipment.void") && (
               <div className="flex flex-wrap gap-2">
                 <CopyButton text={dhlCancelMessage(s)} label="คัดลอกข้อความแจ้ง DHL" />
+                <button type="button" onClick={handleRequestCarrierCancel} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                  {s.carrier_cancel_requested_at ? "ส่งอีเมลแจ้ง DHL อีกครั้ง" : "ส่งอีเมลแจ้ง DHL"}
+                </button>
                 <button type="button" onClick={handleConfirmCarrierCancel} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700">
                   DHL ยืนยันยกเลิกแล้ว
                 </button>

@@ -27,6 +27,7 @@ import {
   Copy,
   CheckCircle2,
   RotateCcw,
+  Mail,
 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import { useAccess } from "@/components/auth/AccessProvider";
@@ -35,6 +36,7 @@ import CarrierBadge from "@/components/ui/CarrierBadge";
 import ManageColumnsModal from "@/components/ui/ManageColumnsModal";
 import ColumnProfileSelect from "@/components/ui/ColumnProfileSelect";
 import OverduePickupsBanner from "@/components/pickup/OverduePickupsBanner";
+import PendingCarrierCancelBanner from "@/components/shipment/PendingCarrierCancelBanner";
 import VoidShipmentModal, { dhlCancelMessage } from "@/components/shipment/VoidShipmentModal";
 import SchedulePickupModal from "@/components/pickup/SchedulePickupModal";
 import { useManageColumns, type ColumnDef } from "@/hooks/useManageColumns";
@@ -50,6 +52,7 @@ import {
   openShipmentCommercialInvoice,
   unvoidShipment,
   confirmCarrierCancel,
+  requestCarrierCancel,
   markShipmentPickedUp,
   TRACKING_GROUP_LABEL,
   type TrackingGroup,
@@ -168,8 +171,15 @@ const SHIPMENT_COLUMNS: ShipmentColumn[] = [
         {s.is_test && <span className="ml-1.5 rounded-full bg-purple-50 px-2.5 py-0.5 text-xs font-medium text-purple-600">TEST</span>}
         {/* DHL has no cancel API — show whether DHL itself has been told yet. */}
         {s.status === "voided" && s.carrier_cancel_status === "pending" && (
-          <span className="ml-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700" title="Void ในระบบแล้ว แต่ยังไม่ได้ยืนยันการยกเลิกกับ DHL">
-            รอแจ้ง DHL
+          <span
+            className="ml-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700"
+            title={
+              s.carrier_cancel_requested_at
+                ? `ส่งอีเมลขอยกเลิกถึง ${s.carrier_cancel_requested_to} เมื่อ ${new Date(s.carrier_cancel_requested_at).toLocaleString()}`
+                : "Void ในระบบแล้ว แต่ยังไม่ได้แจ้ง DHL"
+            }
+          >
+            {s.carrier_cancel_requested_at ? "รอ DHL ยืนยัน" : "รอแจ้ง DHL"}
           </span>
         )}
         {s.status === "voided" && s.carrier_cancel_status === "confirmed" && (
@@ -355,13 +365,15 @@ export default function ShipmentListPage() {
     };
   }, [actionsMenuId]);
 
-  async function load(overrides?: { date_from?: string; date_to?: string; page?: number }) {
+  async function load(overrides?: { date_from?: string; date_to?: string; page?: number; status?: string }) {
     setLoading(true);
     setError("");
+    const effectiveStatus = overrides?.status ?? status;
     try {
       const res = await listShipments({
         search: search.trim() || undefined,
-        status: status || undefined,
+        status: effectiveStatus && effectiveStatus !== "cancel_pending" ? effectiveStatus : undefined,
+        cancel: effectiveStatus === "cancel_pending" ? "pending" : undefined,
         tracking: trackingGroup || undefined,
         carrier: carrier || undefined,
         customer_type: customerType || undefined,
@@ -553,6 +565,19 @@ export default function ShipmentListPage() {
     }
   }
 
+  async function handleRequestCarrierCancel(shipment: Shipment) {
+    setVoidingId(shipment.id);
+    try {
+      const res = await requestCarrierCancel(shipment.id);
+      replaceShipment(res);
+      alert(res.carrier_notice.message);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "ส่งอีเมลไม่สำเร็จ");
+    } finally {
+      setVoidingId(null);
+    }
+  }
+
   async function handleUnvoid(shipment: Shipment) {
     if (!confirm(`คืนสถานะ ${shipment.tracking_number} เป็น Booked?\n(ใช้เมื่อกด Void ผิด — Waybill ที่ DHL ยังใช้ได้ แต่ Pickup ที่ถูกยกเลิกไปแล้วต้องนัดใหม่)`)) return;
     setVoidingId(shipment.id);
@@ -682,6 +707,13 @@ export default function ShipmentListPage() {
       />
 
       <OverduePickupsBanner />
+      <PendingCarrierCancelBanner
+        onShow={() => {
+          setStatus("cancel_pending");
+          setPage(1);
+          void load({ status: "cancel_pending", page: 1 });
+        }}
+      />
 
       {voidTarget && <VoidShipmentModal shipment={voidTarget} onClose={() => setVoidTarget(null)} onVoided={replaceShipment} />}
 
@@ -750,6 +782,7 @@ export default function ShipmentListPage() {
             <option value="booked">Booked</option>
             <option value="pending">Pending</option>
             <option value="failed">Failed</option>
+            <option value="cancel_pending">Voided · รอ DHL ยืนยันยกเลิก</option>
           </select>
         </label>
         <label className="flex flex-col gap-1.5">
@@ -1211,6 +1244,18 @@ export default function ShipmentListPage() {
                               >
                                 <Copy className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                                 คัดลอกข้อความแจ้งยกเลิก DHL
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleRequestCarrierCancel(s);
+                                  setActionsMenuId(null);
+                                }}
+                                disabled={voidingId === s.id}
+                                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                              >
+                                <Mail className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                                {s.carrier_cancel_requested_at ? "ส่งอีเมลแจ้ง DHL อีกครั้ง" : "ส่งอีเมลแจ้ง DHL"}
                               </button>
                               <button
                                 type="button"

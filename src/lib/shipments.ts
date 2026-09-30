@@ -183,6 +183,9 @@ export type Shipment = {
   voided_by?: { id: number; name: string } | number | null;
   void_reason?: string | null;
   carrier_cancel_status?: "pending" | "confirmed" | null;
+  // When/to whom the "please cancel" email went to the carrier (see CarrierCancelNotifier).
+  carrier_cancel_requested_at?: string | null;
+  carrier_cancel_requested_to?: string | null;
   carrier_cancel_confirmed_at?: string | null;
   carrier_cancel_confirmed_by?: { id: number; name: string } | number | null;
   carrier_cancel_reference?: string | null;
@@ -292,8 +295,11 @@ export const listShipments = (params?: {
   unbilled?: boolean;
   // Collection progress group (see ShipmentController::index).
   tracking?: TrackingGroup;
+  // "pending" = voided DHL waybills DHL hasn't confirmed cancelling yet.
+  cancel?: "pending";
 }) => {
   const query = new URLSearchParams();
+  if (params?.cancel) query.set("cancel", params.cancel);
   if (params?.tracking) query.set("tracking", params.tracking);
   if (params?.search) query.set("search", params.search);
   if (params?.carrier) query.set("carrier", params.carrier);
@@ -356,11 +362,17 @@ export function describeShipmentPieces(shipment: Shipment) {
 // DHL directly to actually stop the shipment (see backend ShipmentController::void() for detail).
 // `pickup_notice` says what happened to any active pickup the shipment was on (cancelled with the
 // carrier, or left alone because other shipments on it still need collecting).
+export type CarrierNotice = { sent: boolean; to: string[]; message: string };
+
 export const voidShipment = (id: number, reason?: string) =>
-  apiClient.post<Shipment & { pickup_notice?: string | null }>(`/shipments/${id}/void`, { reason: reason || undefined });
+  apiClient.post<Shipment & { pickup_notice?: string | null; carrier_notice?: CarrierNotice | null; carrier_message?: string | null }>(`/shipments/${id}/void`, { reason: reason || undefined });
 
 /** DHL only, before DHL confirmed the cancellation — nothing was cancelled at DHL yet. */
 export const unvoidShipment = (id: number) => apiClient.post<Shipment>(`/shipments/${id}/unvoid`, {});
+
+/** (Re)send the "please cancel this waybill" email to the account's DHL contact(s). */
+export const requestCarrierCancel = (id: number) =>
+  apiClient.post<Shipment & { carrier_notice: CarrierNotice }>(`/shipments/${id}/request-carrier-cancel`, {});
 
 /** Record that DHL confirmed the waybill cancellation (their case/reference number). */
 export const confirmCarrierCancel = (id: number, reference?: string) =>

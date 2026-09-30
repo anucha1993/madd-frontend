@@ -24,6 +24,8 @@ export type AgentAccount = {
   // false = a carrier with no real API integration (e.g. Kerry, Flash) \u2014 excluded from
   // rate-checking/booking on Shipment creation, but still selectable when issuing a Receipt.
   is_api_enabled: boolean;
+  // DHL contact(s) emailed when a DHL waybill is voided (no cancel API).
+  cancel_notify_emails?: string | null;
 };
 
 export type AgentAccountInput = {
@@ -37,6 +39,7 @@ export type AgentAccountInput = {
   status?: boolean;
   mode?: "test" | "production";
   is_api_enabled?: boolean;
+  cancel_notify_emails?: string;
 };
 
 export const listAgents = () => apiClient.get<Agent[]>("/agents");
