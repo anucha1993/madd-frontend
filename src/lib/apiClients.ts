@@ -18,6 +18,7 @@ export type ApiClientRecord = {
   rate_limit_per_minute: number;
   end_user_limit_per_minute: number;
   allowed_ips: string[] | null;
+  browser_origins: string[] | null;
   allow_rates: boolean;
   allow_tracking: boolean;
   status: boolean;
@@ -31,7 +32,7 @@ export type ApiClientInput = Omit<ApiClientRecord, "id" | "key_prefix" | "branch
 export type ApiRequestLog = {
   id: number;
   api_client: { id: number; name: string } | null;
-  endpoint: "rates" | "tracking";
+  endpoint: "rates" | "tracking" | "web_tracking";
   reference: string | null;
   ip: string | null;
   end_user_ip: string | null;
@@ -91,7 +92,7 @@ export async function downloadWordPressPlugin(plugin: WordPressPlugin) {
   URL.revokeObjectURL(url);
 }
 
-export const listApiRequestLogs = (filters: { api_client_id?: number; status?: "ok" | "failed"; endpoint?: "rates" | "tracking"; page?: number }) => {
+export const listApiRequestLogs = (filters: { api_client_id?: number; status?: "ok" | "failed"; endpoint?: "rates" | "tracking" | "web_tracking"; page?: number }) => {
   const q = new URLSearchParams();
   Object.entries(filters).forEach(([k, v]) => v !== undefined && q.set(k, String(v)));
   const s = q.toString();

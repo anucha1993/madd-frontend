@@ -42,6 +42,7 @@ const EMPTY: ApiClientInput = {
   rate_limit_per_minute: 60,
   end_user_limit_per_minute: 10,
   allowed_ips: null,
+  browser_origins: null,
   allow_rates: true,
   allow_tracking: true,
   status: true,
@@ -241,6 +242,7 @@ export default function ApiClientsPage() {
 function ClientForm({ client, branches, onClose, onSaved }: { client: ApiClientRecord | null; branches: Branch[]; onClose: () => void; onSaved: (key: string | null, name: string) => void }) {
   const [form, setForm] = useState<ApiClientInput>(client ? { ...EMPTY, ...client } : EMPTY);
   const [ips, setIps] = useState((client?.allowed_ips ?? []).join("\n"));
+  const [origins, setOrigins] = useState((client?.browser_origins ?? []).join("\n"));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const set = <K extends keyof ApiClientInput>(key: K, value: ApiClientInput[K]) => setForm((f) => ({ ...f, [key]: value }));
@@ -254,6 +256,7 @@ function ClientForm({ client, branches, onClose, onSaved }: { client: ApiClientR
       ...form,
       carriers: carriers.length === 2 ? null : carriers,
       allowed_ips: ips.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean),
+      browser_origins: origins.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean),
     };
     try {
       if (client) {
@@ -338,6 +341,13 @@ function ClientForm({ client, branches, onClose, onSaved }: { client: ApiClientR
           <label className="flex flex-col gap-1.5 sm:col-span-2">
             <span className="text-sm font-medium text-slate-600">IP ของ Server เว็บไซต์ที่อนุญาต (ไม่บังคับ)</span>
             <textarea value={ips} onChange={(e) => setIps(e.target.value)} rows={2} placeholder="เช่น 203.0.113.10 หรือ 203.0.113.0/24 — เว้นว่าง = ทุก IP" className={inputClass} />
+          </label>
+          <label className="flex flex-col gap-1.5 sm:col-span-2">
+            <span className="text-sm font-medium text-slate-600">เว็บไซต์ที่ให้ Browser ของลูกค้าเรียก Tracking ได้โดยตรง (ไม่บังคับ)</span>
+            <textarea value={origins} onChange={(e) => setOrigins(e.target.value)} rows={2} placeholder={"เช่น https://madd.co.th\nhttps://www.madd.co.th"} className={inputClass} />
+            <span className="text-xs text-slate-400">
+              ใช้กับ Plugin MADD Tracking 1.2+ — Browser ของลูกค้าเรียก MADD เอง (ไม่ผ่าน Server เว็บ, ไม่ใช้ API Key) เฉพาะ Tracking ซึ่งไม่มีข้อมูลส่วนตัว · จำกัดครั้งต่อ IP ลูกค้าตามช่องด้านบน
+            </span>
           </label>
           <div className="flex flex-wrap gap-5 text-sm sm:col-span-2">
             <label className="flex items-center gap-2">
@@ -569,7 +579,8 @@ function RequestLogs({ clients, reloadKey }: { clients: ApiClientRecord[]; reloa
           >
             <option value="">ทุก API</option>
             <option value="rates">เช็คราคา</option>
-            <option value="tracking">Tracking</option>
+            <option value="tracking">Tracking (Server)</option>
+            <option value="web_tracking">Tracking (Browser)</option>
           </select>
         </div>
       </div>
@@ -596,7 +607,7 @@ function RequestLogs({ clients, reloadKey }: { clients: ApiClientRecord[]; reloa
                   <td className="whitespace-nowrap px-4 py-2 text-slate-500">{new Date(r.created_at).toLocaleString()}</td>
                   <td className="px-4 py-2 text-slate-600">{r.api_client?.name ?? "—"}</td>
                   <td className="px-4 py-2 text-slate-600">
-                    {r.endpoint === "tracking" ? "Tracking" : "เช็คราคา"}
+                    {r.endpoint === "web_tracking" ? "Tracking (Browser)" : r.endpoint === "tracking" ? "Tracking" : "เช็คราคา"}
                     {r.reference && <div className="font-mono text-slate-400">{r.reference}</div>}
                   </td>
                   <td className="px-4 py-2 text-slate-600">{r.destination_country ?? "—"}</td>
@@ -605,7 +616,7 @@ function RequestLogs({ clients, reloadKey }: { clients: ApiClientRecord[]; reloa
                   <td className="px-4 py-2">
                     {r.status_code === 200 ? (
                       <span className="text-emerald-700">
-                        {r.result_count} {r.endpoint === "tracking" ? "จุดสแกน" : "ตัวเลือก"}
+                        {r.result_count} {r.endpoint === "rates" ? "ตัวเลือก" : "จุดสแกน"}
                         {r.cached ? " · cache" : ""}
                         {r.duration_ms != null && <span className="text-slate-400"> · {r.duration_ms} ms</span>}
                       </span>
