@@ -295,7 +295,7 @@ const ENTITY_TYPE_OPTIONS: { value: "INDIVIDUAL" | "COMPANY"; label: string; des
 export default function ShipmentCreatePage() {
   // Field groups a Role may leave read-only (config/permissions.php) — the API rejects any
   // non-default value for them anyway, so the inputs are locked to their defaults here.
-  const { canEditField, canSeeField } = useAccess();
+  const { can, canEditField, canSeeField } = useAccess();
   const canEditBilling = canEditField("shipment", "billing");
   const canEditRefs = canEditField("shipment", "references");
   // Rate-quote field groups (config/permissions.php `rate`) — the API already strips cost /
@@ -309,7 +309,9 @@ export default function ShipmentCreatePage() {
   const canSeeRateAccount = canSeeField("rate", "account");
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { enabled: aiEnabled } = useAiEnabled();
+  const { enabled: aiSettingEnabled } = useAiEnabled();
+  // AI address fill: switched on system-wide (API Integrations) AND allowed for this Role.
+  const aiEnabled = aiSettingEnabled && can("ai.parse_address");
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
 
   // Staff creating this shipment / their branch — shown in Order Summary as a final review.

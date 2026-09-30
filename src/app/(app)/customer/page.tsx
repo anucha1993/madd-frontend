@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { MapPin, Pencil, Plus, Trash2, Users } from "lucide-react";
+import { useAccess } from "@/components/auth/AccessProvider";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import PageLoading from "@/components/ui/PageLoading";
@@ -16,6 +17,7 @@ import {
 } from "@/lib/customers";
 
 export default function CustomerPage() {
+  const { can } = useAccess();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -65,14 +67,16 @@ export default function CustomerPage() {
     <div className="relative min-h-[360px]">
       <div className="mb-6 flex items-start justify-between gap-4">
         <PageHeader title="ลูกค้า" description="จัดการข้อมูลลูกค้าและที่อยู่ Ship From/Ship To ที่บันทึกไว้ใช้ซ้ำ" />
-        <button
-          type="button"
-          onClick={() => setModalCustomer("new")}
-          className="flex shrink-0 items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
-        >
-          <Plus className="h-4 w-4" />
-          เพิ่มลูกค้า
-        </button>
+        {can("customer.create") && (
+          <button
+            type="button"
+            onClick={() => setModalCustomer("new")}
+            className="flex shrink-0 items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
+          >
+            <Plus className="h-4 w-4" />
+            เพิ่มลูกค้า
+          </button>
+        )}
       </div>
 
       <div className="mb-4">
@@ -128,22 +132,26 @@ export default function CustomerPage() {
                     </button>
                   </td>
                   <td className="px-5 py-3 text-right">
-                    <button
-                      type="button"
-                      onClick={() => setModalCustomer(customer)}
-                      className="mr-2 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
-                      aria-label="แก้ไข"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(customer)}
-                      className="rounded-lg p-1.5 text-red-500 hover:bg-red-50"
-                      aria-label="ลบ"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    {can("customer.edit") && (
+                      <button
+                        type="button"
+                        onClick={() => setModalCustomer(customer)}
+                        className="mr-2 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
+                        aria-label="แก้ไข"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                    )}
+                    {can("customer.delete") && (
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(customer)}
+                        className="rounded-lg p-1.5 text-red-500 hover:bg-red-50"
+                        aria-label="ลบ"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

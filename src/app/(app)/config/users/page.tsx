@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Pencil, Plus, Trash2, Users as UsersIcon } from "lucide-react";
+import { useAccess } from "@/components/auth/AccessProvider";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import PageLoading from "@/components/ui/PageLoading";
@@ -12,6 +13,7 @@ import { listRoles, type Role } from "@/lib/roles";
 import { getUser } from "@/lib/auth";
 
 export default function UsersPage() {
+  const { can } = useAccess();
   const [users, setUsers] = useState<AppUser[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
@@ -59,14 +61,16 @@ export default function UsersPage() {
     <div className="relative min-h-[360px]">
       <div className="mb-6 flex items-start justify-between">
         <PageHeader title="ผู้ใช้งาน" description="จัดการผู้ใช้งาน กำหนด Role และสาขาที่เข้าถึงได้ (สิทธิ์ของแต่ละ Role ตั้งค่าที่เมนู Roles & Permissions)" />
-        <button
-          type="button"
-          onClick={() => setModalUser("new")}
-          className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
-        >
-          <Plus className="h-4 w-4" />
-          เพิ่มผู้ใช้งาน
-        </button>
+        {can("user.create") && (
+          <button
+            type="button"
+            onClick={() => setModalUser("new")}
+            className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
+          >
+            <Plus className="h-4 w-4" />
+            เพิ่มผู้ใช้งาน
+          </button>
+        )}
       </div>
 
       {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
@@ -124,24 +128,28 @@ export default function UsersPage() {
                         : "-"}
                   </td>
                   <td className="px-5 py-3 text-right">
-                    <button
-                      type="button"
-                      onClick={() => setModalUser(user)}
-                      className="mr-2 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
-                      aria-label="แก้ไข"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(user)}
-                      disabled={currentUser?.id === user.id}
-                      className="rounded-lg p-1.5 text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-30"
-                      aria-label="ลบ"
-                      title={currentUser?.id === user.id ? "ไม่สามารถลบบัญชีของตัวเองได้" : "ลบ"}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    {can("user.edit") && (
+                      <button
+                        type="button"
+                        onClick={() => setModalUser(user)}
+                        className="mr-2 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
+                        aria-label="แก้ไข"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                    )}
+                    {can("user.delete") && (
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(user)}
+                        disabled={currentUser?.id === user.id}
+                        className="rounded-lg p-1.5 text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-30"
+                        aria-label="ลบ"
+                        title={currentUser?.id === user.id ? "ไม่สามารถลบบัญชีของตัวเองได้" : "ลบ"}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

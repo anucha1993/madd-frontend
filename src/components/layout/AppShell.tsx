@@ -34,7 +34,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <main className="relative flex-1 p-4 sm:p-6">{allowed ? children : <NoAccess />}</main>
       </div>
 
-      {can("shipment.create") && <RateChatWidget />}
+      {can("ai.rate_chat") && <RateChatWidget />}
     </div>
   );
 }
