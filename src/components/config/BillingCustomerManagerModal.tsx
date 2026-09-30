@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
+import { useAccess } from "@/components/auth/AccessProvider";
 import Modal from "@/components/ui/Modal";
 import {
   createBillingCustomer,
@@ -39,6 +40,7 @@ const emptyForm: BillingCustomerInput = {
 // BillingCustomer without leaving the Issue Receipt page (full standalone page with the same
 // data is /billing/customers). Clicking a row selects it as the current Buyer and closes.
 export default function BillingCustomerManagerModal({ onClose, onSelect }: Props) {
+  const { can } = useAccess();
   const [customers, setCustomers] = useState<BillingCustomer[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -126,13 +128,15 @@ export default function BillingCustomerManagerModal({ onClose, onSelect }: Props
                 placeholder="Search name / tax ID..."
                 className={`${inputClass} flex-1`}
               />
-              <button
-                type="button"
-                onClick={() => openForm("new")}
-                className="flex shrink-0 items-center gap-1 rounded-lg bg-brand-navy-dark px-3 py-2 text-xs font-semibold text-white hover:bg-brand-navy-dark/90"
-              >
-                <Plus className="h-3.5 w-3.5" /> Add
-              </button>
+              {can("billing_customer.create") && (
+                <button
+                  type="button"
+                  onClick={() => openForm("new")}
+                  className="flex shrink-0 items-center gap-1 rounded-lg bg-brand-navy-dark px-3 py-2 text-xs font-semibold text-white hover:bg-brand-navy-dark/90"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Add
+                </button>
+              )}
             </div>
 
             <div className="max-h-80 overflow-y-auto rounded-lg border border-slate-200">
@@ -151,22 +155,26 @@ export default function BillingCustomerManagerModal({ onClose, onSelect }: Props
                       <div className="text-xs text-slate-400">{c.tax_id || "-"}</div>
                     </button>
                     <div className="flex shrink-0 items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => openForm(c)}
-                        className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-200"
-                        aria-label="Edit"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(c)}
-                        className="rounded-lg p-1.5 text-red-500 hover:bg-red-50"
-                        aria-label="Delete"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      {can("billing_customer.edit") && (
+                        <button
+                          type="button"
+                          onClick={() => openForm(c)}
+                          className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-200"
+                          aria-label="Edit"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                      )}
+                      {can("billing_customer.delete") && (
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(c)}
+                          className="rounded-lg p-1.5 text-red-500 hover:bg-red-50"
+                          aria-label="Delete"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))

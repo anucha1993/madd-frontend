@@ -2,25 +2,33 @@
 
 import { useState, type FormEvent } from "react";
 import type { Branch } from "@/lib/branches";
-import type { AppUser, AppUserInput, UserRole } from "@/lib/users";
+import type { AppUser, AppUserInput } from "@/lib/users";
+import type { Role } from "@/lib/roles";
 
 type Props = {
   branches: Branch[];
+  roles: Role[];
   initial?: AppUser | null;
   onSubmit: (data: AppUserInput) => Promise<void>;
   onCancel: () => void;
 };
 
-export default function UserForm({ branches, initial, onSubmit, onCancel }: Props) {
+export default function UserForm({ branches, roles, initial, onSubmit, onCancel }: Props) {
   const [name, setName] = useState(initial?.name ?? "");
   const [username, setUsername] = useState(initial?.username ?? "");
   const [email, setEmail] = useState(initial?.email ?? "");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<UserRole>(initial?.role ?? "staff");
+  const [roleIds, setRoleIds] = useState<number[]>(
+    initial?.roles.map((r) => r.id) ?? roles.filter((r) => r.key === "staff").map((r) => r.id),
+  );
   const [canAccessAll, setCanAccessAll] = useState(initial?.can_access_all_branches ?? false);
   const [branchIds, setBranchIds] = useState<number[]>(initial?.branches.map((b) => b.id) ?? []);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+
+  function toggleRole(id: number) {
+    setRoleIds((prev) => (prev.includes(id) ? prev.filter((r) => r !== id) : [...prev, id]));
+  }
 
   function toggleBranch(id: number) {
     setBranchIds((prev) => (prev.includes(id) ? prev.filter((b) => b !== id) : [...prev, id]));
@@ -38,6 +46,10 @@ export default function UserForm({ branches, initial, onSubmit, onCancel }: Prop
       setError("กรุณากำหนดรหัสผ่าน");
       return;
     }
+    if (roleIds.length === 0) {
+      setError("กรุณาเลือกอย่างน้อย 1 Role");
+      return;
+    }
     if (!canAccessAll && branchIds.length === 0) {
       setError("กรุณาเลือกอย่างน้อย 1 สาขา หรือเปิด \"เข้าถึงได้ทุกสาขา\"");
       return;
@@ -50,7 +62,7 @@ export default function UserForm({ branches, initial, onSubmit, onCancel }: Prop
         username: username.trim(),
         email: email.trim(),
         password: password.trim() || undefined,
-        role,
+        role_ids: roleIds,
         can_access_all_branches: canAccessAll,
         branch_ids: branchIds,
       });
@@ -94,13 +106,25 @@ export default function UserForm({ branches, initial, onSubmit, onCancel }: Prop
         />
       </label>
 
-      <label className="flex flex-col gap-1.5">
-        <span className={labelClass}>สิทธิ์การใช้งาน (Role)</span>
-        <select value={role} onChange={(e) => setRole(e.target.value as UserRole)} className={inputClass}>
-          <option value="staff">Staff</option>
-          <option value="admin">Admin</option>
-        </select>
-      </label>
+      <div className="flex flex-col gap-1.5">
+        <span className={labelClass}>Role (เลือกได้หลาย Role — สิทธิ์จะรวมกัน)</span>
+        <div className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 p-3 sm:grid-cols-2">
+          {roles.map((r) => (
+            <label key={r.id} className="flex items-start gap-2 text-sm text-slate-600">
+              <input
+                type="checkbox"
+                checked={roleIds.includes(r.id)}
+                onChange={() => toggleRole(r.id)}
+                className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-brand-amber"
+              />
+              <span>
+                <span className="font-medium text-slate-700">{r.name}</span>
+                {r.description && <span className="block text-xs text-slate-400">{r.description}</span>}
+              </span>
+            </label>
+          ))}
+        </div>
+      </div>
 
       <div className="rounded-lg border border-slate-200 p-3">
         <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
@@ -119,14 +143,18 @@ export default function UserForm({ branches, initial, onSubmit, onCancel }: Prop
               <p className="col-span-2 text-sm text-slate-400">ยังไม่มีสาขาในระบบ</p>
             ) : (
               branches.map((branch) => (
-                <label key={branch.id} className="flex items-center gap-2 text-sm text-slate-600">
+                <label key={branch.id} className="flex min-w-0 items-center gap-2 text-sm text-slate-600" title={branch.name}>
                   <input
                     type="checkbox"
                     checked={branchIds.includes(branch.id)}
                     onChange={() => toggleBranch(branch.id)}
-                    className="h-4 w-4 rounded border-slate-300 accent-brand-amber"
+                    className="h-4 w-4 shrink-0 rounded border-slate-300 accent-brand-amber"
                   />
-                  {branch.name}
+                  {/* Branch names are often all the same company name — the code is what tells them apart. */}
+                  <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs font-semibold text-slate-700">
+                    {branch.code}
+                  </span>
+                  <span className="min-w-0 truncate">{branch.name}</span>
                 </label>
               ))
             )}

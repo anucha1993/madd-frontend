@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Building2, FileDigit, Pencil, Plus, Trash2 } from "lucide-react";
+import { useAccess } from "@/components/auth/AccessProvider";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import PageLoading from "@/components/ui/PageLoading";
@@ -26,6 +27,7 @@ import {
 } from "@/lib/branchCarrierAccounts";
 
 export default function BranchPage() {
+  const { can } = useAccess();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -143,14 +145,16 @@ export default function BranchPage() {
     <div className="relative min-h-[360px]">
       <div className="mb-6 flex items-start justify-between">
         <PageHeader title="สาขา" description="จัดการข้อมูลสาขาของบริษัท" />
-        <button
-          type="button"
-          onClick={() => openModal("new")}
-          className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
-        >
-          <Plus className="h-4 w-4" />
-          เพิ่มสาขา
-        </button>
+        {can("branch.create") && (
+          <button
+            type="button"
+            onClick={() => openModal("new")}
+            className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
+          >
+            <Plus className="h-4 w-4" />
+            เพิ่มสาขา
+          </button>
+        )}
       </div>
 
       {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
@@ -203,7 +207,7 @@ export default function BranchPage() {
                     <button
                       type="button"
                       onClick={() => handleToggleStatus(branch)}
-                      disabled={togglingId === branch.id}
+                      disabled={togglingId === branch.id || !can("branch.edit")}
                       className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition disabled:opacity-50 ${
                         branch.status
                           ? "bg-emerald-50 text-emerald-600 hover:bg-emerald-100"
@@ -215,31 +219,37 @@ export default function BranchPage() {
                     </button>
                   </td>
                   <td className="px-5 py-3 text-right">
-                    <button
-                      type="button"
-                      onClick={() => openDocNumberModal(branch)}
-                      className="mr-2 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
-                      aria-label="เลขที่เอกสาร"
-                      title="ตั้งค่าเลขที่เอกสาร (ใบเสร็จ/ใบกำกับภาษี)"
-                    >
-                      <FileDigit className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openModal(branch)}
-                      className="mr-2 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
-                      aria-label="แก้ไข"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(branch)}
-                      className="rounded-lg p-1.5 text-red-500 hover:bg-red-50"
-                      aria-label="ลบ"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    {can("branch.doc_numbers") && (
+                      <button
+                        type="button"
+                        onClick={() => openDocNumberModal(branch)}
+                        className="mr-2 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
+                        aria-label="เลขที่เอกสาร"
+                        title="ตั้งค่าเลขที่เอกสาร (ใบเสร็จ/ใบกำกับภาษี)"
+                      >
+                        <FileDigit className="h-4 w-4" />
+                      </button>
+                    )}
+                    {can("branch.edit") && (
+                      <button
+                        type="button"
+                        onClick={() => openModal(branch)}
+                        className="mr-2 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
+                        aria-label="แก้ไข"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                    )}
+                    {can("branch.delete") && (
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(branch)}
+                        className="rounded-lg p-1.5 text-red-500 hover:bg-red-50"
+                        aria-label="ลบ"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

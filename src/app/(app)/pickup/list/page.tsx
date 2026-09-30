@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Eye, Loader2, RefreshCw, Search, XCircle } from "lucide-react";
+import { Eye, History, Loader2, PackageCheck, RefreshCw, Search, XCircle } from "lucide-react";
+import { TimelineModal } from "@/components/timeline/Timeline";
 import PageHeader from "@/components/layout/PageHeader";
+import { useAccess } from "@/components/auth/AccessProvider";
 import PageLoading from "@/components/ui/PageLoading";
 import Modal from "@/components/ui/Modal";
 import SchedulePickupModal from "@/components/pickup/SchedulePickupModal";
-import { listPickups, cancelPickup, type Pickup } from "@/lib/pickups";
+import { listPickups, cancelPickup, confirmPickupCollected, type Pickup, type PickupCollection } from "@/lib/pickups";
 
 const STATUS_STYLE: Record<string, string> = {
   requested: "bg-emerald-50 text-emerald-600",
@@ -21,13 +23,34 @@ const STATUS_LABEL: Record<string, string> = {
   failed: "Failed",
 };
 
+// Whether the courier actually came — derived server-side from the attached shipments' own
+// tracking scans / staff confirmations (the carrier never ties an on-call pickup to them).
+const COLLECTION_STYLE: Record<PickupCollection["state"], string> = {
+  waiting: "bg-slate-100 text-slate-600",
+  partial: "bg-amber-50 text-amber-700",
+  collected: "bg-emerald-50 text-emerald-700",
+  overdue: "bg-red-50 text-red-600",
+};
+
+const COLLECTION_LABEL: Record<PickupCollection["state"], string> = {
+  waiting: "รอรถรับ",
+  partial: "รับบางส่วน",
+  collected: "รับครบแล้ว",
+  overdue: "เลยเวลานัด",
+};
+
 export default function PickupListPage() {
+  const { can } = useAccess();
   const [pickups, setPickups] = useState<Pickup[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
+  // Opened from the "Pickup เลยเวลานัด" banner (?overdue=1).
+  const [overdueOnly, setOverdueOnly] = useState(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("overdue") === "1");
   const [carrier, setCarrier] = useState<"" | "UPS" | "DHL">("");
   const [cancellingId, setCancellingId] = useState<number | null>(null);
+  const [timelinePickup, setTimelinePickup] = useState<Pickup | null>(null);
+  const [confirmingId, setConfirmingId] = useState<number | null>(null);
   const [viewingPickup, setViewingPickup] = useState<Pickup | null>(null);
   // Set right after cancelling the OLD pickup being rescheduled — its presence opens
   // SchedulePickupModal prefilled with the same shipments/address/date/time (see handleReschedule).
@@ -37,7 +60,7 @@ export default function PickupListPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await listPickups({ status: status || undefined, carrier: carrier || undefined });
+      const res = await listPickups({ status: status || undefined, carrier: carrier || undefined, overdue: overdueOnly || undefined });
       setPickups(res.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "โหลดข้อมูล Pickup ไม่สำเร็จ");
@@ -50,6 +73,19 @@ export default function PickupListPage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function handleConfirmCollected(pickup: Pickup) {
+    if (!confirm("ยืนยันว่า Courier มารับของของ Pickup นี้ครบแล้ว? (ทุก Shipment ที่ยังไม่ถูกรับจะถูกบันทึกว่ารับแล้ว)")) return;
+    setConfirmingId(pickup.id);
+    try {
+      const updated = await confirmPickupCollected(pickup.id);
+      setPickups((prev) => prev.map((p) => (p.id === pickup.id ? updated : p)));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ");
+    } finally {
+      setConfirmingId(null);
+    }
+  }
 
   async function handleCancel(pickup: Pickup) {
     if (!confirm(`ยืนยันยกเลิก Pickup นี้กับ ${pickup.carrier} จริง? ย้อนกลับไม่ได้`)) return;
@@ -98,6 +134,15 @@ export default function PickupListPage() {
             <option value="cancelled">Cancelled</option>
             <option value="failed">Failed</option>
           </select>
+        </label>
+        <label className="flex items-center gap-2 self-center pt-6 text-sm font-medium text-slate-600">
+          <input
+            type="checkbox"
+            checked={overdueOnly}
+            onChange={(e) => setOverdueOnly(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300 accent-brand-amber"
+          />
+          เฉพาะที่เลยเวลานัด
         </label>
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium text-slate-600">Carrier</span>
@@ -163,7 +208,12 @@ export default function PickupListPage() {
                         <div className="mt-0.5 flex flex-wrap gap-x-1.5 gap-y-0.5 text-xs">
                           {(p.shipments ?? []).map((s, i) => (
                             <span key={s.id}>
-                              <Link href={`/shipment/view/${s.id}`} className="font-mono text-brand-navy-dark hover:underline">
+                              <Link
+                                href={`/shipment/view/${s.id}`}
+                                className={`font-mono hover:underline ${s.picked_up_at ? "text-emerald-600" : "text-brand-navy-dark"}`}
+                                title={s.picked_up_at ? `รับแล้ว ${new Date(s.picked_up_at).toLocaleString()}` : "ยังไม่ถูกรับ"}
+                              >
+                                {s.picked_up_at && "✓ "}
                                 {s.tracking_number ?? `#${s.id}`}
                               </Link>
                               {i < (p.shipments ?? []).length - 1 && <span className="text-slate-300">,</span>}
@@ -180,6 +230,13 @@ export default function PickupListPage() {
                       <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_STYLE[p.status] ?? "bg-slate-50 text-slate-500"}`}>
                         {STATUS_LABEL[p.status] ?? p.status}
                       </span>
+                      {p.collection && (
+                        <div className="mt-1">
+                          <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${COLLECTION_STYLE[p.collection.state]}`}>
+                            {COLLECTION_LABEL[p.collection.state]} {p.collection.picked}/{p.collection.total}
+                          </span>
+                        </div>
+                      )}
                       {p.status === "failed" && p.error_message && (
                         <div className="mt-1 max-w-xs truncate text-xs text-red-500" title={p.error_message}>
                           {p.error_message}
@@ -197,7 +254,30 @@ export default function PickupListPage() {
                         >
                           <Eye className="h-4 w-4" />
                         </button>
-                        {p.status === "requested" && p.carrier_reference && (
+                        {can("pickup.timeline") && (
+                          <button
+                            type="button"
+                            onClick={() => setTimelinePickup(p)}
+                            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
+                            aria-label="Pickup Timeline"
+                            title="Timeline"
+                          >
+                            <History className="h-4 w-4" />
+                          </button>
+                        )}
+                        {p.collection && p.collection.state !== "collected" && can("pickup.confirm") && (
+                          <button
+                            type="button"
+                            onClick={() => handleConfirmCollected(p)}
+                            disabled={confirmingId === p.id}
+                            className="rounded-lg p-1.5 text-emerald-600 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            aria-label="Confirm collected"
+                            title="ยืนยันรถรับแล้ว (ทุก Shipment ใน Pickup นี้)"
+                          >
+                            {confirmingId === p.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
+                          </button>
+                        )}
+                        {p.status === "requested" && p.carrier_reference && can("pickup.cancel") && (
                           <>
                             <button
                               type="button"
@@ -331,6 +411,10 @@ export default function PickupListPage() {
             );
           }}
         />
+      )}
+
+      {timelinePickup && (
+        <TimelineModal subject="pickups" id={timelinePickup.id} title={`Timeline — Pickup ${timelinePickup.carrier_reference ?? `#${timelinePickup.id}`}`} onClose={() => setTimelinePickup(null)} />
       )}
     </div>
   );

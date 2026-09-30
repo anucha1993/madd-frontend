@@ -32,6 +32,15 @@ export type Pickup = {
   created_at: string;
   agent_account?: { id: number; username_acc: string; agent?: { agent_code: string; name?: string } } | null;
   shipments?: Shipment[];
+  // Derived from the attached shipments' picked_up_at (see Pickup::getCollectionAttribute) —
+  // null for cancelled/failed pickups.
+  collection?: PickupCollection | null;
+};
+
+export type PickupCollection = {
+  state: "waiting" | "partial" | "collected" | "overdue";
+  picked: number;
+  total: number;
 };
 
 export type PaginatedPickups = {
@@ -57,8 +66,9 @@ export type CreatePickupInput = {
   reference_number?: string;
 };
 
-export const listPickups = (params?: { carrier?: "UPS" | "DHL"; status?: string; page?: number }) => {
+export const listPickups = (params?: { carrier?: "UPS" | "DHL"; status?: string; page?: number; overdue?: boolean }) => {
   const query = new URLSearchParams();
+  if (params?.overdue) query.set("overdue", "1");
   if (params?.carrier) query.set("carrier", params.carrier);
   if (params?.status) query.set("status", params.status);
   if (params?.page) query.set("page", String(params.page));
@@ -67,6 +77,9 @@ export const listPickups = (params?: { carrier?: "UPS" | "DHL"; status?: string;
 };
 
 export const createPickup = (data: CreatePickupInput) => apiClient.post<Pickup>("/pickups", data);
+
+/** Staff confirm the courier came — marks every attached shipment as picked up. */
+export const confirmPickupCollected = (id: number) => apiClient.post<Pickup>(`/pickups/${id}/confirm-collected`, {});
 
 export const cancelPickup = (id: number, data?: { requestor_name?: string; reason?: string }) =>
   apiClient.post<Pickup>(`/pickups/${id}/cancel`, data ?? {});

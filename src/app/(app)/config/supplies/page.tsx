@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Boxes, Pin, Pencil, Plus, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { Boxes, Pin, Pencil, Plus, Trash2, Warehouse } from "lucide-react";
+import { useAccess } from "@/components/auth/AccessProvider";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import PageLoading from "@/components/ui/PageLoading";
@@ -65,19 +67,28 @@ export default function SuppliesPage() {
   }
 
   const featuredCount = supplies.filter((s) => s.is_featured).length;
+  const { can } = useAccess();
 
   return (
     <div className="relative min-h-[360px]">
       <div className="mb-6 flex items-start justify-between">
         <PageHeader title="Packaging Supplies" description="Manage box/envelope stock — size, cost, and sale price" />
-        <button
-          type="button"
-          onClick={() => setModalSupply("new")}
-          className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
-        >
-          <Plus className="h-4 w-4" />
-          Add Supply
-        </button>
+        <div className="flex shrink-0 gap-2">
+          {can("supply_stock.view") && (
+            <Link href="/config/supplies/stock" className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              <Warehouse className="h-4 w-4" />
+              Stock แยกสาขา
+            </Link>
+          )}
+          <button
+            type="button"
+            onClick={() => setModalSupply("new")}
+            className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
+          >
+            <Plus className="h-4 w-4" />
+            Add Supply
+          </button>
+        </div>
       </div>
 
       {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}

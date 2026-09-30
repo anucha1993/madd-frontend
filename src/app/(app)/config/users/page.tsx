@@ -2,17 +2,21 @@
 
 import { useEffect, useState } from "react";
 import { Pencil, Plus, Trash2, Users as UsersIcon } from "lucide-react";
+import { useAccess } from "@/components/auth/AccessProvider";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import PageLoading from "@/components/ui/PageLoading";
 import UserForm from "@/components/config/UserForm";
 import { listBranches, type Branch } from "@/lib/branches";
 import { createUser, deleteUser, listUsers, updateUser, type AppUser, type AppUserInput } from "@/lib/users";
+import { listRoles, type Role } from "@/lib/roles";
 import { getUser } from "@/lib/auth";
 
 export default function UsersPage() {
+  const { can } = useAccess();
   const [users, setUsers] = useState<AppUser[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [modalUser, setModalUser] = useState<AppUser | "new" | null>(null);
@@ -22,9 +26,10 @@ export default function UsersPage() {
     setLoading(true);
     setError("");
     try {
-      const [usersRes, branchesRes] = await Promise.all([listUsers(), listBranches()]);
+      const [usersRes, branchesRes, rolesRes] = await Promise.all([listUsers(), listBranches(), listRoles()]);
       setUsers(usersRes);
       setBranches(branchesRes);
+      setRoles(rolesRes);
     } catch (err) {
       setError(err instanceof Error ? err.message : "โหลดข้อมูลไม่สำเร็จ");
     } finally {
@@ -55,15 +60,17 @@ export default function UsersPage() {
   return (
     <div className="relative min-h-[360px]">
       <div className="mb-6 flex items-start justify-between">
-        <PageHeader title="สมาชิกและสิทธิ์การใช้งาน" description="จัดการผู้ใช้งานและกำหนดสิทธิ์การเข้าถึงสาขา" />
-        <button
-          type="button"
-          onClick={() => setModalUser("new")}
-          className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
-        >
-          <Plus className="h-4 w-4" />
-          เพิ่มผู้ใช้งาน
-        </button>
+        <PageHeader title="ผู้ใช้งาน" description="จัดการผู้ใช้งาน กำหนด Role และสาขาที่เข้าถึงได้ (สิทธิ์ของแต่ละ Role ตั้งค่าที่เมนู Roles & Permissions)" />
+        {can("user.create") && (
+          <button
+            type="button"
+            onClick={() => setModalUser("new")}
+            className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
+          >
+            <Plus className="h-4 w-4" />
+            เพิ่มผู้ใช้งาน
+          </button>
+        )}
       </div>
 
       {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
@@ -96,40 +103,53 @@ export default function UsersPage() {
                   </td>
                   <td className="px-5 py-3 text-slate-500">{user.username}</td>
                   <td className="px-5 py-3">
-                    <span
-                      className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                        user.role === "admin" ? "bg-brand-amber/20 text-brand-navy-dark" : "bg-slate-100 text-slate-600"
-                      }`}
-                    >
-                      {user.role === "admin" ? "Admin" : "Staff"}
-                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      {user.roles.length === 0 ? (
+                        <span className="text-xs text-red-500">ยังไม่มี Role (ใช้งานไม่ได้)</span>
+                      ) : (
+                        user.roles.map((role) => (
+                          <span
+                            key={role.id}
+                            className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                              role.is_super_admin ? "bg-brand-amber/20 text-brand-navy-dark" : "bg-slate-100 text-slate-600"
+                            }`}
+                          >
+                            {role.name}
+                          </span>
+                        ))
+                      )}
+                    </div>
                   </td>
                   <td className="px-5 py-3 text-slate-500">
                     {user.can_access_all_branches
                       ? "ทุกสาขา"
                       : user.branches.length > 0
-                        ? user.branches.map((b) => b.name).join(", ")
+                        ? user.branches.map((b) => `${b.code} · ${b.name}`).join(", ")
                         : "-"}
                   </td>
                   <td className="px-5 py-3 text-right">
-                    <button
-                      type="button"
-                      onClick={() => setModalUser(user)}
-                      className="mr-2 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
-                      aria-label="แก้ไข"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(user)}
-                      disabled={currentUser?.id === user.id}
-                      className="rounded-lg p-1.5 text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-30"
-                      aria-label="ลบ"
-                      title={currentUser?.id === user.id ? "ไม่สามารถลบบัญชีของตัวเองได้" : "ลบ"}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    {can("user.edit") && (
+                      <button
+                        type="button"
+                        onClick={() => setModalUser(user)}
+                        className="mr-2 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
+                        aria-label="แก้ไข"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                    )}
+                    {can("user.delete") && (
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(user)}
+                        disabled={currentUser?.id === user.id}
+                        className="rounded-lg p-1.5 text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-30"
+                        aria-label="ลบ"
+                        title={currentUser?.id === user.id ? "ไม่สามารถลบบัญชีของตัวเองได้" : "ลบ"}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -145,6 +165,7 @@ export default function UsersPage() {
         >
           <UserForm
             branches={branches}
+            roles={roles}
             initial={modalUser === "new" ? null : modalUser}
             onSubmit={handleSubmit}
             onCancel={() => setModalUser(null)}

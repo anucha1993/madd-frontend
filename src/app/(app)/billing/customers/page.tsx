@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Pencil, Plus, Trash2, Users } from "lucide-react";
+import { useAccess } from "@/components/auth/AccessProvider";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import PageLoading from "@/components/ui/PageLoading";
@@ -34,6 +35,7 @@ const emptyForm: BillingCustomerInput = {
 };
 
 export default function BillingCustomersPage() {
+  const { can } = useAccess();
   const [customers, setCustomers] = useState<BillingCustomer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -123,14 +125,16 @@ export default function BillingCustomersPage() {
           title="Tax Invoice Customers"
           description="Buyer database (separate from Ship To) used when issuing Tax Invoices"
         />
-        <button
-          type="button"
-          onClick={() => openModal("new")}
-          className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
-        >
-          <Plus className="h-4 w-4" />
-          Add Customer
-        </button>
+        {can("billing_customer.create") && (
+          <button
+            type="button"
+            onClick={() => openModal("new")}
+            className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
+          >
+            <Plus className="h-4 w-4" />
+            Add Customer
+          </button>
+        )}
       </div>
 
       <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -176,22 +180,26 @@ export default function BillingCustomersPage() {
                     {[c.address1, c.address2, c.city, c.postcode].filter(Boolean).join(", ") || "-"}
                   </td>
                   <td className="px-5 py-3 text-right">
-                    <button
-                      type="button"
-                      onClick={() => openModal(c)}
-                      className="mr-2 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
-                      aria-label="Edit"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(c)}
-                      className="rounded-lg p-1.5 text-red-500 hover:bg-red-50"
-                      aria-label="Delete"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    {can("billing_customer.edit") && (
+                      <button
+                        type="button"
+                        onClick={() => openModal(c)}
+                        className="mr-2 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
+                        aria-label="Edit"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                    )}
+                    {can("billing_customer.delete") && (
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(c)}
+                        className="rounded-lg p-1.5 text-red-500 hover:bg-red-50"
+                        aria-label="Delete"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

@@ -29,6 +29,7 @@ export default function TrackingSyncPage() {
   const [settings, setSettings] = useState<TrackingSyncSettings | null>(null);
   const [enabled, setEnabled] = useState(true);
   const [intervalMinutes, setIntervalMinutes] = useState(15);
+  const [alertRecipients, setAlertRecipients] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [running, setRunning] = useState(false);
@@ -42,6 +43,7 @@ export default function TrackingSyncPage() {
     setSettings(res);
     setEnabled(res.enabled);
     setIntervalMinutes(res.interval_minutes);
+    setAlertRecipients((res.pickup_alert_recipients ?? []).join(", "));
   }
 
   async function loadLogs() {
@@ -65,7 +67,11 @@ export default function TrackingSyncPage() {
     setSaving(true);
     setSaveMessage("");
     try {
-      const res = await updateTrackingSyncSettings({ enabled, interval_minutes: intervalMinutes });
+      const res = await updateTrackingSyncSettings({
+        enabled,
+        interval_minutes: intervalMinutes,
+        pickup_alert_recipients: alertRecipients.split(",").map((e) => e.trim()).filter(Boolean),
+      });
       setSettings(res);
       setSaveMessage("Saved successfully");
     } catch (err) {
@@ -118,6 +124,17 @@ export default function TrackingSyncPage() {
               onChange={(e) => setIntervalMinutes(Number(e.target.value))}
               className={`${inputClass} w-32`}
             />
+          </label>
+          <label className="flex min-w-72 flex-1 flex-col gap-1.5">
+            <span className="text-sm font-medium text-slate-600">อีเมลแจ้งเตือน Pickup เลยเวลานัด (เพิ่มเติม, คั่นด้วย ,)</span>
+            <input
+              type="text"
+              value={alertRecipients}
+              onChange={(e) => setAlertRecipients(e.target.value)}
+              placeholder="ops@example.com, manager@example.com"
+              className={inputClass}
+            />
+            <span className="text-xs text-slate-400">ผู้ที่นัด Pickup จะได้รับอีเมลเสมอ — ส่งผ่าน SMTP Settings</span>
           </label>
           <button
             type="button"

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Code, Copy, ExternalLink, FileText, ListChecks, Loader2, Lock, MinusCircle, Package, Plus, Printer, Receipt, Search, ShieldCheck, Sparkles, Tag, Trash2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
+import { useAccess } from "@/components/auth/AccessProvider";
 import Modal from "@/components/ui/Modal";
 import ThaiAddressSearch from "@/components/shipment/ThaiAddressSearch";
 import CountrySelect from "@/components/shipment/CountrySelect";
@@ -246,6 +247,8 @@ function packageTotalDeclaredValue(pkg: Pick<PackageRow, "declared_value" | "qua
 type AddonRow = {
   key: number;
   addonItemId: number | null;
+  // Set for Packing Supplies rows — lets the server check the locked sale price.
+  supplyId?: number;
   name: string;
   nameLocked: boolean;
   category: string;
@@ -290,9 +293,25 @@ const ENTITY_TYPE_OPTIONS: { value: "INDIVIDUAL" | "COMPANY"; label: string; des
 ];
 
 export default function ShipmentCreatePage() {
+  // Field groups a Role may leave read-only (config/permissions.php) — the API rejects any
+  // non-default value for them anyway, so the inputs are locked to their defaults here.
+  const { can, canEditField, canSeeField } = useAccess();
+  const canEditBilling = canEditField("shipment", "billing");
+  const canEditRefs = canEditField("shipment", "references");
+  // Rate-quote field groups (config/permissions.php `rate`) — the API already strips cost /
+  // markup detail / raw for roles like front-counter staff; these only cover what the page
+  // derives on its own (insurance markup %, green "marked up" highlighting, the cost caption).
+  const canSeeMarkup = canSeeField("rate", "markup");
+  const canSeeRateCost = canSeeField("rate", "cost");
+  // Display-only groups — when hidden the API omits them (breakdown keeps just the carrier
+  // insurance lines the pricing math below needs), so only the listing itself is gated here.
+  const canSeeBreakdown = canSeeField("rate", "breakdown");
+  const canSeeRateAccount = canSeeField("rate", "account");
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { enabled: aiEnabled } = useAiEnabled();
+  const { enabled: aiSettingEnabled } = useAiEnabled();
+  // AI address fill: switched on system-wide (API Integrations) AND allowed for this Role.
+  const aiEnabled = aiSettingEnabled && can("ai.parse_address");
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
 
   // Staff creating this shipment / their branch — shown in Order Summary as a final review.
@@ -858,7 +877,9 @@ export default function ShipmentCreatePage() {
     }
     if (s.invoiceMode === "FORM" || s.invoiceMode === "UPLOAD") setInvoiceMode(s.invoiceMode);
     if (Array.isArray(s.invoiceLines) && s.invoiceLines.length > 0) {
-      setInvoiceLines(s.invoiceLines);
+      // Drafts saved before quantities became whole-number only may hold decimals — round
+      // them here so the user sees (and can fix) the value that will actually be sent.
+      setInvoiceLines(s.invoiceLines.map((l: InvoiceLineRow) => ({ ...l, quantity: Math.max(1, Math.round(Number(l.quantity) || 1)) })));
       invoiceLineKeySeq = Math.max(invoiceLineKeySeq, ...s.invoiceLines.map((l: InvoiceLineRow) => l.key)) + 1;
     }
     if (Array.isArray(s.addonRows)) {
@@ -1110,6 +1131,20 @@ export default function ShipmentCreatePage() {
     applyDefaultInsurer(pkg, pkg.productType, carrierOption, thirdPartyOption);
   }
 
+  // Remaining stock at the staff's branch (only when they belong to exactly one — otherwise the
+  // booking branch depends on the account). Booking is never blocked; this is just a heads-up.
+  function renderSupplyStock(supply: Supply) {
+    const branchIds = currentUser?.branches?.map((b) => b.id) ?? [];
+    const stock = branchIds.length === 1 ? supply.stocks?.find((s) => s.branch_id === branchIds[0]) : undefined;
+    if (!stock) return null;
+    const low = stock.quantity <= 0 || (stock.min_qty !== null && stock.quantity <= stock.min_qty);
+    return (
+      <span className={`text-[10px] leading-tight ${low ? "font-semibold text-red-600" : "text-slate-400"}`}>
+        {stock.quantity <= 0 ? "Stock หมด" : `เหลือ ${stock.quantity.toLocaleString()}`}
+      </span>
+    );
+  }
+
   function addAddonFromSupply(supply: Supply) {
     setAddonRows((prev) => [
       ...prev,
@@ -1117,6 +1152,7 @@ export default function ShipmentCreatePage() {
         name: supply.name,
         nameLocked: true,
         category: "Packing Supplies",
+        supplyId: supply.id,
         unitPrice: String(supply.sale_price ?? 0),
         priceLocked: true,
       }),
@@ -1663,6 +1699,9 @@ export default function ShipmentCreatePage() {
       dhl_optional_services: dhlOptionalServiceCodes,
       ups_optional_services: upsOptionalServiceCodes,
       addon_lines: addonRows.map((row) => ({
+        // Catalog/supply ids let the server re-check locked (FIXED / supply) prices.
+        addon_item_id: row.addonItemId ?? undefined,
+        supply_id: row.supplyId ?? undefined,
         name: row.name,
         category: row.category,
         quantity: row.quantity,
@@ -1693,6 +1732,16 @@ export default function ShipmentCreatePage() {
   async function handleConfirmBooking() {
     const payload = buildBookingPayload();
     if (!payload) return;
+    // DHL Express has no cancel API — a real booking can only be cancelled by contacting DHL.
+    if (
+      selectedQuote?.carrier === "DHL" &&
+      selectedQuote.accountMode === "production" &&
+      !confirm(
+        "จองจริงกับ DHL (บัญชี Production)\n\nDHL Express ยกเลิก Waybill ผ่านระบบไม่ได้ ถ้าจองผิดต้องติดต่อ DHL เพื่อยกเลิก และ DHL อาจเรียกค่าชดเชยถ้าไม่ส่งพัสดุ\n\nยืนยันจองจริง?",
+      )
+    ) {
+      return;
+    }
 
     setBooking(true);
     setBookingError("");
@@ -1986,6 +2035,7 @@ export default function ShipmentCreatePage() {
               </span>
             </div>
             <p className="text-xs text-slate-500">{selectedQuote.serviceLabel}</p>
+            {canSeeRateAccount && (
             <p className="text-[11px] text-slate-400">
               Account: <span className="font-medium text-slate-500">{selectedQuote.username}</span>
               {selectedQuote.zone && (
@@ -1995,12 +2045,15 @@ export default function ShipmentCreatePage() {
                 </>
               )}
             </p>
-            {selectedQuote.chargeBreakdown && selectedQuote.chargeBreakdown.length > 0 && (
+            )}
+            {canSeeBreakdown && selectedQuote.chargeBreakdown && selectedQuote.chargeBreakdown.length > 0 && (
               <div className="mt-2 flex flex-col gap-0.5 border-t border-amber-100 pt-2">
-                <p className="text-[11px] text-slate-400">
-                  รายการด้านล่างคือค่าใช้จ่ายจริงที่ {selectedQuote.carrier} เรียกเก็บ (ต้นทุน) — ยอดด้านบนหักรายการ{" "}
-                  {carrierCostOnlyCodes.join(", ")} ออกแล้ว เพราะประกันคิดแยกเป็น Insurance Add-on ต่างหาก ไม่คิดซ้ำในค่า Freight
-                </p>
+                {canSeeRateCost && (
+                  <p className="text-[11px] text-slate-400">
+                    รายการด้านล่างคือค่าใช้จ่ายจริงที่ {selectedQuote.carrier} เรียกเก็บ (ต้นทุน) — ยอดด้านบนหักรายการ{" "}
+                    {carrierCostOnlyCodes.join(", ")} ออกแล้ว เพราะประกันคิดแยกเป็น Insurance Add-on ต่างหาก ไม่คิดซ้ำในค่า Freight
+                  </p>
+                )}
                 {selectedQuote.chargeBreakdown
                   .filter((line) => sellingCarrierOwnInsurance || !carrierCostOnlyCodes.includes(line.code ?? ""))
                   .map((line, li) => {
@@ -2010,13 +2063,13 @@ export default function ShipmentCreatePage() {
                   const displayAmount = insuranceMarkupPct !== 0 ? line.amount * (1 + insuranceMarkupPct / 100) : line.amount;
                   return (
                     <div key={li} className="flex items-center justify-between text-xs">
-                      <span className={line.isCustomCharge ? "text-emerald-600" : "text-slate-500"}>
+                      <span className={canSeeMarkup && line.isCustomCharge ? "text-emerald-600" : "text-slate-500"}>
                         {line.description}
                         {line.code ? <span className="text-slate-300"> ({line.code})</span> : null}
                         {markupBasis && <span className="ml-1 text-emerald-600">({markupBasis})</span>}
-                        {insuranceMarkupPct !== 0 && <span className="ml-1 text-emerald-600">(+{insuranceMarkupPct}%)</span>}
+                        {canSeeMarkup && insuranceMarkupPct !== 0 && <span className="ml-1 text-emerald-600">(+{insuranceMarkupPct}%)</span>}
                       </span>
-                      <span className={`font-medium ${line.isCustomCharge || insuranceMarkupPct !== 0 ? "text-emerald-600" : "text-slate-600"}`}>
+                      <span className={`font-medium ${canSeeMarkup && (line.isCustomCharge || insuranceMarkupPct !== 0) ? "text-emerald-600" : "text-slate-600"}`}>
                         {displayAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {line.currency}
                       </span>
                     </div>
@@ -3349,7 +3402,7 @@ export default function ShipmentCreatePage() {
                             {r.username}
                             {r.zone && ` · Zone ${r.zone}`}
                           </span>
-                          <span>{r.transitDays != null ? `${r.transitDays} days` : "-"}</span>
+                          {canSeeField("rate", "transit") && <span>{r.transitDays != null ? `${r.transitDays} days` : "-"}</span>}
                         </div>
                         {r.billedWeight != null && (
                           <p className="mt-0.5 text-xs text-slate-400">
@@ -3362,7 +3415,7 @@ export default function ShipmentCreatePage() {
                             )}
                           </p>
                         )}
-                        {r.chargeBreakdown && r.chargeBreakdown.length > 0 && (
+                        {canSeeBreakdown && r.chargeBreakdown && r.chargeBreakdown.length > 0 && (
                           <div className="mt-2 flex flex-col gap-0.5 border-t border-slate-100 pt-2">
                             {r.chargeBreakdown
                               .filter((line) => sellingCarrierOwnInsurance || !rCostOnlyCodes.includes(line.code ?? ""))
@@ -3373,13 +3426,13 @@ export default function ShipmentCreatePage() {
                               const displayAmount = insuranceMarkupPct !== 0 ? line.amount * (1 + insuranceMarkupPct / 100) : line.amount;
                               return (
                               <div key={li} className="flex items-center justify-between text-xs">
-                                <span className={line.isCustomCharge ? "text-emerald-600" : "text-slate-500"}>
+                                <span className={canSeeMarkup && line.isCustomCharge ? "text-emerald-600" : "text-slate-500"}>
                                   {line.description}
                                   {line.code ? <span className="text-slate-300"> ({line.code})</span> : null}
                                   {markupBasis && <span className="ml-1 text-emerald-600">({markupBasis})</span>}
-                                  {insuranceMarkupPct !== 0 && <span className="ml-1 text-emerald-600">(+{insuranceMarkupPct}%)</span>}
+                                  {canSeeMarkup && insuranceMarkupPct !== 0 && <span className="ml-1 text-emerald-600">(+{insuranceMarkupPct}%)</span>}
                                 </span>
-                                <span className={`font-medium ${line.isCustomCharge || insuranceMarkupPct !== 0 ? "text-emerald-600" : "text-slate-600"}`}>
+                                <span className={`font-medium ${canSeeMarkup && (line.isCustomCharge || insuranceMarkupPct !== 0) ? "text-emerald-600" : "text-slate-600"}`}>
                                   {displayAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {line.currency}
                                 </span>
                               </div>
@@ -3584,9 +3637,15 @@ export default function ShipmentCreatePage() {
                       <td className="px-1 py-0.5">
                         <input
                           type="number"
-                          min={0.01}
+                          min={1}
+                          step={1}
+                          inputMode="numeric"
                           value={line.quantity}
-                          onChange={(e) => updateInvoiceLine(line.key, { quantity: Number(e.target.value) })}
+                          // Units on a Commercial Invoice are whole pieces — no decimals.
+                          onKeyDown={(e) => {
+                            if ([".", ",", "e", "E", "-", "+"].includes(e.key)) e.preventDefault();
+                          }}
+                          onChange={(e) => updateInvoiceLine(line.key, { quantity: Math.max(1, Math.floor(Number(e.target.value) || 1)) })}
                           className="w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-right text-xs outline-none focus:border-brand-navy focus:bg-white focus:ring-1 focus:ring-brand-navy/20"
                         />
                       </td>
@@ -3740,7 +3799,7 @@ export default function ShipmentCreatePage() {
           <div className={billTransportationTo === "RECEIVER" || billTransportationTo === "THIRD_PARTY" ? "grid grid-cols-2 gap-3" : ""}>
           <label className="flex flex-col gap-1">
             <span className={labelClass}>Bill Transportation to</span>
-            <select value={billTransportationTo} onChange={(e) => setBillTransportationTo(e.target.value)} className={inputClass}>
+            <select value={billTransportationTo} onChange={(e) => setBillTransportationTo(e.target.value)} disabled={!canEditBilling} className={inputClass}>
               {billTransportationOptions.map((opt) => (
                 <option key={opt.id} value={opt.code}>
                   {opt.name}
@@ -3793,7 +3852,7 @@ export default function ShipmentCreatePage() {
           <div className={billDutyTaxTo === "THIRD_PARTY" ? "grid grid-cols-2 gap-3" : ""}>
           <label className="flex flex-col gap-1">
             <span className={labelClass}>Bill Duty and Tax to</span>
-            <select value={billDutyTaxTo} onChange={(e) => setBillDutyTaxTo(e.target.value)} className={inputClass}>
+            <select value={billDutyTaxTo} onChange={(e) => setBillDutyTaxTo(e.target.value)} disabled={!canEditBilling} className={inputClass}>
               {billDutyTaxOptions.map((opt) => (
                 <option key={opt.id} value={opt.code}>
                   {opt.name}
@@ -3849,6 +3908,7 @@ export default function ShipmentCreatePage() {
               type="text"
               value={refInvoiceNo}
               onChange={(e) => setRefInvoiceNo(e.target.value)}
+              disabled={!canEditRefs}
               placeholder="e.g. INV-2026-00123"
               className={inputClass}
             />
@@ -3859,6 +3919,7 @@ export default function ShipmentCreatePage() {
               type="text"
               value={refInsuranceNo}
               onChange={(e) => setRefInsuranceNo(e.target.value)}
+              disabled={!canEditRefs}
               placeholder="e.g. INS-2026-00123"
               className={inputClass}
             />
@@ -3869,6 +3930,7 @@ export default function ShipmentCreatePage() {
               type="text"
               value={refPurchaseNo}
               onChange={(e) => setRefPurchaseNo(e.target.value)}
+              disabled={!canEditRefs}
               placeholder="e.g. PO-2026-00123"
               className={inputClass}
             />
@@ -4007,6 +4069,7 @@ export default function ShipmentCreatePage() {
                       <span className="text-[10px] font-semibold leading-tight text-brand-navy-dark">
                         {Number(supply.sale_price).toLocaleString()} THB
                       </span>
+                      {renderSupplyStock(supply)}
                     </button>
                   ))}
                 </div>

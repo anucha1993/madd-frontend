@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { MapPinned, PackageOpen, Pencil, Plus, Star, Trash2, User } from "lucide-react";
+import { useAccess } from "@/components/auth/AccessProvider";
 import Modal from "@/components/ui/Modal";
 import CustomerAddressForm from "@/components/config/CustomerAddressForm";
 import {
@@ -20,7 +21,7 @@ type Props = {
 
 // Full detail row for one saved address — mirrors every field on the Create Shipment
 // Ship From/Ship To form (contact, company, tax id, phone, email, full address, notes).
-function AddressCard({ addr, onEdit, onDelete }: { addr: CustomerAddress; onEdit: () => void; onDelete: () => void }) {
+function AddressCard({ addr, onEdit, onDelete }: { addr: CustomerAddress; onEdit?: () => void; onDelete?: () => void }) {
   return (
     <div className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
       <div className="text-sm">
@@ -43,18 +44,23 @@ function AddressCard({ addr, onEdit, onDelete }: { addr: CustomerAddress; onEdit
         {addr.notes && <p className="text-xs italic text-slate-400">หมายเหตุ: {addr.notes}</p>}
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        <button type="button" onClick={onEdit} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-200" aria-label="แก้ไข">
-          <Pencil className="h-4 w-4" />
-        </button>
-        <button type="button" onClick={onDelete} className="rounded-lg p-1.5 text-red-500 hover:bg-red-50" aria-label="ลบ">
-          <Trash2 className="h-4 w-4" />
-        </button>
+        {onEdit && (
+          <button type="button" onClick={onEdit} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-200" aria-label="แก้ไข">
+            <Pencil className="h-4 w-4" />
+          </button>
+        )}
+        {onDelete && (
+          <button type="button" onClick={onDelete} className="rounded-lg p-1.5 text-red-500 hover:bg-red-50" aria-label="ลบ">
+            <Trash2 className="h-4 w-4" />
+          </button>
+        )}
       </div>
     </div>
   );
 }
 
 export default function CustomerAddressManager({ customer, onClose }: Props) {
+  const { can } = useAccess();
   const [addresses, setAddresses] = useState<CustomerAddress[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -98,7 +104,7 @@ export default function CustomerAddressManager({ customer, onClose }: Props) {
             {sectionType === "ship_from" ? <PackageOpen className="h-4 w-4" /> : <MapPinned className="h-4 w-4" />}
             {title}
           </h3>
-          {editing !== newKey && (
+          {editing !== newKey && (can("customer.create") || can("customer.edit")) && (
             <button
               type="button"
               onClick={() => setEditing(newKey)}
@@ -113,7 +119,7 @@ export default function CustomerAddressManager({ customer, onClose }: Props) {
         ) : (
           <div className="flex flex-col gap-2">
             {list.map((addr) => (
-              <AddressCard key={addr.id} addr={addr} onEdit={() => setEditing(addr)} onDelete={() => handleDelete(addr)} />
+              <AddressCard key={addr.id} addr={addr} onEdit={can("customer.edit") ? () => setEditing(addr) : undefined} onDelete={can("customer.delete") ? () => handleDelete(addr) : undefined} />
             ))}
           </div>
         )}

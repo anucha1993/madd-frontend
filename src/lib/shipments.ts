@@ -178,6 +178,17 @@ export type Shipment = {
   // Void Shipment API call, vs. DHL where it's only ever a local status flag (see voidShipment()).
   voided_at?: string | null;
   void_note?: string | null;
+  // Who voided it and why. For DHL (no cancel API) carrier_cancel_status tracks whether DHL has
+  // actually been told: "pending" (voided in MADD only) -> "confirmed" (DHL confirmed, with ref).
+  voided_by?: { id: number; name: string } | number | null;
+  void_reason?: string | null;
+  carrier_cancel_status?: "pending" | "confirmed" | null;
+  // When staff told the carrier to cancel, and whom / through which channel.
+  carrier_cancel_requested_at?: string | null;
+  carrier_cancel_requested_to?: string | null;
+  carrier_cancel_confirmed_at?: string | null;
+  carrier_cancel_confirmed_by?: { id: number; name: string } | number | null;
+  carrier_cancel_reference?: string | null;
   origin?: ShipmentAddress | null;
   destination?: ShipmentAddress | null;
   packages?: ShipmentPackageRecord[];
@@ -234,6 +245,10 @@ export type Shipment = {
   tracking_raw_status?: string | null;
   tracking_synced_at?: string | null;
   delivered_at?: string | null;
+  // When the courier actually collected it — from the carrier's own tracking scan, or set
+  // by staff ("ยืนยันรถรับแล้ว") until that scan arrives. An on-call Pickup alone never sets it.
+  picked_up_at?: string | null;
+  picked_up_source?: "carrier" | "manual" | null;
   error_message: string | null;
   created_at: string;
   agent_account?: { id: number; username_acc: string; mode?: "test" | "production" | null; agent?: { agent_code: string; name?: string; logo_url?: string } } | null;
@@ -255,6 +270,18 @@ export type PaginatedShipments = {
   total: number;
 };
 
+export type TrackingGroup = "not_picked_up" | "awaiting_pickup" | "in_transit" | "delivered";
+
+export const TRACKING_GROUP_LABEL: Record<TrackingGroup, string> = {
+  not_picked_up: "ยังไม่นัดรับ",
+  awaiting_pickup: "รอรถรับตามนัด",
+  in_transit: "รับแล้ว / กำลังขนส่ง",
+  delivered: "ส่งถึงแล้ว",
+};
+
+/** Staff saw the courier take this shipment (before the carrier's own scan arrives). */
+export const markShipmentPickedUp = (id: number) => apiClient.post<Shipment>(`/shipments/${id}/mark-picked-up`, {});
+
 export const listShipments = (params?: {
   search?: string;
   carrier?: "UPS" | "DHL";
@@ -266,8 +293,14 @@ export const listShipments = (params?: {
   // Only shipments never attached to any Receipt/Tax Invoice yet — used by the Issue
   // Receipt picker (see receipt_shipment's global lock).
   unbilled?: boolean;
+  // Collection progress group (see ShipmentController::index).
+  tracking?: TrackingGroup;
+  // "pending" = voided DHL waybills DHL hasn't confirmed cancelling yet.
+  cancel?: "pending";
 }) => {
   const query = new URLSearchParams();
+  if (params?.cancel) query.set("cancel", params.cancel);
+  if (params?.tracking) query.set("tracking", params.tracking);
   if (params?.search) query.set("search", params.search);
   if (params?.carrier) query.set("carrier", params.carrier);
   if (params?.status) query.set("status", params.status);
@@ -285,7 +318,7 @@ export const listShipments = (params?: {
 export type ShipmentStats = {
   today_count: number;
   month_count: number;
-  month_revenue: number;
+  month_revenue: number | null;
   in_transit_count: number;
   cancelled_count: number;
 };
@@ -327,7 +360,21 @@ export function describeShipmentPieces(shipment: Shipment) {
 // Cancels a booked shipment. UPS: a REAL cancellation with UPS (Void Shipment API). DHL: DHL has
 // no shipment-cancel API at all — this only flips our own local status, staff must still contact
 // DHL directly to actually stop the shipment (see backend ShipmentController::void() for detail).
-export const voidShipment = (id: number) => apiClient.post<Shipment>(`/shipments/${id}/void`, {});
+// `pickup_notice` says what happened to any active pickup the shipment was on (cancelled with the
+// carrier, or left alone because other shipments on it still need collecting).
+export const voidShipment = (id: number, reason?: string) =>
+  apiClient.post<Shipment & { pickup_notice?: string | null }>(`/shipments/${id}/void`, { reason: reason || undefined });
+
+/** DHL only, before DHL confirmed the cancellation — nothing was cancelled at DHL yet. */
+export const unvoidShipment = (id: number) => apiClient.post<Shipment>(`/shipments/${id}/unvoid`, {});
+
+/** Staff told DHL (phone / in person / their own email) — `notifiedTo` = whom or which channel. */
+export const markCarrierCancelNotified = (id: number, notifiedTo?: string) =>
+  apiClient.post<Shipment>(`/shipments/${id}/carrier-cancel-notified`, { notified_to: notifiedTo || undefined });
+
+/** Record that DHL confirmed the waybill cancellation (their case/reference number). */
+export const confirmCarrierCancel = (id: number, reference?: string) =>
+  apiClient.post<Shipment>(`/shipments/${id}/confirm-carrier-cancel`, { reference: reference || undefined });
 
 // Permanently deletes a Shipment — only allowed by the backend when `is_test` is true (booked via
 // a sandbox/Test-mode Agent Account). Real production bookings must use voidShipment() instead.
