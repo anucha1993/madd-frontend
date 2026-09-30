@@ -106,7 +106,7 @@ export default function RateChatWidget() {
                               <div className="flex flex-col">
                                 <span className="font-semibold text-slate-700">{best.carrier} · {best.serviceLabel}</span>
                                 <span className="text-slate-400">
-                                  Acc: {best.username}
+                                  {best.username && <>Acc: {best.username}</>}
                                   {best.zone && ` · Zone ${best.zone}`}
                                   {best.transitDays != null && ` · ${best.transitDays} วัน`}
                                   {best.estimatedDelivery && ` · ถึง ${best.estimatedDelivery}`}

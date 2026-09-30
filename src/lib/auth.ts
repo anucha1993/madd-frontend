@@ -1,3 +1,5 @@
+import type { Access } from "./access";
+
 export type AuthUser = {
   id: number;
   name: string;
@@ -5,6 +7,7 @@ export type AuthUser = {
   email: string;
   can_access_all_branches?: boolean;
   branches?: { id: number; name: string }[];
+  access?: Access;
 };
 
 const TOKEN_KEY = "access_token";
@@ -18,6 +21,11 @@ export function setAuth(data: { token: string; user: AuthUser }) {
   localStorage.setItem(TOKEN_KEY, data.token);
   localStorage.setItem(EXPIRE_KEY, expireAt.toString());
   localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+}
+
+/** Refreshes the cached user (e.g. after /me) without touching the token or its expiry. */
+export function updateStoredUser(user: AuthUser) {
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
 export function removeAuth() {

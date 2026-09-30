@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Code, Copy, ExternalLink, FileText, ListChecks, Loader2, Lock, MinusCircle, Package, Plus, Printer, Receipt, Search, ShieldCheck, Sparkles, Tag, Trash2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
+import { useAccess } from "@/components/auth/AccessProvider";
 import Modal from "@/components/ui/Modal";
 import ThaiAddressSearch from "@/components/shipment/ThaiAddressSearch";
 import CountrySelect from "@/components/shipment/CountrySelect";
@@ -290,6 +291,20 @@ const ENTITY_TYPE_OPTIONS: { value: "INDIVIDUAL" | "COMPANY"; label: string; des
 ];
 
 export default function ShipmentCreatePage() {
+  // Field groups a Role may leave read-only (config/permissions.php) — the API rejects any
+  // non-default value for them anyway, so the inputs are locked to their defaults here.
+  const { canEditField, canSeeField } = useAccess();
+  const canEditBilling = canEditField("shipment", "billing");
+  const canEditRefs = canEditField("shipment", "references");
+  // Rate-quote field groups (config/permissions.php `rate`) — the API already strips cost /
+  // markup detail / raw for roles like front-counter staff; these only cover what the page
+  // derives on its own (insurance markup %, green "marked up" highlighting, the cost caption).
+  const canSeeMarkup = canSeeField("rate", "markup");
+  const canSeeRateCost = canSeeField("rate", "cost");
+  // Display-only groups — when hidden the API omits them (breakdown keeps just the carrier
+  // insurance lines the pricing math below needs), so only the listing itself is gated here.
+  const canSeeBreakdown = canSeeField("rate", "breakdown");
+  const canSeeRateAccount = canSeeField("rate", "account");
   const router = useRouter();
   const searchParams = useSearchParams();
   const { enabled: aiEnabled } = useAiEnabled();
@@ -1986,6 +2001,7 @@ export default function ShipmentCreatePage() {
               </span>
             </div>
             <p className="text-xs text-slate-500">{selectedQuote.serviceLabel}</p>
+            {canSeeRateAccount && (
             <p className="text-[11px] text-slate-400">
               Account: <span className="font-medium text-slate-500">{selectedQuote.username}</span>
               {selectedQuote.zone && (
@@ -1995,12 +2011,15 @@ export default function ShipmentCreatePage() {
                 </>
               )}
             </p>
-            {selectedQuote.chargeBreakdown && selectedQuote.chargeBreakdown.length > 0 && (
+            )}
+            {canSeeBreakdown && selectedQuote.chargeBreakdown && selectedQuote.chargeBreakdown.length > 0 && (
               <div className="mt-2 flex flex-col gap-0.5 border-t border-amber-100 pt-2">
-                <p className="text-[11px] text-slate-400">
-                  รายการด้านล่างคือค่าใช้จ่ายจริงที่ {selectedQuote.carrier} เรียกเก็บ (ต้นทุน) — ยอดด้านบนหักรายการ{" "}
-                  {carrierCostOnlyCodes.join(", ")} ออกแล้ว เพราะประกันคิดแยกเป็น Insurance Add-on ต่างหาก ไม่คิดซ้ำในค่า Freight
-                </p>
+                {canSeeRateCost && (
+                  <p className="text-[11px] text-slate-400">
+                    รายการด้านล่างคือค่าใช้จ่ายจริงที่ {selectedQuote.carrier} เรียกเก็บ (ต้นทุน) — ยอดด้านบนหักรายการ{" "}
+                    {carrierCostOnlyCodes.join(", ")} ออกแล้ว เพราะประกันคิดแยกเป็น Insurance Add-on ต่างหาก ไม่คิดซ้ำในค่า Freight
+                  </p>
+                )}
                 {selectedQuote.chargeBreakdown
                   .filter((line) => sellingCarrierOwnInsurance || !carrierCostOnlyCodes.includes(line.code ?? ""))
                   .map((line, li) => {
@@ -2010,13 +2029,13 @@ export default function ShipmentCreatePage() {
                   const displayAmount = insuranceMarkupPct !== 0 ? line.amount * (1 + insuranceMarkupPct / 100) : line.amount;
                   return (
                     <div key={li} className="flex items-center justify-between text-xs">
-                      <span className={line.isCustomCharge ? "text-emerald-600" : "text-slate-500"}>
+                      <span className={canSeeMarkup && line.isCustomCharge ? "text-emerald-600" : "text-slate-500"}>
                         {line.description}
                         {line.code ? <span className="text-slate-300"> ({line.code})</span> : null}
                         {markupBasis && <span className="ml-1 text-emerald-600">({markupBasis})</span>}
-                        {insuranceMarkupPct !== 0 && <span className="ml-1 text-emerald-600">(+{insuranceMarkupPct}%)</span>}
+                        {canSeeMarkup && insuranceMarkupPct !== 0 && <span className="ml-1 text-emerald-600">(+{insuranceMarkupPct}%)</span>}
                       </span>
-                      <span className={`font-medium ${line.isCustomCharge || insuranceMarkupPct !== 0 ? "text-emerald-600" : "text-slate-600"}`}>
+                      <span className={`font-medium ${canSeeMarkup && (line.isCustomCharge || insuranceMarkupPct !== 0) ? "text-emerald-600" : "text-slate-600"}`}>
                         {displayAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {line.currency}
                       </span>
                     </div>
@@ -3349,7 +3368,7 @@ export default function ShipmentCreatePage() {
                             {r.username}
                             {r.zone && ` · Zone ${r.zone}`}
                           </span>
-                          <span>{r.transitDays != null ? `${r.transitDays} days` : "-"}</span>
+                          {canSeeField("rate", "transit") && <span>{r.transitDays != null ? `${r.transitDays} days` : "-"}</span>}
                         </div>
                         {r.billedWeight != null && (
                           <p className="mt-0.5 text-xs text-slate-400">
@@ -3362,7 +3381,7 @@ export default function ShipmentCreatePage() {
                             )}
                           </p>
                         )}
-                        {r.chargeBreakdown && r.chargeBreakdown.length > 0 && (
+                        {canSeeBreakdown && r.chargeBreakdown && r.chargeBreakdown.length > 0 && (
                           <div className="mt-2 flex flex-col gap-0.5 border-t border-slate-100 pt-2">
                             {r.chargeBreakdown
                               .filter((line) => sellingCarrierOwnInsurance || !rCostOnlyCodes.includes(line.code ?? ""))
@@ -3373,13 +3392,13 @@ export default function ShipmentCreatePage() {
                               const displayAmount = insuranceMarkupPct !== 0 ? line.amount * (1 + insuranceMarkupPct / 100) : line.amount;
                               return (
                               <div key={li} className="flex items-center justify-between text-xs">
-                                <span className={line.isCustomCharge ? "text-emerald-600" : "text-slate-500"}>
+                                <span className={canSeeMarkup && line.isCustomCharge ? "text-emerald-600" : "text-slate-500"}>
                                   {line.description}
                                   {line.code ? <span className="text-slate-300"> ({line.code})</span> : null}
                                   {markupBasis && <span className="ml-1 text-emerald-600">({markupBasis})</span>}
-                                  {insuranceMarkupPct !== 0 && <span className="ml-1 text-emerald-600">(+{insuranceMarkupPct}%)</span>}
+                                  {canSeeMarkup && insuranceMarkupPct !== 0 && <span className="ml-1 text-emerald-600">(+{insuranceMarkupPct}%)</span>}
                                 </span>
-                                <span className={`font-medium ${line.isCustomCharge || insuranceMarkupPct !== 0 ? "text-emerald-600" : "text-slate-600"}`}>
+                                <span className={`font-medium ${canSeeMarkup && (line.isCustomCharge || insuranceMarkupPct !== 0) ? "text-emerald-600" : "text-slate-600"}`}>
                                   {displayAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {line.currency}
                                 </span>
                               </div>
@@ -3740,7 +3759,7 @@ export default function ShipmentCreatePage() {
           <div className={billTransportationTo === "RECEIVER" || billTransportationTo === "THIRD_PARTY" ? "grid grid-cols-2 gap-3" : ""}>
           <label className="flex flex-col gap-1">
             <span className={labelClass}>Bill Transportation to</span>
-            <select value={billTransportationTo} onChange={(e) => setBillTransportationTo(e.target.value)} className={inputClass}>
+            <select value={billTransportationTo} onChange={(e) => setBillTransportationTo(e.target.value)} disabled={!canEditBilling} className={inputClass}>
               {billTransportationOptions.map((opt) => (
                 <option key={opt.id} value={opt.code}>
                   {opt.name}
@@ -3793,7 +3812,7 @@ export default function ShipmentCreatePage() {
           <div className={billDutyTaxTo === "THIRD_PARTY" ? "grid grid-cols-2 gap-3" : ""}>
           <label className="flex flex-col gap-1">
             <span className={labelClass}>Bill Duty and Tax to</span>
-            <select value={billDutyTaxTo} onChange={(e) => setBillDutyTaxTo(e.target.value)} className={inputClass}>
+            <select value={billDutyTaxTo} onChange={(e) => setBillDutyTaxTo(e.target.value)} disabled={!canEditBilling} className={inputClass}>
               {billDutyTaxOptions.map((opt) => (
                 <option key={opt.id} value={opt.code}>
                   {opt.name}
@@ -3849,6 +3868,7 @@ export default function ShipmentCreatePage() {
               type="text"
               value={refInvoiceNo}
               onChange={(e) => setRefInvoiceNo(e.target.value)}
+              disabled={!canEditRefs}
               placeholder="e.g. INV-2026-00123"
               className={inputClass}
             />
@@ -3859,6 +3879,7 @@ export default function ShipmentCreatePage() {
               type="text"
               value={refInsuranceNo}
               onChange={(e) => setRefInsuranceNo(e.target.value)}
+              disabled={!canEditRefs}
               placeholder="e.g. INS-2026-00123"
               className={inputClass}
             />
@@ -3869,6 +3890,7 @@ export default function ShipmentCreatePage() {
               type="text"
               value={refPurchaseNo}
               onChange={(e) => setRefPurchaseNo(e.target.value)}
+              disabled={!canEditRefs}
               placeholder="e.g. PO-2026-00123"
               className={inputClass}
             />

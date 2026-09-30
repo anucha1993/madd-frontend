@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useAccess } from "@/components/auth/AccessProvider";
 import { ArrowLeft, ArrowRight, Loader2, Package, Printer, Receipt, FileCheck, XCircle, Trash2 } from "lucide-react";
 import {
   getShipment,
@@ -118,6 +119,7 @@ const headerBtn =
 /* --- page ----------------------------------------------------------------- */
 
 export default function ShipmentViewPage() {
+  const { can, canSeeField } = useAccess();
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const shipmentId = Number(params.id);
@@ -333,10 +335,12 @@ export default function ShipmentViewPage() {
                   Open invoice
                 </button>
               )}
-              <button type="button" onClick={() => router.push("/billing/receipts/new")} className={headerBtn}>
-                <Printer className="h-3.5 w-3.5" /> Issue Receipt
-              </button>
-              {s.status === "booked" && (
+              {can("receipt.create") && (
+                <button type="button" onClick={() => router.push("/billing/receipts/new")} className={headerBtn}>
+                  <Printer className="h-3.5 w-3.5" /> Issue Receipt
+                </button>
+              )}
+              {s.status === "booked" && can("shipment.void") && (
                 <button
                   type="button"
                   onClick={handleVoid}
@@ -347,7 +351,7 @@ export default function ShipmentViewPage() {
                   Void / Cancel
                 </button>
               )}
-              {s.is_test && (
+              {s.is_test && can("shipment.delete") && (
                 <button
                   type="button"
                   onClick={handleDelete}
@@ -378,24 +382,32 @@ export default function ShipmentViewPage() {
         </div>
 
         <div className="grid grid-cols-2 gap-3 border-t border-white/10 bg-white/5 px-4 py-2.5 sm:grid-cols-4">
-          <Meta
-            label="Billed Weight"
-            value={
-              rateQuote?.billedWeight != null
-                ? `${rateQuote.billedWeight} ${rateQuote.billedWeightUnit ?? ""}`.trim()
-                : undefined
-            }
-          />
-          <Meta label="Transit Days" value={rateQuote?.transitDays != null ? String(rateQuote.transitDays) : undefined} />
-          <Meta label="Estimated Delivery" value={rateQuote?.estimatedDelivery} />
-          <Meta
-            label="Account"
-            value={
-              rateQuote?.zone
-                ? `${s.agent_account?.username_acc ?? "—"} · Zone ${rateQuote.zone}`
-                : s.agent_account?.username_acc
-            }
-          />
+          {canSeeField("rate", "weight") && (
+            <Meta
+              label="Billed Weight"
+              value={
+                rateQuote?.billedWeight != null
+                  ? `${rateQuote.billedWeight} ${rateQuote.billedWeightUnit ?? ""}`.trim()
+                  : undefined
+              }
+            />
+          )}
+          {canSeeField("rate", "transit") && (
+            <>
+              <Meta label="Transit Days" value={rateQuote?.transitDays != null ? String(rateQuote.transitDays) : undefined} />
+              <Meta label="Estimated Delivery" value={rateQuote?.estimatedDelivery} />
+            </>
+          )}
+          {canSeeField("rate", "account") && (
+            <Meta
+              label="Account"
+              value={
+                rateQuote?.zone
+                  ? `${s.agent_account?.username_acc ?? "—"} · Zone ${rateQuote.zone}`
+                  : s.agent_account?.username_acc
+              }
+            />
+          )}
         </div>
 
         {s.status === "booked" && (
@@ -564,7 +576,7 @@ export default function ShipmentViewPage() {
               <Row label="Bill Duty/Tax to" value={s.bill_duty_tax_to} labelWidth="w-24" />
             </dl>
 
-            {charges.length > 0 && (
+            {canSeeField("rate", "breakdown") && charges.length > 0 && (
               <div className="mt-3 flex flex-col gap-1 border-t border-slate-100 pt-3 text-[13px]">
                 {charges.map((c, i) => (
                   <div key={i} className="flex justify-between gap-3 text-slate-500">

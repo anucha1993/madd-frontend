@@ -8,11 +8,13 @@ import PageLoading from "@/components/ui/PageLoading";
 import UserForm from "@/components/config/UserForm";
 import { listBranches, type Branch } from "@/lib/branches";
 import { createUser, deleteUser, listUsers, updateUser, type AppUser, type AppUserInput } from "@/lib/users";
+import { listRoles, type Role } from "@/lib/roles";
 import { getUser } from "@/lib/auth";
 
 export default function UsersPage() {
   const [users, setUsers] = useState<AppUser[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [modalUser, setModalUser] = useState<AppUser | "new" | null>(null);
@@ -22,9 +24,10 @@ export default function UsersPage() {
     setLoading(true);
     setError("");
     try {
-      const [usersRes, branchesRes] = await Promise.all([listUsers(), listBranches()]);
+      const [usersRes, branchesRes, rolesRes] = await Promise.all([listUsers(), listBranches(), listRoles()]);
       setUsers(usersRes);
       setBranches(branchesRes);
+      setRoles(rolesRes);
     } catch (err) {
       setError(err instanceof Error ? err.message : "โหลดข้อมูลไม่สำเร็จ");
     } finally {
@@ -55,7 +58,7 @@ export default function UsersPage() {
   return (
     <div className="relative min-h-[360px]">
       <div className="mb-6 flex items-start justify-between">
-        <PageHeader title="สมาชิกและสิทธิ์การใช้งาน" description="จัดการผู้ใช้งานและกำหนดสิทธิ์การเข้าถึงสาขา" />
+        <PageHeader title="ผู้ใช้งาน" description="จัดการผู้ใช้งาน กำหนด Role และสาขาที่เข้าถึงได้ (สิทธิ์ของแต่ละ Role ตั้งค่าที่เมนู Roles & Permissions)" />
         <button
           type="button"
           onClick={() => setModalUser("new")}
@@ -96,19 +99,28 @@ export default function UsersPage() {
                   </td>
                   <td className="px-5 py-3 text-slate-500">{user.username}</td>
                   <td className="px-5 py-3">
-                    <span
-                      className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                        user.role === "admin" ? "bg-brand-amber/20 text-brand-navy-dark" : "bg-slate-100 text-slate-600"
-                      }`}
-                    >
-                      {user.role === "admin" ? "Admin" : "Staff"}
-                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      {user.roles.length === 0 ? (
+                        <span className="text-xs text-red-500">ยังไม่มี Role (ใช้งานไม่ได้)</span>
+                      ) : (
+                        user.roles.map((role) => (
+                          <span
+                            key={role.id}
+                            className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                              role.is_super_admin ? "bg-brand-amber/20 text-brand-navy-dark" : "bg-slate-100 text-slate-600"
+                            }`}
+                          >
+                            {role.name}
+                          </span>
+                        ))
+                      )}
+                    </div>
                   </td>
                   <td className="px-5 py-3 text-slate-500">
                     {user.can_access_all_branches
                       ? "ทุกสาขา"
                       : user.branches.length > 0
-                        ? user.branches.map((b) => b.name).join(", ")
+                        ? user.branches.map((b) => `${b.code} · ${b.name}`).join(", ")
                         : "-"}
                   </td>
                   <td className="px-5 py-3 text-right">
@@ -145,6 +157,7 @@ export default function UsersPage() {
         >
           <UserForm
             branches={branches}
+            roles={roles}
             initial={modalUser === "new" ? null : modalUser}
             onSubmit={handleSubmit}
             onCancel={() => setModalUser(null)}

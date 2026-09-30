@@ -72,6 +72,10 @@ export type RateChargeLine = {
 };
 
 export type RateQuote = {
+  // Server-side handle for the FULL quote (see RateQuoteVault) — sent back with the booking so
+  // cost is taken from the server's copy. Cost/markup/raw fields below may be absent entirely
+  // when the user's Role hides them.
+  quoteId?: string;
   carrier: "UPS" | "DHL";
   accountId: number;
   username: string;

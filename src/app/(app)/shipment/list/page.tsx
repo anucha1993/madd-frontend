@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -26,9 +26,11 @@ import {
   Columns3,
 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
+import { useAccess } from "@/components/auth/AccessProvider";
 import PageLoading from "@/components/ui/PageLoading";
 import CarrierBadge from "@/components/ui/CarrierBadge";
 import ManageColumnsModal from "@/components/ui/ManageColumnsModal";
+import ColumnProfileSelect from "@/components/ui/ColumnProfileSelect";
 import SchedulePickupModal from "@/components/pickup/SchedulePickupModal";
 import { useManageColumns, type ColumnDef } from "@/hooks/useManageColumns";
 import { getUser } from "@/lib/auth";
@@ -42,6 +44,9 @@ import {
   openShipmentWaybill,
   openShipmentCommercialInvoice,
   voidShipment,
+  markShipmentPickedUp,
+  TRACKING_GROUP_LABEL,
+  type TrackingGroup,
   deleteShipment,
   type Shipment,
   type ShipmentStats,
@@ -78,7 +83,9 @@ const TRACKING_STATUS_LABEL: Record<string, string> = {
 // The select-checkbox and Actions columns are structural (not data), so they're always shown and
 // left out of this list — every other field the Shipment record can supply is offered here, incl.
 // ones not shown by default, so the user can turn any of them on via Manage Columns.
-type ShipmentColumn = ColumnDef & { align?: "right"; render: (s: Shipment) => ReactNode };
+// `field` = the Shipment field group (config/permissions.php) the column reads — the column is
+// dropped entirely for users whose Role hides that group (the API omits those values anyway).
+type ShipmentColumn = ColumnDef & { align?: "right"; field?: string; render: (s: Shipment) => ReactNode };
 
 const money = (n: unknown) => Number(n ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 
@@ -89,13 +96,24 @@ const SHIPMENT_COLUMNS: ShipmentColumn[] = [
     render: (s) => (
       <>
         {s.tracking_number ?? "-"}
-        {(s.pickups ?? []).length > 0 && (
+        {/* Collected (tracking scan / staff confirmation) wins over "scheduled" — an on-call
+            Pickup on its own never proves the courier actually came. */}
+        {s.picked_up_at ? (
           <span
-            className="ml-1.5 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-sans font-semibold text-amber-600"
-            title="Pickup already scheduled"
+            className="ml-1.5 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-sans font-semibold text-emerald-600"
+            title={`${s.picked_up_source === "manual" ? "ยืนยันโดยพนักงาน" : "จาก Tracking scan"} · ${new Date(s.picked_up_at).toLocaleString()}`}
           >
-            Pickup ✓
+            Picked Up ✓
           </span>
+        ) : (
+          (s.pickups ?? []).length > 0 && (
+            <span
+              className="ml-1.5 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-sans font-semibold text-amber-600"
+              title="นัด Pickup แล้ว — รอรถมารับ"
+            >
+              Pickup Scheduled
+            </span>
+          )
         )}
       </>
     ),
@@ -148,38 +166,60 @@ const SHIPMENT_COLUMNS: ShipmentColumn[] = [
   {
     id: "tracking_status",
     label: "Tracking",
-    render: (s) =>
-      s.status === "booked" ? (
+    render: (s) => {
+      if (s.status !== "booked") return <span className="text-xs text-slate-300">—</span>;
+      // Not collected yet but on an active Pickup — the courier is expected, not confirmed.
+      if (!s.picked_up_at && s.tracking_status !== "delivered" && (s.pickups ?? []).length > 0) {
+        return <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">Awaiting Pickup</span>;
+      }
+      return (
         <span
           className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${TRACKING_STATUS_STYLE[s.tracking_status ?? ""] ?? "bg-slate-50 text-slate-400"}`}
-          title={s.tracking_raw_status ?? undefined}
+          title={
+            s.picked_up_source === "manual"
+              ? "ยืนยันโดยพนักงาน — รอ Tracking scan จาก Carrier"
+              : (s.tracking_raw_status ?? undefined)
+          }
         >
           {TRACKING_STATUS_LABEL[s.tracking_status ?? ""] ?? "No data yet"}
+          {s.picked_up_source === "manual" && s.tracking_status !== "delivered" && " (Staff)"}
+        </span>
+      );
+    },
+  },
+  {
+    id: "picked_up_at",
+    label: "Picked Up At",
+    render: (s) =>
+      s.picked_up_at ? (
+        <span title={s.picked_up_source === "manual" ? "ยืนยันโดยพนักงาน" : "จาก Tracking scan ของ Carrier"}>
+          {new Date(s.picked_up_at).toLocaleString()}
         </span>
       ) : (
         <span className="text-xs text-slate-300">—</span>
       ),
   },
-  { id: "amount", label: "Amount (THB)", align: "right", render: (s) => <span className="font-semibold text-slate-800">{money(s.order_total)}</span> },
+  { id: "amount", label: "Amount (THB)", align: "right", field: "pricing", render: (s) => <span className="font-semibold text-slate-800">{money(s.order_total)}</span> },
   {
     id: "cost_amount",
     label: "Actual Cost (Ref.)",
     align: "right",
+    field: "cost",
     render: (s) => (s.cost_amount != null ? `${money(s.cost_amount)} ${s.cost_currency ?? ""}`.trim() : "-"),
   },
   { id: "agent_account", label: "Agent Account", render: (s) => s.agent_account?.username_acc ?? "-" },
   { id: "branch", label: "Branch", render: (s) => (s.branch ? `${s.branch.code} · ${s.branch.name}` : "-") },
   { id: "customer_type", label: "Customer Type", render: (s) => s.customer_type ?? "-" },
   { id: "entity_type", label: "Entity Type", render: (s) => s.entity_type ?? "-" },
-  { id: "freight_amount", label: "Freight Amount", align: "right", render: (s) => money(s.freight_amount) },
-  { id: "addon_total", label: "Addon Total", align: "right", render: (s) => money(s.addon_total) },
+  { id: "freight_amount", label: "Freight Amount", align: "right", field: "pricing", render: (s) => money(s.freight_amount) },
+  { id: "addon_total", label: "Addon Total", align: "right", field: "pricing", render: (s) => money(s.addon_total) },
   { id: "currency", label: "Currency", render: (s) => s.currency ?? "-" },
   { id: "payment_method", label: "Payment Method", render: (s) => s.payment_method ?? "-" },
-  { id: "bill_transportation_to", label: "Bill Transportation To", render: (s) => s.bill_transportation_to ?? "-" },
-  { id: "bill_duty_tax_to", label: "Bill Duty/Tax To", render: (s) => s.bill_duty_tax_to ?? "-" },
-  { id: "ref_invoice_no", label: "Ref. Invoice No.", render: (s) => s.ref_invoice_no ?? "-" },
-  { id: "ref_insurance_no", label: "Ref. Insurance No.", render: (s) => s.ref_insurance_no ?? "-" },
-  { id: "ref_purchase_no", label: "Ref. Purchase No.", render: (s) => s.ref_purchase_no ?? "-" },
+  { id: "bill_transportation_to", label: "Bill Transportation To", field: "billing", render: (s) => s.bill_transportation_to ?? "-" },
+  { id: "bill_duty_tax_to", label: "Bill Duty/Tax To", field: "billing", render: (s) => s.bill_duty_tax_to ?? "-" },
+  { id: "ref_invoice_no", label: "Ref. Invoice No.", field: "references", render: (s) => s.ref_invoice_no ?? "-" },
+  { id: "ref_insurance_no", label: "Ref. Insurance No.", field: "references", render: (s) => s.ref_insurance_no ?? "-" },
+  { id: "ref_purchase_no", label: "Ref. Purchase No.", field: "references", render: (s) => s.ref_purchase_no ?? "-" },
   {
     id: "documents",
     label: "Documents",
@@ -213,7 +253,7 @@ const SHIPMENT_COLUMNS: ShipmentColumn[] = [
     label: "Voided",
     render: (s) => (s.voided_at ? `${new Date(s.voided_at).toLocaleDateString()}${s.void_note ? ` — ${s.void_note}` : ""}` : "-"),
   },
-  { id: "error", label: "Error", render: (s) => s.error_message ?? "-" },
+  { id: "error", label: "Error", field: "carrier_raw", render: (s) => s.error_message ?? "-" },
   { id: "delivered_at", label: "Delivered At", render: (s) => (s.delivered_at ? new Date(s.delivered_at).toLocaleDateString() : "-") },
   {
     id: "tracking_synced_at",
@@ -224,12 +264,22 @@ const SHIPMENT_COLUMNS: ShipmentColumn[] = [
 
 export default function ShipmentListPage() {
   const router = useRouter();
+  const { can, canSeeField } = useAccess();
+  const allowedColumns = useMemo(
+    () => SHIPMENT_COLUMNS.filter((c) => !c.field || canSeeField("shipment", c.field)),
+    [canSeeField],
+  );
+  // Each bulk-selection purpose needs its own permission; modes the user can't act on are hidden.
+  const selectionModes = (["PICKUP", "RECEIPT", "DELETE_TEST"] as const).filter((mode) =>
+    can(mode === "PICKUP" ? "pickup.create" : mode === "RECEIPT" ? "receipt.create" : "shipment.delete"),
+  );
   const [name, setName] = useState("");
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
+  const [trackingGroup, setTrackingGroup] = useState<TrackingGroup | "">("");
   const [carrier, setCarrier] = useState<"" | "UPS" | "DHL">("");
   const [customerType, setCustomerType] = useState("");
   const [customerTypeOptions, setCustomerTypeOptions] = useState<ManifestOption[]>([]);
@@ -261,11 +311,11 @@ export default function ShipmentListPage() {
   // current selection since eligibility rules differ (Pickup: same agent_account_id, not already
   // on an active Pickup. Receipt: same branch_id, never yet attached to any Receipt/Tax Invoice.
   // Mass Delete: Test-mode shipments only, never yet attached to any Receipt/Tax Invoice).
-  const [selectionMode, setSelectionMode] = useState<"PICKUP" | "RECEIPT" | "DELETE_TEST">("PICKUP");
+  const [selectionMode, setSelectionMode] = useState<"PICKUP" | "RECEIPT" | "DELETE_TEST">(selectionModes[0] ?? "PICKUP");
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [pickupModalOpen, setPickupModalOpen] = useState(false);
   const [massDeleting, setMassDeleting] = useState(false);
-  const columnsMgr = useManageColumns("shipment-list", SHIPMENT_COLUMNS);
+  const columnsMgr = useManageColumns("shipment-list", allowedColumns);
 
   useEffect(() => {
     if (actionsMenuId == null) return;
@@ -294,6 +344,7 @@ export default function ShipmentListPage() {
       const res = await listShipments({
         search: search.trim() || undefined,
         status: status || undefined,
+        tracking: trackingGroup || undefined,
         carrier: carrier || undefined,
         customer_type: customerType || undefined,
         date_from: (overrides?.date_from ?? dateFrom) || undefined,
@@ -453,6 +504,16 @@ export default function ShipmentListPage() {
 
   // UPS: really cancels the air waybill with UPS. DHL: DHL has no cancel API at all — this only
   // flips our own status locally, staff must still contact DHL directly (see backend note).
+  async function handleMarkPickedUp(shipment: Shipment) {
+    if (!confirm(`ยืนยันว่า Courier มารับ ${shipment.tracking_number ?? "Shipment นี้"} ไปแล้ว?`)) return;
+    try {
+      const updated = await markShipmentPickedUp(shipment.id);
+      setShipments((prev) => prev.map((s) => (s.id === shipment.id ? { ...s, ...updated, pickups: s.pickups } : s)));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ");
+    }
+  }
+
   async function handleVoid(shipment: Shipment) {
     const confirmMsg =
       shipment.carrier === "UPS"
@@ -501,6 +562,8 @@ export default function ShipmentListPage() {
     if (shipment.status !== "booked") return false;
     if (selectionMode === "PICKUP") {
       if ((shipment.pickups ?? []).length > 0) return false;
+      // Already collected by the courier (tracking scan or staff confirmation).
+      if (shipment.picked_up_at) return false;
       if (!firstSelected) return true;
       return shipment.agent_account_id === firstSelected.agent_account_id;
     }
@@ -573,13 +636,15 @@ export default function ShipmentListPage() {
         title={`My Shipments — Welcome, ${name || "there"} 👋`}
         description="Overview and all Shipments booked with UPS/DHL through this system"
         actions={
-          <Link
-            href="/shipment/create"
-            className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
-          >
-            <Plus className="h-4 w-4" />
-            Create Shipment
-          </Link>
+          can("shipment.create") && (
+            <Link
+              href="/shipment/create"
+              className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
+            >
+              <Plus className="h-4 w-4" />
+              Create Shipment
+            </Link>
+          )
         }
       />
 
@@ -610,7 +675,9 @@ export default function ShipmentListPage() {
             <Wallet className="h-5 w-5" />
           </div>
           <p className="mt-4 text-2xl font-bold text-slate-800">
-            {stats ? Number(stats.month_revenue).toLocaleString(undefined, { maximumFractionDigits: 0 }) : "–"}
+            {stats && stats.month_revenue != null
+              ? Number(stats.month_revenue).toLocaleString(undefined, { maximumFractionDigits: 0 })
+              : "–"}
           </p>
           <p className="text-sm text-slate-500">Revenue This Month (THB)</p>
         </div>
@@ -646,6 +713,21 @@ export default function ShipmentListPage() {
             <option value="booked">Booked</option>
             <option value="pending">Pending</option>
             <option value="failed">Failed</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-slate-600">การรับของ</span>
+          <select
+            value={trackingGroup}
+            onChange={(e) => setTrackingGroup(e.target.value as TrackingGroup | "")}
+            className="w-44 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
+          >
+            <option value="">All</option>
+            {(Object.entries(TRACKING_GROUP_LABEL) as [TrackingGroup, string][]).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
           </select>
         </label>
         <label className="flex flex-col gap-1.5">
@@ -736,9 +818,9 @@ export default function ShipmentListPage() {
       {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
       <div className="mb-4 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
+        <div className={`flex items-center gap-2 ${selectionModes.length === 0 ? "invisible" : ""}`}>
           <span className="text-sm font-medium text-slate-500">Select shipments for:</span>
-          {(["PICKUP", "RECEIPT", "DELETE_TEST"] as const).map((mode) => (
+          {selectionModes.map((mode) => (
             <button
               key={mode}
               type="button"
@@ -755,14 +837,17 @@ export default function ShipmentListPage() {
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          onClick={columnsMgr.openModal}
-          className="flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
-        >
-          <Columns3 className="h-4 w-4" />
-          Manage Columns
-        </button>
+        <div className="flex items-center gap-2">
+          <ColumnProfileSelect mgr={columnsMgr} />
+          <button
+            type="button"
+            onClick={columnsMgr.openModal}
+            className="flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+          >
+            <Columns3 className="h-4 w-4" />
+            Manage Columns
+          </button>
+        </div>
       </div>
 
       {columnsMgr.isOpen && (
@@ -772,10 +857,22 @@ export default function ShipmentListPage() {
           groupOf={columnsMgr.groupOf}
           onCancel={columnsMgr.closeModal}
           onSave={columnsMgr.save}
+          lockVisibility={!columnsMgr.canManage}
+          onReset={columnsMgr.resetLayout}
+          profileEditor={
+            columnsMgr.canManage
+              ? {
+                  profile: columnsMgr.activeProfile,
+                  roles: columnsMgr.roles,
+                  onSaveProfile: columnsMgr.saveProfile,
+                  onDeleteProfile: columnsMgr.deleteProfile,
+                }
+              : undefined
+          }
         />
       )}
 
-      {selectedIds.size > 0 && (
+      {selectedIds.size > 0 && selectionModes.includes(selectionMode) && (
         <div
           className={`mb-4 flex items-center justify-between rounded-2xl border px-4 py-3 ${
             selectionMode === "DELETE_TEST" ? "border-red-200 bg-red-50" : "border-brand-navy/20 bg-brand-navy/5"
@@ -1021,6 +1118,7 @@ export default function ShipmentListPage() {
                             )}
                             {s.commercial_invoice_storage_key ? "Open Commercial Invoice" : "No Commercial Invoice available"}
                           </button>
+                          {can("receipt.create") && (
                           <button
                             type="button"
                             onClick={() => {
@@ -1032,7 +1130,21 @@ export default function ShipmentListPage() {
                             <Printer className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                             Issue Receipt / Tax Invoice
                           </button>
-                          {s.status === "booked" && (
+                          )}
+                          {s.status === "booked" && !s.picked_up_at && can("pickup.confirm") && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleMarkPickedUp(s);
+                                setActionsMenuId(null);
+                              }}
+                              className="flex w-full items-center gap-2 rounded-md border-t border-slate-100 px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                            >
+                              <Truck className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                              ยืนยันรถรับแล้ว
+                            </button>
+                          )}
+                          {s.status === "booked" && can("shipment.void") && (
                             <button
                               type="button"
                               onClick={() => {
@@ -1050,7 +1162,7 @@ export default function ShipmentListPage() {
                               {s.carrier === "UPS" ? "Void shipment with UPS" : "Mark as cancelled locally (DHL has no cancel API)"}
                             </button>
                           )}
-                          {s.is_test && (
+                          {s.is_test && can("shipment.delete") && (
                             <button
                               type="button"
                               onClick={() => {

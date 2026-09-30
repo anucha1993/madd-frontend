@@ -5,7 +5,9 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronDown } from "lucide-react";
-import { NAV_SECTIONS } from "@/lib/nav";
+import { NAV_SECTIONS, type NavItem } from "@/lib/nav";
+import { canVisit } from "@/lib/access";
+import { useAccess } from "@/components/auth/AccessProvider";
 
 type Props = {
   open: boolean;
@@ -31,7 +33,19 @@ function findActiveHref(pathname: string): string | undefined {
 
 export default function Sidebar({ open, onNavigate }: Props) {
   const pathname = usePathname();
+  const { access } = useAccess();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  // Only the menu entries this user's Roles allow (see lib/access.ts ROUTE_PERMISSIONS) — a
+  // section whose every child is filtered out disappears entirely.
+  const sections = useMemo(
+    () =>
+      NAV_SECTIONS.flatMap<NavItem>((s) => {
+        if (!s.children) return s.href && canVisit(access, s.href) ? [s] : [];
+        const children = s.children.filter((c) => canVisit(access, c.href));
+        return children.length > 0 ? [{ ...s, children }] : [];
+      }),
+    [access],
+  );
   const activeHref = useMemo(() => findActiveHref(pathname), [pathname]);
 
   const activeSectionLabel = useMemo(
@@ -56,7 +70,7 @@ export default function Sidebar({ open, onNavigate }: Props) {
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
-        {NAV_SECTIONS.map((section) => {
+        {sections.map((section) => {
           const Icon = section.icon;
 
           if (!section.children) {

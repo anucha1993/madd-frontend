@@ -234,6 +234,10 @@ export type Shipment = {
   tracking_raw_status?: string | null;
   tracking_synced_at?: string | null;
   delivered_at?: string | null;
+  // When the courier actually collected it — from the carrier's own tracking scan, or set
+  // by staff ("ยืนยันรถรับแล้ว") until that scan arrives. An on-call Pickup alone never sets it.
+  picked_up_at?: string | null;
+  picked_up_source?: "carrier" | "manual" | null;
   error_message: string | null;
   created_at: string;
   agent_account?: { id: number; username_acc: string; mode?: "test" | "production" | null; agent?: { agent_code: string; name?: string; logo_url?: string } } | null;
@@ -255,6 +259,18 @@ export type PaginatedShipments = {
   total: number;
 };
 
+export type TrackingGroup = "not_picked_up" | "awaiting_pickup" | "in_transit" | "delivered";
+
+export const TRACKING_GROUP_LABEL: Record<TrackingGroup, string> = {
+  not_picked_up: "ยังไม่นัดรับ",
+  awaiting_pickup: "รอรถรับตามนัด",
+  in_transit: "รับแล้ว / กำลังขนส่ง",
+  delivered: "ส่งถึงแล้ว",
+};
+
+/** Staff saw the courier take this shipment (before the carrier's own scan arrives). */
+export const markShipmentPickedUp = (id: number) => apiClient.post<Shipment>(`/shipments/${id}/mark-picked-up`, {});
+
 export const listShipments = (params?: {
   search?: string;
   carrier?: "UPS" | "DHL";
@@ -266,8 +282,11 @@ export const listShipments = (params?: {
   // Only shipments never attached to any Receipt/Tax Invoice yet — used by the Issue
   // Receipt picker (see receipt_shipment's global lock).
   unbilled?: boolean;
+  // Collection progress group (see ShipmentController::index).
+  tracking?: TrackingGroup;
 }) => {
   const query = new URLSearchParams();
+  if (params?.tracking) query.set("tracking", params.tracking);
   if (params?.search) query.set("search", params.search);
   if (params?.carrier) query.set("carrier", params.carrier);
   if (params?.status) query.set("status", params.status);
@@ -285,7 +304,7 @@ export const listShipments = (params?: {
 export type ShipmentStats = {
   today_count: number;
   month_count: number;
-  month_revenue: number;
+  month_revenue: number | null;
   in_transit_count: number;
   cancelled_count: number;
 };

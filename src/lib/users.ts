@@ -1,14 +1,19 @@
 import { apiClient } from "./apiClient";
 import type { Branch } from "./branches";
 
-export type UserRole = "admin" | "staff";
+export type UserRoleRef = {
+  id: number;
+  key: string;
+  name: string;
+  is_super_admin: boolean;
+};
 
 export type AppUser = {
   id: number;
   name: string;
   username: string;
   email: string;
-  role: UserRole;
+  roles: UserRoleRef[];
   can_access_all_branches: boolean;
   branches: Branch[];
 };
@@ -18,7 +23,7 @@ export type AppUserInput = {
   username: string;
   email: string;
   password?: string;
-  role: UserRole;
+  role_ids: number[];
   can_access_all_branches: boolean;
   branch_ids: number[];
 };

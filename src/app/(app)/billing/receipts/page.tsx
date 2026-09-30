@@ -5,8 +5,10 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { FileCheck, FileText, Loader2, MoreVertical, Plus, Printer, Trash2, XCircle, Columns3, SlidersHorizontal, ChevronDown, ChevronUp, RotateCcw } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
+import { useAccess } from "@/components/auth/AccessProvider";
 import PageLoading from "@/components/ui/PageLoading";
 import ManageColumnsModal from "@/components/ui/ManageColumnsModal";
+import ColumnProfileSelect from "@/components/ui/ColumnProfileSelect";
 import { useManageColumns, type ColumnDef } from "@/hooks/useManageColumns";
 import { listReceipts, voidReceipt, deleteReceipt, openReceiptPdf, printReceiptsBatch, type Receipt, type ReceiptType } from "@/lib/receipts";
 import { listBranches, type Branch } from "@/lib/branches";
@@ -206,6 +208,7 @@ function groupReceipts(receipts: Receipt[]): ReceiptPairRow[] {
 }
 
 export default function ReceiptsListPage() {
+  const { can } = useAccess();
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -406,13 +409,15 @@ export default function ReceiptsListPage() {
     <div>
       <div className="mb-6 flex items-start justify-between">
         <PageHeader title="Receipts & Tax Invoices" description="All documents issued so far" />
-        <Link
-          href="/shipment/list"
-          className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
-        >
-          <Plus className="h-4 w-4" />
-          Issue New Document
-        </Link>
+        {can("receipt.create") && (
+          <Link
+            href="/shipment/list"
+            className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
+          >
+            <Plus className="h-4 w-4" />
+            Issue New Document
+          </Link>
+        )}
       </div>
 
       <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -452,6 +457,7 @@ export default function ReceiptsListPage() {
               )}
               {advancedOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
             </button>
+            <ColumnProfileSelect mgr={columnsMgr} />
             <button
               type="button"
               onClick={columnsMgr.openModal}
@@ -585,6 +591,18 @@ export default function ReceiptsListPage() {
           groupOf={columnsMgr.groupOf}
           onCancel={columnsMgr.closeModal}
           onSave={columnsMgr.save}
+          lockVisibility={!columnsMgr.canManage}
+          onReset={columnsMgr.resetLayout}
+          profileEditor={
+            columnsMgr.canManage
+              ? {
+                  profile: columnsMgr.activeProfile,
+                  roles: columnsMgr.roles,
+                  onSaveProfile: columnsMgr.saveProfile,
+                  onDeleteProfile: columnsMgr.deleteProfile,
+                }
+              : undefined
+          }
         />
       )}
 
@@ -750,7 +768,7 @@ export default function ReceiptsListPage() {
                                 </button>
                               </>
                             )}
-                            {rep.status === "ISSUED" && (
+                            {rep.status === "ISSUED" && can("receipt.void") && (
                               <button
                                 type="button"
                                 onClick={() => {
@@ -768,7 +786,7 @@ export default function ReceiptsListPage() {
                                 Void
                               </button>
                             )}
-                            {rep.is_test && (
+                            {rep.is_test && can("receipt.delete") && (
                               <button
                                 type="button"
                                 onClick={() => {

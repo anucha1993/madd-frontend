@@ -91,7 +91,8 @@ export const NAV_SECTIONS: NavItem[] = [
     children: [
       { label: "Agent Accounts (UPS/DHL)", href: "/config/agent-accounts" },
       { label: "Thai Address Database", href: "/config/thai-address" },
-      { label: "Users & Permissions", href: "/config/users" },
+      { label: "Users", href: "/config/users" },
+      { label: "Roles & Permissions", href: "/config/roles" },
       { label: "API Integrations", href: "/config/integrations" },
       { label: "Tracking Sync", href: "/config/tracking-sync" },
       { label: "Report Schedules", href: "/config/report-schedules" },
