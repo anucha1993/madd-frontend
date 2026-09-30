@@ -125,15 +125,20 @@ export default function RolesPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
+  function applyLoaded(reg: PermissionRegistry, list: Role[], selectId?: number) {
+    setRegistry(reg);
+    setRoles(list);
+    const selected = list.find((r) => r.id === selectId) ?? list[0];
+    setDraft(selected ? toDraft(selected) : emptyDraft(reg));
+    setError("");
+  }
+
+  /** Reload after a save/delete, keeping `selectId` selected. */
   async function loadAll(selectId?: number) {
     setLoading(true);
-    setError("");
     try {
       const [reg, list] = await Promise.all([getPermissionRegistry(), listRoles()]);
-      setRegistry(reg);
-      setRoles(list);
-      const selected = list.find((r) => r.id === selectId) ?? list[0];
-      setDraft(selected ? toDraft(selected) : emptyDraft(reg));
+      applyLoaded(reg, list, selectId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "โหลดข้อมูลไม่สำเร็จ");
     } finally {
@@ -141,8 +146,16 @@ export default function RolesPage() {
     }
   }
 
+  // Initial load — state is only set from the promise callbacks, never synchronously here.
   useEffect(() => {
-    loadAll();
+    let cancelled = false;
+    Promise.all([getPermissionRegistry(), listRoles()])
+      .then(([reg, list]) => !cancelled && applyLoaded(reg, list))
+      .catch((err) => !cancelled && setError(err instanceof Error ? err.message : "โหลดข้อมูลไม่สำเร็จ"))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const totalActions = useMemo(
