@@ -21,7 +21,6 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
   const [status, setStatus] = useState(initial?.status ?? true);
   const [mode, setMode] = useState<"test" | "production">(initial?.mode ?? "production");
   const [isApiEnabled, setIsApiEnabled] = useState(initial?.is_api_enabled ?? true);
-  const [cancelNotifyEmails, setCancelNotifyEmails] = useState(initial?.cancel_notify_emails ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -47,7 +46,6 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
         status,
         mode,
         is_api_enabled: isApiEnabled,
-        cancel_notify_emails: cancelNotifyEmails.trim(),
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
@@ -136,20 +134,6 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
         </select>
         <p className="text-xs text-slate-400">
           กำหนดว่า Client ID/Secret หรือ Basic Auth ของบัญชีนี้เป็นของ Sandbox (Test) หรือ Production จริง — ระบบจะเรียก URL ของ UPS/DHL คนละสภาพแวดล้อมตามค่านี้
-        </p>
-      </label>
-
-      <label className="flex flex-col gap-1.5">
-        <span className={labelClass}>อีเมลผู้ติดต่อ Carrier สำหรับแจ้งยกเลิก (DHL)</span>
-        <input
-          type="text"
-          value={cancelNotifyEmails}
-          onChange={(e) => setCancelNotifyEmails(e.target.value)}
-          placeholder="เช่น account.manager@dhl.com, cs@dhl.com"
-          className={inputClass}
-        />
-        <p className="text-xs text-slate-400">
-          DHL Express ยกเลิก Waybill ผ่าน API ไม่ได้ — เมื่อกด Void ระบบจะส่งอีเมลขอยกเลิกไปที่อีเมลเหล่านี้ (CC ผู้กด Void) ผ่าน SMTP Settings · คั่นหลายอีเมลด้วย ,
         </p>
       </label>
 

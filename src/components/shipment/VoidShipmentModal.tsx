@@ -75,8 +75,7 @@ export default function VoidShipmentModal({ shipment, onClose, onVoided }: Props
   }
 
   if (result) {
-    const message = result.carrier_message ?? dhlCancelMessage({ ...shipment, ...result });
-    const notice = result.carrier_notice;
+    const message = dhlCancelMessage({ ...shipment, ...result });
     return (
       <Modal title={`Void แล้ว — ${shipment.tracking_number}`} onClose={onClose} maxWidthClassName="max-w-xl">
         <div className="flex flex-col gap-4 text-sm">
@@ -85,20 +84,13 @@ export default function VoidShipmentModal({ shipment, onClose, onVoided }: Props
           )}
           {isDhl && (
             <>
-              {notice?.sent ? (
-                <div className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-emerald-800">
-                  <b>ส่งอีเมลขอยกเลิกถึง DHL แล้ว</b> — {notice.to.join(", ")} (CC ถึงคุณ) · สถานะจะเป็น &quot;รอ DHL ยืนยัน&quot;
-                  จนกว่าจะกด &quot;DHL ยืนยันยกเลิกแล้ว&quot;
-                </div>
-              ) : (
-                <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-amber-800">
-                  <b>ยังไม่ได้แจ้ง DHL</b> — {notice?.message ?? "DHL Express ไม่มี API ยกเลิก Waybill"}
-                </div>
-              )}
+              <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-amber-800">
+                <b>ยังไม่ได้ยกเลิกกับ DHL</b> — DHL Express ไม่มี API ยกเลิก Waybill ต้องแจ้งพนักงาน DHL เอง
+              </div>
               <ol className="list-decimal space-y-1 pl-5 text-slate-700">
                 <li>อย่าส่งมอบพัสดุ และอย่าให้ Courier scan ลาเบลนี้</li>
-                {!notice?.sent && <li>ส่งข้อความด้านล่างให้ DHL (Account Manager หรือ Customer Service)</li>}
-                <li>เมื่อ DHL ตอบยืนยัน กลับมากด &quot;DHL ยืนยันยกเลิกแล้ว&quot; ที่ Shipment นี้ พร้อมเลขอ้างอิงจาก DHL</li>
+                <li>แจ้งพนักงาน DHL ให้ยกเลิก Waybill (ใช้ข้อความด้านล่างได้) แล้วกด &quot;บันทึกว่าแจ้ง DHL แล้ว&quot;</li>
+                <li>เมื่อ DHL ยืนยัน กด &quot;DHL ยืนยันยกเลิกแล้ว&quot; พร้อมเลขอ้างอิงจาก DHL</li>
               </ol>
               <div>
                 <textarea readOnly value={message} rows={6} className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-700" />
@@ -123,8 +115,8 @@ export default function VoidShipmentModal({ shipment, onClose, onVoided }: Props
       <div className="flex flex-col gap-4 text-sm">
         {isDhl ? (
           <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-amber-800">
-            <b>DHL Express ไม่มี API ยกเลิก Waybill</b> — การ Void จะบันทึกการยกเลิกในระบบ MADD, ยกเลิก Pickup ที่ผูกไว้ (ถ้ามี) และส่งอีเมลขอยกเลิกถึงผู้ติดต่อ DHL
-            ของบัญชีนี้ (ถ้าตั้งไว้ในหน้า Agent Accounts) — ต้องรอ DHL ตอบยืนยันจึงถือว่ายกเลิกสมบูรณ์
+            <b>DHL Express ไม่มี API ยกเลิก Waybill</b> — การ Void จะบันทึกการยกเลิกในระบบ MADD และยกเลิก Pickup ที่ผูกไว้ (ถ้ามี) จากนั้นต้องแจ้งพนักงาน DHL
+            ให้ยกเลิก Waybill เอง — ระบบจะติดตามสถานะจนกว่า DHL ยืนยัน
           </div>
         ) : (
           <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700">

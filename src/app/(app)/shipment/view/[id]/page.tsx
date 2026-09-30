@@ -13,7 +13,7 @@ import {
   openShipmentCommercialInvoice,
   unvoidShipment,
   confirmCarrierCancel,
-  requestCarrierCancel,
+  markCarrierCancelNotified,
   deleteShipment,
   type Shipment,
 } from "@/lib/shipments";
@@ -226,14 +226,15 @@ export default function ShipmentViewPage() {
     }
   }
 
-  async function handleRequestCarrierCancel() {
+  async function handleMarkNotified() {
     if (!shipment) return;
+    const notifiedTo = prompt(`บันทึกว่าแจ้ง DHL ให้ยกเลิก ${shipment.tracking_number} แล้ว\nแจ้งใคร / ช่องทางไหน (เช่น คุณเอ DHL ทางโทรศัพท์):`, shipment.carrier_cancel_requested_to ?? "");
+    if (notifiedTo === null) return;
     try {
-      const res = await requestCarrierCancel(shipment.id);
-      setShipment({ ...shipment, ...res });
-      alert(res.carrier_notice.message);
+      const updated = await markCarrierCancelNotified(shipment.id, notifiedTo.trim());
+      setShipment({ ...shipment, ...updated });
     } catch (err) {
-      alert(err instanceof Error ? err.message : "ส่งอีเมลไม่สำเร็จ");
+      alert(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ");
     }
   }
 
@@ -464,7 +465,7 @@ export default function ShipmentViewPage() {
               </p>
               {s.carrier_cancel_requested_at && (
                 <p>
-                  ส่งอีเมลขอยกเลิกถึง {s.carrier_cancel_requested_to} · {new Date(s.carrier_cancel_requested_at).toLocaleString()}
+                  แจ้ง DHL แล้ว{s.carrier_cancel_requested_to && ` (${s.carrier_cancel_requested_to})`} · {new Date(s.carrier_cancel_requested_at).toLocaleString()}
                 </p>
               )}
               {s.carrier_cancel_status === "confirmed" && (
@@ -478,8 +479,8 @@ export default function ShipmentViewPage() {
             {s.carrier_cancel_status === "pending" && can("shipment.void") && (
               <div className="flex flex-wrap gap-2">
                 <CopyButton text={dhlCancelMessage(s)} label="คัดลอกข้อความแจ้ง DHL" />
-                <button type="button" onClick={handleRequestCarrierCancel} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
-                  {s.carrier_cancel_requested_at ? "ส่งอีเมลแจ้ง DHL อีกครั้ง" : "ส่งอีเมลแจ้ง DHL"}
+                <button type="button" onClick={handleMarkNotified} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                  {s.carrier_cancel_requested_at ? "แก้ไขบันทึกการแจ้ง DHL" : "บันทึกว่าแจ้ง DHL แล้ว"}
                 </button>
                 <button type="button" onClick={handleConfirmCarrierCancel} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700">
                   DHL ยืนยันยกเลิกแล้ว

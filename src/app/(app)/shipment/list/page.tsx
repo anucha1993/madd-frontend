@@ -52,7 +52,7 @@ import {
   openShipmentCommercialInvoice,
   unvoidShipment,
   confirmCarrierCancel,
-  requestCarrierCancel,
+  markCarrierCancelNotified,
   markShipmentPickedUp,
   TRACKING_GROUP_LABEL,
   type TrackingGroup,
@@ -175,7 +175,7 @@ const SHIPMENT_COLUMNS: ShipmentColumn[] = [
             className="ml-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700"
             title={
               s.carrier_cancel_requested_at
-                ? `ส่งอีเมลขอยกเลิกถึง ${s.carrier_cancel_requested_to} เมื่อ ${new Date(s.carrier_cancel_requested_at).toLocaleString()}`
+                ? `แจ้ง DHL แล้ว${s.carrier_cancel_requested_to ? ` (${s.carrier_cancel_requested_to})` : ""} เมื่อ ${new Date(s.carrier_cancel_requested_at).toLocaleString()}`
                 : "Void ในระบบแล้ว แต่ยังไม่ได้แจ้ง DHL"
             }
           >
@@ -565,14 +565,14 @@ export default function ShipmentListPage() {
     }
   }
 
-  async function handleRequestCarrierCancel(shipment: Shipment) {
+  async function handleMarkNotified(shipment: Shipment) {
+    const notifiedTo = prompt(`บันทึกว่าแจ้ง DHL ให้ยกเลิก ${shipment.tracking_number} แล้ว\nแจ้งใคร / ช่องทางไหน (เช่น คุณเอ DHL ทางโทรศัพท์):`, shipment.carrier_cancel_requested_to ?? "");
+    if (notifiedTo === null) return;
     setVoidingId(shipment.id);
     try {
-      const res = await requestCarrierCancel(shipment.id);
-      replaceShipment(res);
-      alert(res.carrier_notice.message);
+      replaceShipment(await markCarrierCancelNotified(shipment.id, notifiedTo.trim()));
     } catch (err) {
-      alert(err instanceof Error ? err.message : "ส่งอีเมลไม่สำเร็จ");
+      alert(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ");
     } finally {
       setVoidingId(null);
     }
@@ -1248,14 +1248,14 @@ export default function ShipmentListPage() {
                               <button
                                 type="button"
                                 onClick={() => {
-                                  handleRequestCarrierCancel(s);
+                                  handleMarkNotified(s);
                                   setActionsMenuId(null);
                                 }}
                                 disabled={voidingId === s.id}
                                 className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                               >
                                 <Mail className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                                {s.carrier_cancel_requested_at ? "ส่งอีเมลแจ้ง DHL อีกครั้ง" : "ส่งอีเมลแจ้ง DHL"}
+                                {s.carrier_cancel_requested_at ? "แก้ไขบันทึกการแจ้ง DHL" : "บันทึกว่าแจ้ง DHL แล้ว"}
                               </button>
                               <button
                                 type="button"
