@@ -93,6 +93,7 @@ export const NAV_SECTIONS: NavItem[] = [
       { label: "Thai Address Database", href: "/config/thai-address" },
       { label: "Users", href: "/config/users" },
       { label: "Roles & Permissions", href: "/config/roles" },
+      { label: "Audit Log", href: "/config/audit-logs" },
       { label: "API Integrations", href: "/config/integrations" },
       { label: "Tracking Sync", href: "/config/tracking-sync" },
       { label: "Report Schedules", href: "/config/report-schedules" },
