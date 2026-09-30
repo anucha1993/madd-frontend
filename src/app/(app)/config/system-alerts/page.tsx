@@ -19,6 +19,7 @@ const SOURCE_LABEL: Record<string, string> = {
   pickup_cancel: "ยกเลิก Pickup",
   pickup_overdue_mail: "อีเมล Pickup เลยเวลา",
   supply_low_stock: "Stock ใกล้หมด",
+  public_api: "Public API",
 };
 
 const inputClass =

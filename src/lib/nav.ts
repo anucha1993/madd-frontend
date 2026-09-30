@@ -96,6 +96,7 @@ export const NAV_SECTIONS: NavItem[] = [
       { label: "Roles & Permissions", href: "/config/roles" },
       { label: "Audit Log", href: "/config/audit-logs" },
       { label: "System Alerts", href: "/config/system-alerts" },
+      { label: "Public API (Website)", href: "/config/api-clients" },
       { label: "API Integrations", href: "/config/integrations" },
       { label: "Tracking Sync", href: "/config/tracking-sync" },
       { label: "Report Schedules", href: "/config/report-schedules" },
