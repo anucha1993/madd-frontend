@@ -16,6 +16,8 @@ export type ApiClientRecord = {
   rate_limit_per_minute: number;
   end_user_limit_per_minute: number;
   allowed_ips: string[] | null;
+  allow_rates: boolean;
+  allow_tracking: boolean;
   status: boolean;
   last_used_at: string | null;
   calls_30d?: number;
@@ -27,6 +29,8 @@ export type ApiClientInput = Omit<ApiClientRecord, "id" | "key_prefix" | "branch
 export type ApiRequestLog = {
   id: number;
   api_client: { id: number; name: string } | null;
+  endpoint: "rates" | "tracking";
+  reference: string | null;
   ip: string | null;
   end_user_ip: string | null;
   destination_country: string | null;
@@ -64,7 +68,7 @@ export const deleteApiClient = (id: number) => apiClient.delete<void>(`/api-clie
 export const testApiClient = (id: number, body: unknown) =>
   apiClient.post<{ options: PublicRateOption[]; disclaimer: string }>(`/api-clients/${id}/test`, body);
 
-export const listApiRequestLogs = (filters: { api_client_id?: number; status?: "ok" | "failed"; page?: number }) => {
+export const listApiRequestLogs = (filters: { api_client_id?: number; status?: "ok" | "failed"; endpoint?: "rates" | "tracking"; page?: number }) => {
   const q = new URLSearchParams();
   Object.entries(filters).forEach(([k, v]) => v !== undefined && q.set(k, String(v)));
   const s = q.toString();

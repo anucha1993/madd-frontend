@@ -26,6 +26,7 @@ const inputClass =
   "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15";
 
 const ENDPOINT = `${API_URL}/public/v1/rates`;
+const TRACKING_ENDPOINT = `${API_URL}/public/v1/tracking/{tracking_number}`;
 
 const EMPTY: ApiClientInput = {
   name: "",
@@ -38,6 +39,8 @@ const EMPTY: ApiClientInput = {
   rate_limit_per_minute: 60,
   end_user_limit_per_minute: 10,
   allowed_ips: null,
+  allow_rates: true,
+  allow_tracking: true,
   status: true,
 };
 
@@ -113,10 +116,14 @@ export default function ApiClientsPage() {
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600 shadow-sm">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <span className="font-medium text-slate-800">Endpoint</span>
-          <CopyButton text={ENDPOINT} label="คัดลอก URL" />
+          <span className="font-medium text-slate-800">Endpoints</span>
+          <CopyButton text={`${API_URL}/public/v1`} label="คัดลอก Base URL" />
         </div>
-        <code className="block break-all rounded-lg bg-slate-50 px-3 py-2 text-xs">POST {ENDPOINT}</code>
+        <div className="space-y-1.5">
+          <code className="block break-all rounded-lg bg-slate-50 px-3 py-2 text-xs">POST {ENDPOINT} — เช็คราคาขาย</code>
+          <code className="block break-all rounded-lg bg-slate-50 px-3 py-2 text-xs">GET {TRACKING_ENDPOINT} — ติดตามพัสดุ (เฉพาะ Shipment ที่จองใน MADD, ไม่มีชื่อ/ที่อยู่/ราคา)</code>
+          <code className="block break-all rounded-lg bg-slate-50 px-3 py-2 text-xs">GET {API_URL}/public/v1/countries — รายชื่อประเทศปลายทาง</code>
+        </div>
         <p className="mt-2 text-xs text-slate-500">
           เรียกจาก Server ของเว็บไซต์เท่านั้น (เช่น Plugin WordPress) ห้ามใส่ Key ใน JavaScript ฝั่ง Browser · ส่ง Header <code>Authorization: Bearer &lt;API Key&gt;</code> และ{" "}
           <code>X-End-User-IP</code> (IP ของลูกค้า เพื่อจำกัดการยิงต่อคน)
@@ -139,6 +146,7 @@ export default function ApiClientsPage() {
                 <th className="px-4 py-2.5 font-medium">Key</th>
                 <th className="px-4 py-2.5 font-medium">สาขา / ต้นทาง</th>
                 <th className="px-4 py-2.5 font-medium">Carrier</th>
+                <th className="px-4 py-2.5 font-medium">ใช้ได้</th>
                 <th className="px-4 py-2.5 text-right font-medium">เรียกใช้ 30 วัน</th>
                 <th className="px-4 py-2.5 font-medium">ใช้ล่าสุด</th>
                 <th className="px-4 py-2.5 font-medium">สถานะ</th>
@@ -157,6 +165,7 @@ export default function ApiClientsPage() {
                     </div>
                   </td>
                   <td className="px-4 py-2.5 text-slate-600">{c.carriers?.join(", ") ?? "UPS, DHL"}</td>
+                  <td className="px-4 py-2.5 text-xs text-slate-600">{[c.allow_rates && "เช็คราคา", c.allow_tracking && "Tracking"].filter(Boolean).join(", ") || "—"}</td>
                   <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">
                     {(c.calls_30d ?? 0).toLocaleString()}
                     {!!c.failed_30d && <div className="text-xs text-red-500">ไม่สำเร็จ {c.failed_30d.toLocaleString()}</div>}
@@ -325,10 +334,20 @@ function ClientForm({ client, branches, onClose, onSaved }: { client: ApiClientR
             <span className="text-sm font-medium text-slate-600">IP ของ Server เว็บไซต์ที่อนุญาต (ไม่บังคับ)</span>
             <textarea value={ips} onChange={(e) => setIps(e.target.value)} rows={2} placeholder="เช่น 203.0.113.10 หรือ 203.0.113.0/24 — เว้นว่าง = ทุก IP" className={inputClass} />
           </label>
-          <label className="flex items-center gap-2 text-sm sm:col-span-2">
-            <input type="checkbox" checked={form.status} onChange={(e) => set("status", e.target.checked)} />
-            เปิดใช้งาน
-          </label>
+          <div className="flex flex-wrap gap-5 text-sm sm:col-span-2">
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={form.allow_rates} onChange={(e) => set("allow_rates", e.target.checked)} />
+              ใช้เช็คราคาได้
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={form.allow_tracking} onChange={(e) => set("allow_tracking", e.target.checked)} />
+              ใช้ติดตามพัสดุได้
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={form.status} onChange={(e) => set("status", e.target.checked)} />
+              เปิดใช้งาน Key
+            </label>
+          </div>
         </div>
         {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
         <div className="flex justify-end gap-2">
@@ -414,7 +433,7 @@ function TestModal({ client, onClose }: { client: ApiClientRecord; onClose: () =
 }
 
 function RequestLogs({ clients, reloadKey }: { clients: ApiClientRecord[]; reloadKey: number }) {
-  const [filters, setFilters] = useState<{ api_client_id?: number; status?: "ok" | "failed" }>({});
+  const [filters, setFilters] = useState<{ api_client_id?: number; status?: "ok" | "failed"; endpoint?: "rates" | "tracking" }>({});
   const [page, setPage] = useState(1);
   const [rows, setRows] = useState<ApiRequestLog[]>([]);
   const [lastPage, setLastPage] = useState(1);
@@ -467,6 +486,18 @@ function RequestLogs({ clients, reloadKey }: { clients: ApiClientRecord[]; reloa
             <option value="ok">สำเร็จ</option>
             <option value="failed">ไม่สำเร็จ</option>
           </select>
+          <select
+            value={filters.endpoint ?? ""}
+            onChange={(e) => {
+              setPage(1);
+              setFilters({ ...filters, endpoint: (e.target.value || undefined) as "rates" | "tracking" | undefined });
+            }}
+            className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+          >
+            <option value="">ทุก API</option>
+            <option value="rates">เช็คราคา</option>
+            <option value="tracking">Tracking</option>
+          </select>
         </div>
       </div>
       {rows.length === 0 ? (
@@ -478,6 +509,7 @@ function RequestLogs({ clients, reloadKey }: { clients: ApiClientRecord[]; reloa
               <tr>
                 <th className="px-4 py-2 font-medium">เวลา</th>
                 <th className="px-4 py-2 font-medium">Key</th>
+                <th className="px-4 py-2 font-medium">API</th>
                 <th className="px-4 py-2 font-medium">ปลายทาง</th>
                 <th className="px-4 py-2 text-right font-medium">น้ำหนักรวม</th>
                 <th className="px-4 py-2 text-right font-medium">ราคาต่ำสุด</th>
@@ -490,13 +522,18 @@ function RequestLogs({ clients, reloadKey }: { clients: ApiClientRecord[]; reloa
                 <tr key={r.id} className="border-t border-slate-100 align-top">
                   <td className="whitespace-nowrap px-4 py-2 text-slate-500">{new Date(r.created_at).toLocaleString()}</td>
                   <td className="px-4 py-2 text-slate-600">{r.api_client?.name ?? "—"}</td>
+                  <td className="px-4 py-2 text-slate-600">
+                    {r.endpoint === "tracking" ? "Tracking" : "เช็คราคา"}
+                    {r.reference && <div className="font-mono text-slate-400">{r.reference}</div>}
+                  </td>
                   <td className="px-4 py-2 text-slate-600">{r.destination_country ?? "—"}</td>
                   <td className="px-4 py-2 text-right tabular-nums text-slate-600">{r.total_weight != null ? `${r.total_weight} kg` : "—"}</td>
                   <td className="px-4 py-2 text-right tabular-nums text-slate-600">{r.lowest_price != null ? r.lowest_price.toLocaleString() : "—"}</td>
                   <td className="px-4 py-2">
                     {r.status_code === 200 ? (
                       <span className="text-emerald-700">
-                        {r.result_count} ตัวเลือก{r.cached ? " · cache" : ""}
+                        {r.result_count} {r.endpoint === "tracking" ? "จุดสแกน" : "ตัวเลือก"}
+                        {r.cached ? " · cache" : ""}
                         {r.duration_ms != null && <span className="text-slate-400"> · {r.duration_ms} ms</span>}
                       </span>
                     ) : (
