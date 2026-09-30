@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Eye, Loader2, PackageCheck, RefreshCw, Search, XCircle } from "lucide-react";
+import { Eye, History, Loader2, PackageCheck, RefreshCw, Search, XCircle } from "lucide-react";
+import { TimelineModal } from "@/components/timeline/Timeline";
 import PageHeader from "@/components/layout/PageHeader";
 import { useAccess } from "@/components/auth/AccessProvider";
 import PageLoading from "@/components/ui/PageLoading";
@@ -48,6 +49,7 @@ export default function PickupListPage() {
   const [overdueOnly, setOverdueOnly] = useState(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("overdue") === "1");
   const [carrier, setCarrier] = useState<"" | "UPS" | "DHL">("");
   const [cancellingId, setCancellingId] = useState<number | null>(null);
+  const [timelinePickup, setTimelinePickup] = useState<Pickup | null>(null);
   const [confirmingId, setConfirmingId] = useState<number | null>(null);
   const [viewingPickup, setViewingPickup] = useState<Pickup | null>(null);
   // Set right after cancelling the OLD pickup being rescheduled — its presence opens
@@ -252,6 +254,17 @@ export default function PickupListPage() {
                         >
                           <Eye className="h-4 w-4" />
                         </button>
+                        {can("pickup.timeline") && (
+                          <button
+                            type="button"
+                            onClick={() => setTimelinePickup(p)}
+                            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
+                            aria-label="Pickup Timeline"
+                            title="Timeline"
+                          >
+                            <History className="h-4 w-4" />
+                          </button>
+                        )}
                         {p.collection && p.collection.state !== "collected" && can("pickup.confirm") && (
                           <button
                             type="button"
@@ -398,6 +411,10 @@ export default function PickupListPage() {
             );
           }}
         />
+      )}
+
+      {timelinePickup && (
+        <TimelineModal subject="pickups" id={timelinePickup.id} title={`Timeline — Pickup ${timelinePickup.carrier_reference ?? `#${timelinePickup.id}`}`} onClose={() => setTimelinePickup(null)} />
       )}
     </div>
   );

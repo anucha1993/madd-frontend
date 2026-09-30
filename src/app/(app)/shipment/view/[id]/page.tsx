@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAccess } from "@/components/auth/AccessProvider";
 import VoidShipmentModal, { CopyButton, dhlCancelMessage } from "@/components/shipment/VoidShipmentModal";
+import Timeline from "@/components/timeline/Timeline";
 import { ArrowLeft, ArrowRight, Loader2, Package, Printer, Receipt, FileCheck, XCircle, Trash2 } from "lucide-react";
 import {
   getShipment,
@@ -718,6 +719,12 @@ export default function ShipmentViewPage() {
               {JSON.stringify(s.raw_request, null, 2)}
             </pre>
           )}
+        </Section>
+      )}
+
+      {can("shipment.timeline") && (
+        <Section title="Timeline">
+          <Timeline subject="shipments" id={s.id} reloadKey={`${s.status}-${s.carrier_cancel_status}-${s.carrier_cancel_requested_at}-${s.picked_up_at}`} />
         </Section>
       )}
 

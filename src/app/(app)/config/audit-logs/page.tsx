@@ -12,12 +12,25 @@ const EVENT_LABEL: Record<string, string> = {
   deleted: "ลบ",
   roles_changed: "เปลี่ยน Role",
   branches_changed: "เปลี่ยนสาขา",
+  lines_changed: "แก้ไขรายการเอกสาร",
+  document_viewed: "เปิดเอกสาร",
+  printed: "พิมพ์",
+  exported: "Export",
+  login: "เข้าสู่ระบบ",
+  login_failed: "เข้าสู่ระบบไม่สำเร็จ",
+  logout: "ออกจากระบบ",
 };
 
 const EVENT_STYLE: Record<string, string> = {
   created: "bg-emerald-50 text-emerald-700",
   updated: "bg-sky-50 text-sky-700",
   deleted: "bg-red-50 text-red-600",
+  login_failed: "bg-red-50 text-red-600",
+  login: "bg-slate-100 text-slate-600",
+  logout: "bg-slate-100 text-slate-600",
+  document_viewed: "bg-slate-100 text-slate-600",
+  printed: "bg-slate-100 text-slate-600",
+  exported: "bg-slate-100 text-slate-600",
 };
 
 const inputClass =
@@ -149,7 +162,7 @@ export default function AuditLogsPage() {
                     <tr className="border-b border-slate-100 align-top">
                       <td className="whitespace-nowrap px-4 py-2.5 text-slate-500">{new Date(log.created_at).toLocaleString()}</td>
                       <td className="px-4 py-2.5 text-slate-700">
-                        {log.user?.name ?? "—"}
+                        {log.user?.name ?? (log.event === "login_failed" ? "—" : <span className="text-slate-400">System</span>)}
                         {log.ip && <div className="text-xs text-slate-400">{log.ip}</div>}
                       </td>
                       <td className="px-4 py-2.5">

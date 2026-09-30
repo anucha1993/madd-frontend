@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
-import { FileCheck, FileText, Loader2, MoreVertical, Plus, Printer, Trash2, XCircle, Columns3, SlidersHorizontal, ChevronDown, ChevronUp, RotateCcw } from "lucide-react";
+import { FileCheck, FileText, History, Loader2, MoreVertical, Plus, Printer, Trash2, XCircle, Columns3, SlidersHorizontal, ChevronDown, ChevronUp, RotateCcw } from "lucide-react";
+import { TimelineModal } from "@/components/timeline/Timeline";
 import PageHeader from "@/components/layout/PageHeader";
 import { useAccess } from "@/components/auth/AccessProvider";
 import PageLoading from "@/components/ui/PageLoading";
@@ -215,6 +216,7 @@ export default function ReceiptsListPage() {
   const [status, setStatus] = useState("");
   const [search, setSearch] = useState("");
   const [voidingId, setVoidingId] = useState<number | null>(null);
+  const [timelineReceipt, setTimelineReceipt] = useState<Receipt | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   // Mass Print — keyed by row.key (the Cash Receipt + Tax Invoice pair, or a standalone document's
   // own key) so selecting one row grabs BOTH documents in that pair for the combined PDF.
@@ -768,6 +770,19 @@ export default function ReceiptsListPage() {
                                 </button>
                               </>
                             )}
+                            {can("receipt.timeline") && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTimelineReceipt(rep);
+                                  setActionsMenuKey(null);
+                                }}
+                                className="mt-1 flex w-full items-center gap-2 rounded-md border-t border-slate-100 px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                              >
+                                <History className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                                Timeline
+                              </button>
+                            )}
                             {rep.status === "ISSUED" && can("receipt.void") && (
                               <button
                                 type="button"
@@ -814,6 +829,15 @@ export default function ReceiptsListPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {timelineReceipt && (
+        <TimelineModal
+          subject="receipts"
+          id={timelineReceipt.id}
+          title={`Timeline — ${[timelineReceipt.vol_no, timelineReceipt.no].filter(Boolean).join("/")}`}
+          onClose={() => setTimelineReceipt(null)}
+        />
       )}
     </div>
   );

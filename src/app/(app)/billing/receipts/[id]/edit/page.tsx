@@ -5,6 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Plus, Trash2 } from "lucide-react";
 import PageLoading from "@/components/ui/PageLoading";
+import { useAccess } from "@/components/auth/AccessProvider";
+import Timeline from "@/components/timeline/Timeline";
 import {
   getReceipt,
   updateReceipt,
@@ -48,6 +50,7 @@ export default function EditReceiptPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const receiptId = Number(params.id);
+  const { can } = useAccess();
 
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [loading, setLoading] = useState(true);
@@ -659,6 +662,13 @@ export default function EditReceiptPage() {
           >
             {saving ? "Saving..." : "Save Changes"}
           </button>
+        </div>
+      )}
+
+      {can("receipt.timeline") && receipt && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-3 text-sm font-semibold text-slate-800">Timeline</h2>
+          <Timeline subject="receipts" id={receipt.id} reloadKey={`${receipt.status}-${saved}`} />
         </div>
       )}
     </div>
