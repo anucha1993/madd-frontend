@@ -873,7 +873,9 @@ export default function ShipmentCreatePage() {
     }
     if (s.invoiceMode === "FORM" || s.invoiceMode === "UPLOAD") setInvoiceMode(s.invoiceMode);
     if (Array.isArray(s.invoiceLines) && s.invoiceLines.length > 0) {
-      setInvoiceLines(s.invoiceLines);
+      // Drafts saved before quantities became whole-number only may hold decimals — round
+      // them here so the user sees (and can fix) the value that will actually be sent.
+      setInvoiceLines(s.invoiceLines.map((l: InvoiceLineRow) => ({ ...l, quantity: Math.max(1, Math.round(Number(l.quantity) || 1)) })));
       invoiceLineKeySeq = Math.max(invoiceLineKeySeq, ...s.invoiceLines.map((l: InvoiceLineRow) => l.key)) + 1;
     }
     if (Array.isArray(s.addonRows)) {
@@ -3603,9 +3605,15 @@ export default function ShipmentCreatePage() {
                       <td className="px-1 py-0.5">
                         <input
                           type="number"
-                          min={0.01}
+                          min={1}
+                          step={1}
+                          inputMode="numeric"
                           value={line.quantity}
-                          onChange={(e) => updateInvoiceLine(line.key, { quantity: Number(e.target.value) })}
+                          // Units on a Commercial Invoice are whole pieces — no decimals.
+                          onKeyDown={(e) => {
+                            if ([".", ",", "e", "E", "-", "+"].includes(e.key)) e.preventDefault();
+                          }}
+                          onChange={(e) => updateInvoiceLine(line.key, { quantity: Math.max(1, Math.floor(Number(e.target.value) || 1)) })}
                           className="w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-right text-xs outline-none focus:border-brand-navy focus:bg-white focus:ring-1 focus:ring-brand-navy/20"
                         />
                       </td>
