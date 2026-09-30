@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAccess } from "@/components/auth/AccessProvider";
+import VoidShipmentModal, { CopyButton, dhlCancelMessage } from "@/components/shipment/VoidShipmentModal";
 import { ArrowLeft, ArrowRight, Loader2, Package, Printer, Receipt, FileCheck, XCircle, Trash2 } from "lucide-react";
 import {
   getShipment,
@@ -10,7 +11,8 @@ import {
   describeShipmentPieces,
   openShipmentWaybill,
   openShipmentCommercialInvoice,
-  voidShipment,
+  unvoidShipment,
+  confirmCarrierCancel,
   deleteShipment,
   type Shipment,
 } from "@/lib/shipments";
@@ -133,7 +135,7 @@ export default function ShipmentViewPage() {
   const [openingPiece, setOpeningPiece] = useState<string | null>(null);
   const [openingWaybill, setOpeningWaybill] = useState(false);
   const [openingInvoice, setOpeningInvoice] = useState(false);
-  const [voiding, setVoiding] = useState(false);
+  const [voidOpen, setVoidOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [showRawResponse, setShowRawResponse] = useState(false);
   const [showRawRequest, setShowRawRequest] = useState(false);
@@ -207,22 +209,30 @@ export default function ShipmentViewPage() {
 
   // UPS: really cancels the air waybill with UPS. DHL: DHL has no cancel API at all — this only
   // flips our own status locally, staff must still contact DHL directly to actually stop it.
-  async function handleVoid() {
-    if (!shipment) return;
-    const confirmMsg =
-      shipment.carrier === "UPS"
-        ? "ยืนยันยกเลิก Shipment นี้กับ UPS จริง? (จะยกเลิก Air Waybill กับ UPS ทันที ย้อนกลับไม่ได้)"
-        : "DHL ไม่มี API ยกเลิก Shipment — การกดนี้จะแค่มาร์คสถานะในระบบเราเป็น Voided เท่านั้น ต้องติดต่อ DHL โดยตรงเพื่อยกเลิกจริง ดำเนินการต่อไหม?";
-    if (!confirm(confirmMsg)) return;
+  function handleVoid() {
+    setVoidOpen(true);
+  }
 
-    setVoiding(true);
+  async function handleConfirmCarrierCancel() {
+    if (!shipment) return;
+    const reference = prompt(`DHL ยืนยันการยกเลิก Waybill ${shipment.tracking_number} แล้ว?\nใส่เลขอ้างอิง / ชื่อผู้ยืนยันจาก DHL (ถ้ามี):`, "");
+    if (reference === null) return;
     try {
-      const updated = await voidShipment(shipment.id);
-      setShipment(updated);
+      const updated = await confirmCarrierCancel(shipment.id, reference.trim());
+      setShipment({ ...shipment, ...updated });
     } catch (err) {
-      alert(err instanceof Error ? err.message : "ยกเลิก Shipment ไม่สำเร็จ");
-    } finally {
-      setVoiding(false);
+      alert(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ");
+    }
+  }
+
+  async function handleUnvoid() {
+    if (!shipment) return;
+    if (!confirm(`คืนสถานะ ${shipment.tracking_number} เป็น Booked?\n(ใช้เมื่อกด Void ผิด — Waybill ที่ DHL ยังใช้ได้ แต่ Pickup ที่ถูกยกเลิกไปแล้วต้องนัดใหม่)`)) return;
+    try {
+      const updated = await unvoidShipment(shipment.id);
+      setShipment({ ...shipment, ...updated });
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "คืนสถานะไม่สำเร็จ");
     }
   }
 
@@ -344,10 +354,10 @@ export default function ShipmentViewPage() {
                 <button
                   type="button"
                   onClick={handleVoid}
-                  disabled={voiding}
+                  disabled={voidOpen}
                   className="flex items-center gap-1.5 rounded-lg bg-red-500/15 px-3 py-1.5 text-[13px] font-medium text-red-200 transition hover:bg-red-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60 disabled:opacity-60"
                 >
-                  {voiding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
+                  <XCircle className="h-3.5 w-3.5" />
                   Void / Cancel
                 </button>
               )}
@@ -420,6 +430,50 @@ export default function ShipmentViewPage() {
           </p>
         )}
       </header>
+
+      {s.status === "voided" && (
+        <section
+          className={`rounded-xl border px-4 py-3 text-[13px] ${
+            s.carrier_cancel_status === "pending" ? "border-amber-300 bg-amber-50 text-amber-900" : "border-slate-200 bg-white text-slate-700"
+          }`}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-0.5">
+              <p className="font-semibold">
+                ยกเลิกแล้ว
+                {s.carrier_cancel_status === "pending" && " — รอแจ้งยกเลิกกับ DHL"}
+                {s.carrier_cancel_status === "confirmed" && " — DHL ยืนยันการยกเลิกแล้ว"}
+                {s.carrier === "UPS" && " — ยกเลิกกับ UPS ผ่าน API แล้ว"}
+              </p>
+              <p>
+                โดย {typeof s.voided_by === "object" && s.voided_by ? s.voided_by.name : "—"}
+                {s.voided_at && ` · ${new Date(s.voided_at).toLocaleString()}`}
+                {s.void_reason && ` · เหตุผล: ${s.void_reason}`}
+              </p>
+              {s.carrier_cancel_status === "confirmed" && (
+                <p>
+                  DHL ยืนยันโดย {typeof s.carrier_cancel_confirmed_by === "object" && s.carrier_cancel_confirmed_by ? s.carrier_cancel_confirmed_by.name : "—"}
+                  {s.carrier_cancel_confirmed_at && ` · ${new Date(s.carrier_cancel_confirmed_at).toLocaleString()}`}
+                  {s.carrier_cancel_reference && ` · อ้างอิง: ${s.carrier_cancel_reference}`}
+                </p>
+              )}
+            </div>
+            {s.carrier_cancel_status === "pending" && can("shipment.void") && (
+              <div className="flex flex-wrap gap-2">
+                <CopyButton text={dhlCancelMessage(s)} label="คัดลอกข้อความแจ้ง DHL" />
+                <button type="button" onClick={handleConfirmCarrierCancel} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700">
+                  DHL ยืนยันยกเลิกแล้ว
+                </button>
+                <button type="button" onClick={handleUnvoid} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                  ยกเลิก Void (กดผิด)
+                </button>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {voidOpen && <VoidShipmentModal shipment={s} onClose={() => setVoidOpen(false)} onVoided={(updated) => setShipment({ ...s, ...updated })} />}
 
       {(s.error_message || labelError) && (
         <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">

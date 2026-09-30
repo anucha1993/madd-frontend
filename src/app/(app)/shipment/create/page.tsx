@@ -1710,6 +1710,16 @@ export default function ShipmentCreatePage() {
   async function handleConfirmBooking() {
     const payload = buildBookingPayload();
     if (!payload) return;
+    // DHL Express has no cancel API — a real booking can only be cancelled by contacting DHL.
+    if (
+      selectedQuote?.carrier === "DHL" &&
+      selectedQuote.accountMode === "production" &&
+      !confirm(
+        "จองจริงกับ DHL (บัญชี Production)\n\nDHL Express ยกเลิก Waybill ผ่านระบบไม่ได้ ถ้าจองผิดต้องติดต่อ DHL เพื่อยกเลิก และ DHL อาจเรียกค่าชดเชยถ้าไม่ส่งพัสดุ\n\nยืนยันจองจริง?",
+      )
+    ) {
+      return;
+    }
 
     setBooking(true);
     setBookingError("");

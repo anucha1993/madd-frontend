@@ -78,6 +78,9 @@ export type RateQuote = {
   quoteId?: string;
   carrier: "UPS" | "DHL";
   accountId: number;
+  // The quoting account's mode — "production" means booking it is REAL (a DHL booking can't be
+  // cancelled through the API afterwards).
+  accountMode?: "test" | "production" | null;
   username: string;
   serviceCode: string | null;
   serviceLabel: string;

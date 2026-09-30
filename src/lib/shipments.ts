@@ -178,6 +178,14 @@ export type Shipment = {
   // Void Shipment API call, vs. DHL where it's only ever a local status flag (see voidShipment()).
   voided_at?: string | null;
   void_note?: string | null;
+  // Who voided it and why. For DHL (no cancel API) carrier_cancel_status tracks whether DHL has
+  // actually been told: "pending" (voided in MADD only) -> "confirmed" (DHL confirmed, with ref).
+  voided_by?: { id: number; name: string } | number | null;
+  void_reason?: string | null;
+  carrier_cancel_status?: "pending" | "confirmed" | null;
+  carrier_cancel_confirmed_at?: string | null;
+  carrier_cancel_confirmed_by?: { id: number; name: string } | number | null;
+  carrier_cancel_reference?: string | null;
   origin?: ShipmentAddress | null;
   destination?: ShipmentAddress | null;
   packages?: ShipmentPackageRecord[];
@@ -346,7 +354,17 @@ export function describeShipmentPieces(shipment: Shipment) {
 // Cancels a booked shipment. UPS: a REAL cancellation with UPS (Void Shipment API). DHL: DHL has
 // no shipment-cancel API at all — this only flips our own local status, staff must still contact
 // DHL directly to actually stop the shipment (see backend ShipmentController::void() for detail).
-export const voidShipment = (id: number) => apiClient.post<Shipment>(`/shipments/${id}/void`, {});
+// `pickup_notice` says what happened to any active pickup the shipment was on (cancelled with the
+// carrier, or left alone because other shipments on it still need collecting).
+export const voidShipment = (id: number, reason?: string) =>
+  apiClient.post<Shipment & { pickup_notice?: string | null }>(`/shipments/${id}/void`, { reason: reason || undefined });
+
+/** DHL only, before DHL confirmed the cancellation — nothing was cancelled at DHL yet. */
+export const unvoidShipment = (id: number) => apiClient.post<Shipment>(`/shipments/${id}/unvoid`, {});
+
+/** Record that DHL confirmed the waybill cancellation (their case/reference number). */
+export const confirmCarrierCancel = (id: number, reference?: string) =>
+  apiClient.post<Shipment>(`/shipments/${id}/confirm-carrier-cancel`, { reference: reference || undefined });
 
 // Permanently deletes a Shipment — only allowed by the backend when `is_test` is true (booked via
 // a sandbox/Test-mode Agent Account). Real production bookings must use voidShipment() instead.

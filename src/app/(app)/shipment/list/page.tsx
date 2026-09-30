@@ -24,6 +24,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Columns3,
+  Copy,
+  CheckCircle2,
+  RotateCcw,
 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import { useAccess } from "@/components/auth/AccessProvider";
@@ -32,6 +35,7 @@ import CarrierBadge from "@/components/ui/CarrierBadge";
 import ManageColumnsModal from "@/components/ui/ManageColumnsModal";
 import ColumnProfileSelect from "@/components/ui/ColumnProfileSelect";
 import OverduePickupsBanner from "@/components/pickup/OverduePickupsBanner";
+import VoidShipmentModal, { dhlCancelMessage } from "@/components/shipment/VoidShipmentModal";
 import SchedulePickupModal from "@/components/pickup/SchedulePickupModal";
 import { useManageColumns, type ColumnDef } from "@/hooks/useManageColumns";
 import { getUser } from "@/lib/auth";
@@ -44,7 +48,8 @@ import {
   describeShipmentPieces,
   openShipmentWaybill,
   openShipmentCommercialInvoice,
-  voidShipment,
+  unvoidShipment,
+  confirmCarrierCancel,
   markShipmentPickedUp,
   TRACKING_GROUP_LABEL,
   type TrackingGroup,
@@ -161,6 +166,17 @@ const SHIPMENT_COLUMNS: ShipmentColumn[] = [
           {STATUS_LABEL[s.status] ?? s.status}
         </span>
         {s.is_test && <span className="ml-1.5 rounded-full bg-purple-50 px-2.5 py-0.5 text-xs font-medium text-purple-600">TEST</span>}
+        {/* DHL has no cancel API — show whether DHL itself has been told yet. */}
+        {s.status === "voided" && s.carrier_cancel_status === "pending" && (
+          <span className="ml-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700" title="Void ในระบบแล้ว แต่ยังไม่ได้ยืนยันการยกเลิกกับ DHL">
+            รอแจ้ง DHL
+          </span>
+        )}
+        {s.status === "voided" && s.carrier_cancel_status === "confirmed" && (
+          <span className="ml-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700" title={s.carrier_cancel_reference ? `อ้างอิง DHL: ${s.carrier_cancel_reference}` : undefined}>
+            DHL ยืนยันยกเลิก
+          </span>
+        )}
       </>
     ),
   },
@@ -305,6 +321,7 @@ export default function ShipmentListPage() {
   // Keyed as `${shipmentId}:waybill` / `${shipmentId}:invoice` — only one of these opening at a time.
   const [openingDocKey, setOpeningDocKey] = useState<string | null>(null);
   const [voidingId, setVoidingId] = useState<number | null>(null);
+  const [voidTarget, setVoidTarget] = useState<Shipment | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
 
@@ -515,19 +532,34 @@ export default function ShipmentListPage() {
     }
   }
 
-  async function handleVoid(shipment: Shipment) {
-    const confirmMsg =
-      shipment.carrier === "UPS"
-        ? "Confirm voiding this shipment with UPS for real? (The Air Waybill will be cancelled with UPS immediately — this cannot be undone.)"
-        : "DHL has no cancel API — this will only mark the status as Voided in our system. You must contact DHL directly to actually cancel it. Continue?";
-    if (!confirm(confirmMsg)) return;
+  function handleVoid(shipment: Shipment) {
+    setVoidTarget(shipment);
+  }
 
+  function replaceShipment(updated: Shipment) {
+    setShipments((prev) => prev.map((s) => (s.id === updated.id ? { ...s, ...updated, pickups: s.pickups } : s)));
+  }
+
+  async function handleConfirmCarrierCancel(shipment: Shipment) {
+    const reference = prompt(`DHL ยืนยันการยกเลิก Waybill ${shipment.tracking_number} แล้ว?\nใส่เลขอ้างอิง / ชื่อผู้ยืนยันจาก DHL (ถ้ามี):`, "");
+    if (reference === null) return;
     setVoidingId(shipment.id);
     try {
-      const updated = await voidShipment(shipment.id);
-      setShipments((prev) => prev.map((s) => (s.id === shipment.id ? updated : s)));
+      replaceShipment(await confirmCarrierCancel(shipment.id, reference.trim()));
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to void shipment");
+      alert(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ");
+    } finally {
+      setVoidingId(null);
+    }
+  }
+
+  async function handleUnvoid(shipment: Shipment) {
+    if (!confirm(`คืนสถานะ ${shipment.tracking_number} เป็น Booked?\n(ใช้เมื่อกด Void ผิด — Waybill ที่ DHL ยังใช้ได้ แต่ Pickup ที่ถูกยกเลิกไปแล้วต้องนัดใหม่)`)) return;
+    setVoidingId(shipment.id);
+    try {
+      replaceShipment(await unvoidShipment(shipment.id));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "คืนสถานะไม่สำเร็จ");
     } finally {
       setVoidingId(null);
     }
@@ -650,6 +682,8 @@ export default function ShipmentListPage() {
       />
 
       <OverduePickupsBanner />
+
+      {voidTarget && <VoidShipmentModal shipment={voidTarget} onClose={() => setVoidTarget(null)} onVoided={replaceShipment} />}
 
       <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -1162,8 +1196,47 @@ export default function ShipmentListPage() {
                               ) : (
                                 <XCircle className="h-3.5 w-3.5 shrink-0" />
                               )}
-                              {s.carrier === "UPS" ? "Void shipment with UPS" : "Mark as cancelled locally (DHL has no cancel API)"}
+                              {s.carrier === "UPS" ? "Void shipment with UPS" : "Void (แจ้งยกเลิก DHL)"}
                             </button>
+                          )}
+                          {s.status === "voided" && s.carrier_cancel_status === "pending" && can("shipment.void") && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard?.writeText(dhlCancelMessage(s)).catch(() => {});
+                                  setActionsMenuId(null);
+                                }}
+                                className="flex w-full items-center gap-2 rounded-md border-t border-slate-100 px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                              >
+                                <Copy className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                                คัดลอกข้อความแจ้งยกเลิก DHL
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleConfirmCarrierCancel(s);
+                                  setActionsMenuId(null);
+                                }}
+                                disabled={voidingId === s.id}
+                                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-emerald-700 hover:bg-emerald-50 disabled:opacity-40"
+                              >
+                                <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                                DHL ยืนยันยกเลิกแล้ว
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleUnvoid(s);
+                                  setActionsMenuId(null);
+                                }}
+                                disabled={voidingId === s.id}
+                                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                              >
+                                <RotateCcw className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                                ยกเลิก Void (กด Void ผิด)
+                              </button>
+                            </>
                           )}
                           {s.is_test && can("shipment.delete") && (
                             <button
