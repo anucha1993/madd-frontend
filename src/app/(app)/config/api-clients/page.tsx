@@ -120,7 +120,7 @@ export default function ApiClientsPage() {
       <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600 shadow-sm">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <span className="font-medium text-slate-800">Endpoints</span>
-          <CopyButton text={`${API_URL}/public/v1`} label="คัดลอก Base URL" />
+          <CopyButton text={API_URL} label="คัดลอก URL สำหรับ Plugin" />
         </div>
         <div className="space-y-1.5">
           <code className="block break-all rounded-lg bg-slate-50 px-3 py-2 text-xs">POST {ENDPOINT} — เช็คราคาขาย</code>
