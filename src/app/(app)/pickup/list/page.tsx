@@ -44,6 +44,8 @@ export default function PickupListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
+  // Opened from the "Pickup เลยเวลานัด" banner (?overdue=1).
+  const [overdueOnly, setOverdueOnly] = useState(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("overdue") === "1");
   const [carrier, setCarrier] = useState<"" | "UPS" | "DHL">("");
   const [cancellingId, setCancellingId] = useState<number | null>(null);
   const [confirmingId, setConfirmingId] = useState<number | null>(null);
@@ -56,7 +58,7 @@ export default function PickupListPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await listPickups({ status: status || undefined, carrier: carrier || undefined });
+      const res = await listPickups({ status: status || undefined, carrier: carrier || undefined, overdue: overdueOnly || undefined });
       setPickups(res.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "โหลดข้อมูล Pickup ไม่สำเร็จ");
@@ -130,6 +132,15 @@ export default function PickupListPage() {
             <option value="cancelled">Cancelled</option>
             <option value="failed">Failed</option>
           </select>
+        </label>
+        <label className="flex items-center gap-2 self-center pt-6 text-sm font-medium text-slate-600">
+          <input
+            type="checkbox"
+            checked={overdueOnly}
+            onChange={(e) => setOverdueOnly(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300 accent-brand-amber"
+          />
+          เฉพาะที่เลยเวลานัด
         </label>
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium text-slate-600">Carrier</span>

@@ -66,8 +66,9 @@ export type CreatePickupInput = {
   reference_number?: string;
 };
 
-export const listPickups = (params?: { carrier?: "UPS" | "DHL"; status?: string; page?: number }) => {
+export const listPickups = (params?: { carrier?: "UPS" | "DHL"; status?: string; page?: number; overdue?: boolean }) => {
   const query = new URLSearchParams();
+  if (params?.overdue) query.set("overdue", "1");
   if (params?.carrier) query.set("carrier", params.carrier);
   if (params?.status) query.set("status", params.status);
   if (params?.page) query.set("page", String(params.page));

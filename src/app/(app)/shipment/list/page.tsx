@@ -31,6 +31,7 @@ import PageLoading from "@/components/ui/PageLoading";
 import CarrierBadge from "@/components/ui/CarrierBadge";
 import ManageColumnsModal from "@/components/ui/ManageColumnsModal";
 import ColumnProfileSelect from "@/components/ui/ColumnProfileSelect";
+import OverduePickupsBanner from "@/components/pickup/OverduePickupsBanner";
 import SchedulePickupModal from "@/components/pickup/SchedulePickupModal";
 import { useManageColumns, type ColumnDef } from "@/hooks/useManageColumns";
 import { getUser } from "@/lib/auth";
@@ -647,6 +648,8 @@ export default function ShipmentListPage() {
           )
         }
       />
+
+      <OverduePickupsBanner />
 
       <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

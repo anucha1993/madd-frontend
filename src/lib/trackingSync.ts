@@ -4,6 +4,8 @@ export type TrackingSyncSettings = {
   enabled: boolean;
   interval_minutes: number;
   last_run_at: string | null;
+  // Extra addresses for the overdue-pickup email (the pickup creator always gets it).
+  pickup_alert_recipients?: string[];
 };
 
 export type TrackingSyncLog = {
@@ -27,7 +29,7 @@ export type PaginatedTrackingSyncLogs = {
 
 export const getTrackingSyncSettings = () => apiClient.get<TrackingSyncSettings>("/tracking-sync/settings");
 
-export const updateTrackingSyncSettings = (data: { enabled: boolean; interval_minutes: number }) =>
+export const updateTrackingSyncSettings = (data: { enabled: boolean; interval_minutes: number; pickup_alert_recipients?: string[] }) =>
   apiClient.put<TrackingSyncSettings>("/tracking-sync/settings", data);
 
 export const listTrackingSyncLogs = (page?: number) =>
