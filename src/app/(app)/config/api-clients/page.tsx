@@ -345,10 +345,10 @@ function ClientForm({ client, branches, onClose, onSaved }: { client: ApiClientR
             <textarea value={ips} onChange={(e) => setIps(e.target.value)} rows={2} placeholder="เช่น 203.0.113.10 หรือ 203.0.113.0/24 — เว้นว่าง = ทุก IP" className={inputClass} />
           </label>
           <label className="flex flex-col gap-1.5 sm:col-span-2">
-            <span className="text-sm font-medium text-slate-600">เว็บไซต์ที่ให้ Browser ของลูกค้าเรียก Tracking ได้โดยตรง (ไม่บังคับ)</span>
+            <span className="text-sm font-medium text-slate-600">เว็บไซต์ที่ให้ Browser ของลูกค้าเรียกได้โดยตรง — Tracking และเช็คราคา (ไม่บังคับ)</span>
             <textarea value={origins} onChange={(e) => setOrigins(e.target.value)} rows={2} placeholder={"เช่น https://madd.co.th\nhttps://www.madd.co.th"} className={inputClass} />
             <span className="text-xs text-slate-400">
-              ใช้กับ Plugin MADD Tracking 1.2+ — Browser ของลูกค้าเรียก MADD เอง (ไม่ผ่าน Server เว็บ, ไม่ใช้ API Key) เฉพาะ Tracking ซึ่งไม่มีข้อมูลส่วนตัว · จำกัดครั้งต่อ IP ลูกค้าตามช่องด้านบน
+              ใช้กับ Plugin MADD Tracking 1.2+ / MADD Rate Quote — Browser ของลูกค้าเรียก MADD เอง (ไม่ผ่าน Server เว็บ, ไม่ใช้ API Key) เฉพาะ Tracking และราคาขาย ตามที่เปิดสิทธิ์ไว้ · จำกัดครั้งต่อ IP ลูกค้าตามช่องด้านบน
             </span>
           </label>
           <div className="flex flex-wrap gap-5 text-sm sm:col-span-2">
@@ -528,7 +528,7 @@ function WordPressPlugins() {
           ใส่ใน <code>wp-config.php</code>: <code>define(&apos;MADD_RATE_API_URL&apos;, &apos;{API_URL}&apos;);</code> และ{" "}
           <code>define(&apos;MADD_RATE_API_KEY&apos;, &apos;madd_...&apos;);</code> (หรือกรอกที่หน้า Settings ของ Plugin)
         </li>
-        <li>กด &quot;ทดสอบ&quot; ที่หน้า Settings ของ Plugin แล้วใส่ shortcode ในหน้าเว็บ — ใช้ Plugin ตัวใดตัวหนึ่งเท่านั้น (ตัวเต็มมี Tracking อยู่แล้ว)</li>
+        <li>กด &quot;ทดสอบ&quot; ที่หน้า Settings ของ Plugin แล้วใส่ shortcode ในหน้าเว็บ — ติดตั้งได้ทั้ง 2 ตัวพร้อมกัน (Rate Quote ใช้ URL / Key เดียวกับ Tracking) · อย่าลืมใส่เว็บไซต์ในช่อง &quot;Browser เรียกได้โดยตรง&quot; ของ Key</li>
       </ol>
     </div>
   );
@@ -600,6 +600,7 @@ function RequestLogs({ clients, reloadKey }: { clients: ApiClientRecord[]; reloa
             <option value="rates">เช็คราคา</option>
             <option value="tracking">Tracking (Server)</option>
             <option value="web_tracking">Tracking (Browser)</option>
+            <option value="web_rates">เช็คราคา (Browser)</option>
           </select>
         </div>
       </div>
@@ -626,7 +627,7 @@ function RequestLogs({ clients, reloadKey }: { clients: ApiClientRecord[]; reloa
                   <td className="whitespace-nowrap px-4 py-2 text-slate-500">{new Date(r.created_at).toLocaleString()}</td>
                   <td className="px-4 py-2 text-slate-600">{r.api_client?.name ?? "—"}</td>
                   <td className="px-4 py-2 text-slate-600">
-                    {r.endpoint === "web_tracking" ? "Tracking (Browser)" : r.endpoint === "tracking" ? "Tracking" : "เช็คราคา"}
+                    {{ rates: "เช็คราคา", web_rates: "เช็คราคา (Browser)", tracking: "Tracking", web_tracking: "Tracking (Browser)" }[r.endpoint] ?? r.endpoint}
                     {r.reference && <div className="font-mono text-slate-400">{r.reference}</div>}
                   </td>
                   <td className="px-4 py-2 text-slate-600">{r.destination_country ?? "—"}</td>
@@ -635,7 +636,7 @@ function RequestLogs({ clients, reloadKey }: { clients: ApiClientRecord[]; reloa
                   <td className="px-4 py-2">
                     {r.status_code === 200 ? (
                       <span className="text-emerald-700">
-                        {r.result_count} {r.endpoint === "rates" ? "ตัวเลือก" : "จุดสแกน"}
+                        {r.result_count} {r.endpoint.endsWith("rates") ? "ตัวเลือก" : "จุดสแกน"}
                         {r.cached ? " · cache" : ""}
                         {r.duration_ms != null && <span className="text-slate-400"> · {r.duration_ms} ms</span>}
                       </span>

@@ -34,7 +34,7 @@ export type ApiClientInput = Omit<ApiClientRecord, "id" | "key_prefix" | "branch
 export type ApiRequestLog = {
   id: number;
   api_client: { id: number; name: string } | null;
-  endpoint: "rates" | "tracking" | "web_tracking";
+  endpoint: "rates" | "tracking" | "web_tracking" | "web_rates";
   reference: string | null;
   ip: string | null;
   end_user_ip: string | null;
@@ -94,7 +94,7 @@ export async function downloadWordPressPlugin(plugin: WordPressPlugin) {
   URL.revokeObjectURL(url);
 }
 
-export const listApiRequestLogs = (filters: { api_client_id?: number; status?: "ok" | "failed"; endpoint?: "rates" | "tracking" | "web_tracking"; page?: number }) => {
+export const listApiRequestLogs = (filters: { api_client_id?: number; status?: "ok" | "failed"; endpoint?: "rates" | "tracking" | "web_tracking" | "web_rates"; page?: number }) => {
   const q = new URLSearchParams();
   Object.entries(filters).forEach(([k, v]) => v !== undefined && q.set(k, String(v)));
   const s = q.toString();
