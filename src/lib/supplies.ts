@@ -16,6 +16,8 @@ export type Supply = {
   sale_price: string | number;
   description: string | null;
   status: boolean;
+  // Balances at the caller's own branches (see /config/supplies/stock).
+  stocks?: { branch_id: number; quantity: number; min_qty: number | null; max_qty: number | null }[];
 };
 
 export type SupplyInput = {

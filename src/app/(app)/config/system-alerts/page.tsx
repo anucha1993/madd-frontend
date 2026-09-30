@@ -18,6 +18,7 @@ const SOURCE_LABEL: Record<string, string> = {
   tracking_sync: "Tracking Sync",
   pickup_cancel: "ยกเลิก Pickup",
   pickup_overdue_mail: "อีเมล Pickup เลยเวลา",
+  supply_low_stock: "Stock ใกล้หมด",
 };
 
 const inputClass =

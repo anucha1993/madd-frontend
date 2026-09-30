@@ -55,6 +55,8 @@ const ROUTE_PERMISSIONS: { pattern: RegExp; permission: string | string[] }[] = 
   { pattern: /^\/config\/markup(\/|$)/, permission: "config.markup" },
   { pattern: /^\/config\/addon(\/|$)/, permission: "config.addon" },
   { pattern: /^\/config\/insurance-caps(\/|$)/, permission: "config.insurance" },
+  // Before /config/supplies — the stock page has its own (branch-staff) permission.
+  { pattern: /^\/config\/supplies\/stock(\/|$)/, permission: "supply_stock.view" },
   { pattern: /^\/config\/supplies(\/|$)/, permission: "config.supplies" },
   { pattern: /^\/config\/weight-bands(\/|$)/, permission: "config.weight_bands" },
   { pattern: /^\/config\/manifest-options(\/|$)/, permission: "config.manifest_options" },

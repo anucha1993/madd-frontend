@@ -79,6 +79,7 @@ export const NAV_SECTIONS: NavItem[] = [
       { label: "Add-on Settings", href: "/config/addon" },
       { label: "Insurance UPSC", href: "/config/insurance-caps" },
       { label: "Packaging Supplies", href: "/config/supplies" },
+      { label: "Packaging Stock", href: "/config/supplies/stock" },
       { label: "Shipment Weight Bands", href: "/config/weight-bands" },
       { label: "Manifest Form Options", href: "/config/manifest-options" },
       { label: "Receipt Line Templates", href: "/config/receipt-line-templates" },

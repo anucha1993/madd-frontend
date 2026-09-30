@@ -1129,6 +1129,20 @@ export default function ShipmentCreatePage() {
     applyDefaultInsurer(pkg, pkg.productType, carrierOption, thirdPartyOption);
   }
 
+  // Remaining stock at the staff's branch (only when they belong to exactly one — otherwise the
+  // booking branch depends on the account). Booking is never blocked; this is just a heads-up.
+  function renderSupplyStock(supply: Supply) {
+    const branchIds = currentUser?.branches?.map((b) => b.id) ?? [];
+    const stock = branchIds.length === 1 ? supply.stocks?.find((s) => s.branch_id === branchIds[0]) : undefined;
+    if (!stock) return null;
+    const low = stock.quantity <= 0 || (stock.min_qty !== null && stock.quantity <= stock.min_qty);
+    return (
+      <span className={`text-[10px] leading-tight ${low ? "font-semibold text-red-600" : "text-slate-400"}`}>
+        {stock.quantity <= 0 ? "Stock หมด" : `เหลือ ${stock.quantity.toLocaleString()}`}
+      </span>
+    );
+  }
+
   function addAddonFromSupply(supply: Supply) {
     setAddonRows((prev) => [
       ...prev,
@@ -4053,6 +4067,7 @@ export default function ShipmentCreatePage() {
                       <span className="text-[10px] font-semibold leading-tight text-brand-navy-dark">
                         {Number(supply.sale_price).toLocaleString()} THB
                       </span>
+                      {renderSupplyStock(supply)}
                     </button>
                   ))}
                 </div>
