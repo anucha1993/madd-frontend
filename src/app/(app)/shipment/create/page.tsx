@@ -247,6 +247,8 @@ function packageTotalDeclaredValue(pkg: Pick<PackageRow, "declared_value" | "qua
 type AddonRow = {
   key: number;
   addonItemId: number | null;
+  // Set for Packing Supplies rows — lets the server check the locked sale price.
+  supplyId?: number;
   name: string;
   nameLocked: boolean;
   category: string;
@@ -1134,6 +1136,7 @@ export default function ShipmentCreatePage() {
         name: supply.name,
         nameLocked: true,
         category: "Packing Supplies",
+        supplyId: supply.id,
         unitPrice: String(supply.sale_price ?? 0),
         priceLocked: true,
       }),
@@ -1680,6 +1683,9 @@ export default function ShipmentCreatePage() {
       dhl_optional_services: dhlOptionalServiceCodes,
       ups_optional_services: upsOptionalServiceCodes,
       addon_lines: addonRows.map((row) => ({
+        // Catalog/supply ids let the server re-check locked (FIXED / supply) prices.
+        addon_item_id: row.addonItemId ?? undefined,
+        supply_id: row.supplyId ?? undefined,
         name: row.name,
         category: row.category,
         quantity: row.quantity,
