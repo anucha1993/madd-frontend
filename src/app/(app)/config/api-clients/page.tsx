@@ -45,6 +45,8 @@ const EMPTY: ApiClientInput = {
   browser_origins: null,
   allow_rates: true,
   allow_tracking: true,
+  track_any_number: false,
+  external_tracking_daily_limit: 500,
   status: true,
 };
 
@@ -363,6 +365,23 @@ function ClientForm({ client, branches, onClose, onSaved }: { client: ApiClientR
               เปิดใช้งาน Key
             </label>
           </div>
+          {form.allow_tracking && (
+            <div className="flex flex-wrap items-end gap-4 rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-sm sm:col-span-2">
+              <label className="flex max-w-md items-start gap-2">
+                <input type="checkbox" className="mt-1" checked={form.track_any_number} onChange={(e) => set("track_any_number", e.target.checked)} />
+                <span>
+                  ค้นเลขที่ไม่ได้จองผ่าน MADD ได้ด้วย (UPS / DHL)
+                  <span className="block text-xs text-slate-500">ใช้บัญชี Carrier ของเราค้นให้ — เช่น Shipment ก่อนมี MADD หรือจองที่เว็บ Carrier เอง · แสดงเฉพาะสถานะ/จุดสแกน</span>
+                </span>
+              </label>
+              {form.track_any_number && (
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs font-medium text-slate-600">จำกัดต่อวัน (ครั้ง, 0 = ไม่จำกัด)</span>
+                  <input type="number" min={0} value={form.external_tracking_daily_limit} onChange={(e) => set("external_tracking_daily_limit", Number(e.target.value))} className={`${inputClass} w-32`} />
+                </label>
+              )}
+            </div>
+          )}
         </div>
         {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
         <div className="flex justify-end gap-2">
