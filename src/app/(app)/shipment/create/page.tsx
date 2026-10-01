@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { listBranches } from "@/lib/branches";
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Code, Copy, ExternalLink, FileText, ListChecks, Loader2, Lock, MinusCircle, Package, Plus, Printer, Receipt, Search, ShieldCheck, Sparkles, Tag, Trash2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import { useAccess } from "@/components/auth/AccessProvider";
@@ -319,6 +320,20 @@ export default function ShipmentCreatePage() {
   const currentUserBranchLabel = currentUser?.can_access_all_branches
     ? "ทุกสาขา"
     : currentUser?.branches?.map((b) => b.name).join(", ") || "-";
+  // Booking branch: users with one branch are bound to it (server side); users who can book
+  // for several / all branches must pick one before confirming.
+  const [allBranches, setAllBranches] = useState<{ id: number; name: string; code?: string | null }[]>([]);
+  useEffect(() => {
+    if (!currentUser?.can_access_all_branches) return;
+    listBranches()
+      .then((rows) => setAllBranches(rows.filter((b) => b.status)))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const bookingBranchOptions = currentUser?.can_access_all_branches ? allBranches : (currentUser?.branches ?? []);
+  const needsBranchChoice = bookingBranchOptions.length > 1;
+  const [bookingBranchId, setBookingBranchId] = useState<number | null>(null);
+  const bookingAttemptKey = useRef<string | null>(null);
 
   const [originContactName, setOriginContactName] = useState("");
   // Set when a saved address is picked via CustomerAddressPicker — lets auto-save reuse the
@@ -1743,10 +1758,22 @@ export default function ShipmentCreatePage() {
       return;
     }
 
+    if (needsBranchChoice && !bookingBranchId) {
+      setBookingError("กรุณาเลือกสาขาที่จอง Shipment นี้");
+      return;
+    }
+    if (needsBranchChoice && bookingBranchId) payload.branch_id = bookingBranchId;
+    // Same key for retries of this attempt — the server returns the first result instead of
+    // booking again.
+    if (!bookingAttemptKey.current) {
+      bookingAttemptKey.current = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+    }
+
     setBooking(true);
     setBookingError("");
     try {
-      const shipment = await bookShipment(payload);
+      const shipment = await bookShipment(payload, bookingAttemptKey.current);
+      bookingAttemptKey.current = null;
       setBookedShipment(shipment);
       // A draft can only be edited while no Shipment has been created from it yet — once booked,
       // delete it so it can never be resumed/edited again (best-effort; a failure here shouldn't
@@ -4597,6 +4624,25 @@ export default function ShipmentCreatePage() {
               </div>
 
               <div className="[&_.sticky]:!static">{orderSummaryPanel}</div>
+
+              {needsBranchChoice && (
+                <label className="flex flex-col gap-1.5 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+                  <span className="text-xs font-semibold text-slate-700">สาขาที่จอง Shipment นี้ *</span>
+                  <select
+                    value={bookingBranchId ?? ""}
+                    onChange={(e) => setBookingBranchId(e.target.value ? Number(e.target.value) : null)}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-brand-navy"
+                  >
+                    <option value="">— เลือกสาขา —</option>
+                    {bookingBranchOptions.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-[11px] text-slate-500">ใช้กับใบเสร็จ / ใบกำกับภาษี เลขที่เอกสาร และ Stock ของสาขานั้น</span>
+                </label>
+              )}
 
               {bookingError && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-600">{bookingError}</p>}
 

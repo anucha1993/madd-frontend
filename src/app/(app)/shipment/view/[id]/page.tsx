@@ -16,8 +16,11 @@ import {
   confirmCarrierCancel,
   markCarrierCancelNotified,
   deleteShipment,
+  assignShipmentBranch,
   type Shipment,
 } from "@/lib/shipments";
+import { listBranches } from "@/lib/branches";
+import { getUser } from "@/lib/auth";
 
 /* ---------------------------------------------------------------------------
    Layout
@@ -359,8 +362,8 @@ export default function ShipmentViewPage() {
                   Open invoice
                 </button>
               )}
-              {can("receipt.create") && (
-                <button type="button" onClick={() => router.push("/billing/receipts/new")} className={headerBtn}>
+              {can("receipt.create") && s.status === "booked" && (
+                <button type="button" onClick={() => router.push(`/billing/receipts/new?shipment_ids=${s.id}`)} className={headerBtn}>
                   <Printer className="h-3.5 w-3.5" /> Issue Receipt
                 </button>
               )}
@@ -444,6 +447,10 @@ export default function ShipmentViewPage() {
           </p>
         )}
       </header>
+
+      {s.status === "booked" && !s.branch_id && can("shipment.create") && (
+        <AssignBranchBanner shipmentId={s.id} onAssigned={(updated) => setShipment({ ...s, ...updated })} />
+      )}
 
       {s.status === "voided" && (
         <section
@@ -750,5 +757,56 @@ export default function ShipmentViewPage() {
         </Section>
       )}
     </div>
+  );
+}
+
+// Bookings made before the branch became mandatory have none — and can't be billed until they
+// do. Lets a user who books for several/all branches set it once.
+function AssignBranchBanner({ shipmentId, onAssigned }: { shipmentId: number; onAssigned: (s: Shipment) => void }) {
+  const user = getUser();
+  const [options, setOptions] = useState<{ id: number; name: string }[]>(user?.can_access_all_branches ? [] : (user?.branches ?? []));
+  const [branchId, setBranchId] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!user?.can_access_all_branches) return;
+    listBranches()
+      .then((rows) => setOptions(rows.filter((b) => b.status)))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (options.length === 0) return null;
+
+  async function save() {
+    if (!branchId) return;
+    setSaving(true);
+    setError("");
+    try {
+      onAssigned(await assignShipmentBranch(shipmentId, branchId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
+      <span className="font-semibold">Shipment นี้ยังไม่มีสาขา — ต้องกำหนดก่อนออกใบเสร็จ / ใบกำกับภาษี</span>
+      <select value={branchId ?? ""} onChange={(e) => setBranchId(e.target.value ? Number(e.target.value) : null)} className="rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 text-[13px]">
+        <option value="">— เลือกสาขา —</option>
+        {options.map((b) => (
+          <option key={b.id} value={b.id}>
+            {b.name}
+          </option>
+        ))}
+      </select>
+      <button type="button" disabled={!branchId || saving} onClick={save} className="rounded-lg bg-amber-500 px-3 py-1.5 font-semibold text-white hover:bg-amber-600 disabled:opacity-50">
+        {saving ? "กำลังบันทึก..." : "บันทึกสาขา"}
+      </button>
+      {error && <span className="text-red-600">{error}</span>}
+    </section>
   );
 }

@@ -93,6 +93,7 @@ export const listReceipts = (params?: {
   min_total?: number;
   max_total?: number;
   page?: number;
+  per_page?: number;
 }) => {
   const query = new URLSearchParams();
   if (params?.type) query.set("type", params.type);
@@ -105,6 +106,7 @@ export const listReceipts = (params?: {
   if (params?.min_total != null) query.set("min_total", String(params.min_total));
   if (params?.max_total != null) query.set("max_total", String(params.max_total));
   if (params?.page) query.set("page", String(params.page));
+  if (params?.per_page) query.set("per_page", String(params.per_page));
   const qs = query.toString();
   return apiClient.get<PaginatedReceipts>(`/receipts${qs ? `?${qs}` : ""}`);
 };

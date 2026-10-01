@@ -42,6 +42,8 @@ export type BookShipmentAddonLine = {
 
 export type BookShipmentInput = {
   agent_account_id: number;
+  // Required for users who can book for several branches; single-branch users are bound to theirs.
+  branch_id?: number;
   carrier: "UPS" | "DHL";
   service_code: string;
   service_label?: string;
@@ -326,7 +328,13 @@ export type ShipmentStats = {
 
 export const getShipmentStats = () => apiClient.get<ShipmentStats>("/shipments/stats");
 
-export const bookShipment = (data: BookShipmentInput) => apiClient.post<Shipment>("/shipments", data);
+// idempotencyKey: one per booking attempt — a retried / double-sent request returns the same
+// Shipment instead of creating a second real waybill (see ShipmentController::store).
+export const bookShipment = (data: BookShipmentInput, idempotencyKey?: string) =>
+  apiClient.post<Shipment>("/shipments", data, idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined);
+
+// Sets the booking branch of a shipment that has none yet (needed before issuing a receipt).
+export const assignShipmentBranch = (id: number, branchId: number) => apiClient.put<Shipment>(`/shipments/${id}/branch`, { branch_id: branchId });
 
 // Uploads a staff-provided Commercial Invoice file BEFORE booking (Commercial Invoice step's
 // Upload option) — the returned storage key is then passed as `commercial_invoice_upload_key`

@@ -211,6 +211,11 @@ function groupReceipts(receipts: Receipt[]): ReceiptPairRow[] {
 export default function ReceiptsListPage() {
   const { can } = useAccess();
   const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(20);
+  const [lastPage, setLastPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [voidTarget, setVoidTarget] = useState<Receipt | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
@@ -297,8 +302,12 @@ export default function ReceiptsListPage() {
         payment_method: paymentMethod || undefined,
         min_total: minTotal ? Number(minTotal) : undefined,
         max_total: maxTotal ? Number(maxTotal) : undefined,
+        page,
+        per_page: perPage,
       });
       setReceipts(res.data);
+      setLastPage(res.last_page ?? 1);
+      setTotal(res.total ?? res.data.length);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load documents");
     } finally {
@@ -306,10 +315,18 @@ export default function ReceiptsListPage() {
     }
   }
 
+  // Any filter change starts again from page 1 (adjusted during render, not in an effect).
+  const filterKey = JSON.stringify([status, search, type, branchId, dateFrom, dateTo, paymentMethod, minTotal, maxTotal, perPage]);
+  const [lastFilterKey, setLastFilterKey] = useState(filterKey);
+  if (lastFilterKey !== filterKey) {
+    setLastFilterKey(filterKey);
+    setPage(1);
+  }
+
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, search, type, branchId, dateFrom, dateTo, paymentMethod, minTotal, maxTotal]);
+  }, [status, search, type, branchId, dateFrom, dateTo, paymentMethod, minTotal, maxTotal, page, perPage]);
 
   // Quick presets fill in dateFrom/dateTo (Y-m-d) — picking a manual date input instead clears
   // the active preset (see the date <input> onChange handlers below).
@@ -347,12 +364,19 @@ export default function ReceiptsListPage() {
     setMaxTotal("");
   }
 
-  async function handleVoid(receipt: Receipt) {
-    const note = prompt("Reason for voiding (optional):") ?? undefined;
+  // Opens the confirm dialog — nothing is voided until "Void" is pressed there.
+  function handleVoid(receipt: Receipt) {
+    setVoidTarget(receipt);
+  }
+
+  async function confirmVoid(receipt: Receipt, note: string) {
     setVoidingId(receipt.id);
     try {
-      await voidReceipt(receipt.id, note);
+      await voidReceipt(receipt.id, note.trim() || undefined);
+      setVoidTarget(null);
       await load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Void ไม่สำเร็จ");
     } finally {
       setVoidingId(null);
     }
@@ -828,7 +852,39 @@ export default function ReceiptsListPage() {
               })}
             </tbody>
           </table>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 text-sm text-slate-500">
+            <span>
+              ทั้งหมด {total.toLocaleString()} เอกสาร
+              <select value={perPage} onChange={(e) => setPerPage(Number(e.target.value))} className="ml-3 rounded-lg border border-slate-300 px-2 py-1 text-xs">
+                {[20, 50, 100].map((n) => (
+                  <option key={n} value={n}>
+                    {n} / หน้า
+                  </option>
+                ))}
+              </select>
+            </span>
+            <div className="flex items-center gap-2">
+              <button type="button" disabled={page <= 1 || loading} onClick={() => setPage(page - 1)} className="rounded-lg border border-slate-300 px-3 py-1 disabled:opacity-40">
+                ก่อนหน้า
+              </button>
+              <span>
+                {page} / {lastPage}
+              </span>
+              <button type="button" disabled={page >= lastPage || loading} onClick={() => setPage(page + 1)} className="rounded-lg border border-slate-300 px-3 py-1 disabled:opacity-40">
+                ถัดไป
+              </button>
+            </div>
+          </div>
         </div>
+      )}
+
+      {voidTarget && (
+        <VoidReceiptDialog
+          receipt={voidTarget}
+          busy={voidingId === voidTarget.id}
+          onCancel={() => setVoidTarget(null)}
+          onConfirm={(note) => confirmVoid(voidTarget, note)}
+        />
       )}
 
       {timelineReceipt && (
@@ -839,6 +895,34 @@ export default function ReceiptsListPage() {
           onClose={() => setTimelineReceipt(null)}
         />
       )}
+    </div>
+  );
+}
+
+function VoidReceiptDialog({ receipt, busy, onCancel, onConfirm }: { receipt: Receipt; busy: boolean; onCancel: () => void; onConfirm: (note: string) => void }) {
+  const [note, setNote] = useState("");
+  const number = [receipt.vol_no, receipt.no].filter(Boolean).join("/");
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" role="dialog" aria-modal="true">
+      <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
+        <h2 className="text-base font-semibold text-slate-900">Void เอกสาร {number}?</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          เอกสารจะถูกยกเลิกถาวร (เลขที่เอกสารจะไม่ถูกนำกลับมาใช้) — ถ้าเป็นคู่ใบเสร็จ / ใบกำกับภาษี จะถูก Void ทั้งคู่
+        </p>
+        <label className="mt-4 flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-slate-600">เหตุผล</span>
+          <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={255} autoFocus placeholder="เช่น ออกผิดลูกค้า / ยอดผิด" className="rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-navy" />
+        </label>
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" onClick={onCancel} disabled={busy} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+            ยกเลิก
+          </button>
+          <button type="button" onClick={() => onConfirm(note)} disabled={busy} className="flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50">
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+            Void
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
