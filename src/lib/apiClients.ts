@@ -100,3 +100,35 @@ export const listApiRequestLogs = (filters: { api_client_id?: number; status?: "
   const s = q.toString();
   return apiClient.get<{ data: ApiRequestLog[]; current_page: number; last_page: number; total: number }>(`/api-clients/logs${s ? `?${s}` : ""}`);
 };
+
+// Website plugin usage (madd-backend PublicApiStatsService) — days/hours are Bangkok time.
+export type ApiStatsGroup = {
+  views: number;
+  searches: number;
+  visitors: number;
+  searchers: number;
+  successful: number;
+  failed: number;
+  cached: number;
+  avg_ms: number;
+  no_result?: number;
+  not_found?: number;
+  external?: number;
+};
+
+export type ApiStats = {
+  from: string;
+  to: string;
+  summary: { rates: ApiStatsGroup; tracking: ApiStatsGroup };
+  daily: { date: string; rates_views: number; rates_searches: number; tracking_views: number; tracking_searches: number }[];
+  hourly: number[];
+  destinations: { country: string; searches: number; avg_price: number | null; avg_weight: number | null }[];
+  weights: { label: string; searches: number }[];
+};
+
+export const getApiStats = (filters: { date_from?: string; date_to?: string; api_client_id?: number }) => {
+  const q = new URLSearchParams();
+  Object.entries(filters).forEach(([k, v]) => v !== undefined && v !== "" && q.set(k, String(v)));
+  const s = q.toString();
+  return apiClient.get<ApiStats>(`/api-clients/stats${s ? `?${s}` : ""}`);
+};

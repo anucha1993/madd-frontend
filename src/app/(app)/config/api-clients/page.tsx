@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, FlaskConical, KeyRound, Pencil, Plus, Puzzle, RefreshCw, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { BarChart3, Download, FlaskConical, KeyRound, Pencil, Plus, Puzzle, RefreshCw, Trash2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import PageLoading from "@/components/ui/PageLoading";
@@ -108,14 +109,20 @@ export default function ApiClientsPage() {
           title="Public API"
           description="API Key ให้เว็บไซต์ภายนอก (เช่น WordPress) เช็คราคาขาย — ราคาเดียวกับหน้าร้าน (รวม Mark-up แล้ว) ไม่เปิดเผยต้นทุน / Mark-up / เลขบัญชี Carrier"
         />
-        <button
-          type="button"
-          onClick={() => setEditing("new")}
-          className="flex shrink-0 items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
-        >
-          <Plus className="h-4 w-4" />
-          สร้าง API Key
-        </button>
+        <div className="flex shrink-0 gap-2">
+        <Link href="/config/api-clients/stats" className="flex shrink-0 items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          <BarChart3 className="h-4 w-4" />
+          สถิติการใช้งาน
+        </Link>
+          <button
+            type="button"
+            onClick={() => setEditing("new")}
+            className="flex shrink-0 items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
+          >
+            <Plus className="h-4 w-4" />
+            สร้าง API Key
+          </button>
+        </div>
       </div>
 
       {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
