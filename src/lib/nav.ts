@@ -34,7 +34,6 @@ export const NAV_SECTIONS: NavItem[] = [
     icon: Package,
     children: [
       { label: "Drafts", href: "/shipment/draft" },
-      { label: "Review Shipment", href: "/shipment/review" },
       { label: "My Pickups", href: "/pickup/list" },
     ],
   },
