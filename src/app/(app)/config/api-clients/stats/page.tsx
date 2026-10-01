@@ -195,7 +195,7 @@ export default function ApiStatsPage() {
             )}
           </Panel>
           <p className="text-xs text-slate-400">
-            ผู้เข้าชม = จำนวน IP ไม่ซ้ำ · การเปิดหน้านับเมื่อใช้ Plugin MADD Tracking 1.3.2+ / MADD Rate Quote 1.0.3+ · ข้อมูลเก็บไว้ 180 วัน
+            ผู้เข้าชม = จำนวน IP ไม่ซ้ำ · การเปิดหน้านับเมื่อใช้ Plugin MADD Tracking 1.3.2+ / MADD Rate Quote 1.0.3+ · ข้อมูลเก็บไว้ 365 วัน
           </p>
         </>
       )}
