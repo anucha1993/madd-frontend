@@ -717,47 +717,37 @@ export default function ShipmentListPage() {
 
       {voidTarget && <VoidShipmentModal shipment={voidTarget} onClose={() => setVoidTarget(null)} onVoided={replaceShipment} />}
 
-      <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
-            <PackagePlus className="h-5 w-5" />
+      {(() => {
+        // Each card has its own permission (Roles › การ์ดสรุปหน้า Shipments); the API also leaves
+        // out the numbers of cards the Role can't see.
+        const cards = [
+          { key: "today", icon: <PackagePlus className="h-5 w-5" />, tone: "bg-blue-50 text-blue-600", value: stats?.today_count, label: "Shipments Today" },
+          { key: "in_transit", icon: <Truck className="h-5 w-5" />, tone: "bg-amber-50 text-amber-600", value: stats?.in_transit_count, label: "In Transit" },
+          { key: "month", icon: <PackageCheck className="h-5 w-5" />, tone: "bg-emerald-50 text-emerald-600", value: stats?.month_count, label: "Booked This Month" },
+          {
+            key: "revenue",
+            icon: <Wallet className="h-5 w-5" />,
+            tone: "bg-brand-navy/10 text-brand-navy",
+            value: stats?.month_revenue != null ? Number(stats.month_revenue).toLocaleString(undefined, { maximumFractionDigits: 0 }) : undefined,
+            label: "Revenue This Month (THB)",
+            hidden: !canSeeField("shipment", "pricing"),
+          },
+          { key: "cancelled", icon: <Ban className="h-5 w-5" />, tone: "bg-red-50 text-red-600", value: stats?.cancelled_count, label: "Cancelled/Failed This Month" },
+        ].filter((c) => can(`shipment_kpi.${c.key}`) && !c.hidden);
+        if (cards.length === 0) return null;
+        const cols = ["", "lg:grid-cols-1", "lg:grid-cols-2", "lg:grid-cols-3", "lg:grid-cols-4", "lg:grid-cols-5"][cards.length];
+        return (
+          <div className={`mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 ${cols}`}>
+            {cards.map((c) => (
+              <div key={c.key} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className={`inline-flex h-10 w-10 items-center justify-center rounded-xl ${c.tone}`}>{c.icon}</div>
+                <p className="mt-4 text-2xl font-bold text-slate-800">{c.value ?? "–"}</p>
+                <p className="text-sm text-slate-500">{c.label}</p>
+              </div>
+            ))}
           </div>
-          <p className="mt-4 text-2xl font-bold text-slate-800">{stats ? stats.today_count : "–"}</p>
-          <p className="text-sm text-slate-500">Shipments Today</p>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
-            <Truck className="h-5 w-5" />
-          </div>
-          <p className="mt-4 text-2xl font-bold text-slate-800">{stats ? stats.in_transit_count : "–"}</p>
-          <p className="text-sm text-slate-500">In Transit</p>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
-            <PackageCheck className="h-5 w-5" />
-          </div>
-          <p className="mt-4 text-2xl font-bold text-slate-800">{stats ? stats.month_count : "–"}</p>
-          <p className="text-sm text-slate-500">Booked This Month</p>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-brand-navy/10 text-brand-navy">
-            <Wallet className="h-5 w-5" />
-          </div>
-          <p className="mt-4 text-2xl font-bold text-slate-800">
-            {stats && stats.month_revenue != null
-              ? Number(stats.month_revenue).toLocaleString(undefined, { maximumFractionDigits: 0 })
-              : "–"}
-          </p>
-          <p className="text-sm text-slate-500">Revenue This Month (THB)</p>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-red-50 text-red-600">
-            <Ban className="h-5 w-5" />
-          </div>
-          <p className="mt-4 text-2xl font-bold text-slate-800">{stats ? stats.cancelled_count : "–"}</p>
-          <p className="text-sm text-slate-500">Cancelled/Failed This Month</p>
-        </div>
-      </div>
+        );
+      })()}
 
       <div className="mb-4 flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <label className="flex flex-col gap-1.5">

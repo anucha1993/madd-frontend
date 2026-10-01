@@ -315,12 +315,13 @@ export const listShipments = (params?: {
 
 // KPI summary for the "My Shipments" page header (merged former /dashboard page) — always
 // reflects today/this-month regardless of whatever list filters are currently applied.
+// Each value is null when the Role lacks that card's permission (shipment_kpi.*).
 export type ShipmentStats = {
-  today_count: number;
-  month_count: number;
+  today_count: number | null;
+  month_count: number | null;
   month_revenue: number | null;
-  in_transit_count: number;
-  cancelled_count: number;
+  in_transit_count: number | null;
+  cancelled_count: number | null;
 };
 
 export const getShipmentStats = () => apiClient.get<ShipmentStats>("/shipments/stats");
