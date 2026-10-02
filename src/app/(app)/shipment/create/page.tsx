@@ -2302,16 +2302,20 @@ export default function ShipmentCreatePage() {
   // Required fields for the picked carrier that are still blank, shown on each step and in
   // Payment Info (with a jump to the step) — booking stays disabled until they're filled.
   const missingFields = selectedQuote ? missingRequiredFields(buildBookingPayload(), fieldRules, selectedQuote.carrier) : [];
-  // Red * on a required field's label: for the picked carrier, or — before a rate is picked —
-  // only fields every carrier requires.
-  const requiredKeys = new Set(
-    !fieldRules
-      ? []
-      : selectedQuote
-        ? (fieldRules.rules[selectedQuote.carrier] ?? [])
-        : fieldRules.fields.map((f) => f.key).filter((k) => fieldRules.carriers.every((c) => (fieldRules.rules[c] ?? []).includes(k))),
-  );
-  const req = (key: string) => (requiredKeys.has(key) ? <span className="text-red-500"> *</span> : null);
+  // Red * on a required field's label. Once a rate is picked it follows that carrier; before
+  // that, a field only some carriers require shows which ones (e.g. "* UPS").
+  const req = (key: string) => {
+    if (!fieldRules) return null;
+    const carriers = selectedQuote ? [selectedQuote.carrier] : fieldRules.carriers;
+    const requiring = carriers.filter((c) => (fieldRules.rules[c] ?? []).includes(key));
+    if (!requiring.length) return null;
+    return (
+      <span className="text-red-500">
+        {" *"}
+        {!selectedQuote && requiring.length < carriers.length && <span className="ml-1 text-[10px] font-semibold">{requiring.join(" / ")}</span>}
+      </span>
+    );
+  };
   const requiredNotice = (forStep: 1 | 2 | 3 | "all") => {
     const list = forStep === "all" ? missingFields : missingFields.filter((f) => f.step === forStep);
     if (!selectedQuote || !list.length) return null;
