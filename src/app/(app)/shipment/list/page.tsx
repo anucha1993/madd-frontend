@@ -1092,6 +1092,8 @@ export default function ShipmentListPage() {
                             <FileText className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                             View Shipment Details
                           </Link>
+                          {can("shipment.label") && (
+                          <>
                           <button
                             type="button"
                             onClick={() => handleLabelMenuItemClick(s)}
@@ -1148,6 +1150,10 @@ export default function ShipmentListPage() {
                               })}
                             </div>
                           )}
+                          </>
+                          )}
+                          {can("shipment.waybill") && (
+                          <>
                           <button
                             type="button"
                             onClick={() => {
@@ -1177,6 +1183,9 @@ export default function ShipmentListPage() {
                               Download DHL original waybill
                             </button>
                           )}
+                          </>
+                          )}
+                          {can("shipment.invoice") && (
                           <button
                             type="button"
                             onClick={() => {
@@ -1193,6 +1202,7 @@ export default function ShipmentListPage() {
                             )}
                             {s.commercial_invoice_storage_key ? "Open Commercial Invoice" : "No Commercial Invoice available"}
                           </button>
+                          )}
                           {can("receipt.create") && (
                           <button
                             type="button"

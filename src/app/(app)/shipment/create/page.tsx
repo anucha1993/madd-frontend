@@ -4453,17 +4453,17 @@ export default function ShipmentCreatePage() {
                   ];
 
                   const documents: { label: string; icon: typeof FileText; onOpen: () => void; loading: boolean }[] = [
-                    ...(hasLabel
+                    ...(hasLabel && can("shipment.label")
                       ? [
                           isMultiPiece
                             ? { label: `Shipping Label (รวม ${pieces.length} กล่อง)`, icon: Package, onOpen: handleOpenAllLabels, loading: openingAllLabels }
                             : { label: "Shipping Label", icon: Package, onOpen: handleOpenLabel, loading: openingLabel },
                         ]
                       : []),
-                    ...(hasWaybill
+                    ...(hasWaybill && can("shipment.waybill")
                       ? [{ label: "Waybill (Shipper's Copy)", icon: FileText, onOpen: handleOpenWaybill, loading: openingWaybill }]
                       : []),
-                    ...(bookedShipment.carrier === "DHL" && bookedShipment.waybill_storage_key
+                    ...(bookedShipment.carrier === "DHL" && bookedShipment.waybill_storage_key && can("shipment.waybill")
                       ? [
                           {
                             label: "DHL original waybill (ดาวน์โหลด)",
@@ -4475,7 +4475,7 @@ export default function ShipmentCreatePage() {
                           },
                         ]
                       : []),
-                    ...(hasInvoice
+                    ...(hasInvoice && can("shipment.invoice")
                       ? [{ label: "Commercial Invoice", icon: Receipt, onOpen: handleOpenCommercialInvoice, loading: openingInvoice }]
                       : []),
                   ];
@@ -4567,7 +4567,7 @@ export default function ShipmentCreatePage() {
                               <Copy className="h-3.5 w-3.5" />
                               {copiedTracking === piece.tracking_number ? "คัดลอกแล้ว" : "คัดลอก"}
                             </button>
-                            {isMultiPiece && piece.label_storage_key && (
+                            {isMultiPiece && piece.label_storage_key && can("shipment.label") && (
                               <button
                                 type="button"
                                 onClick={() => handleOpenPieceLabel(piece.tracking_number)}

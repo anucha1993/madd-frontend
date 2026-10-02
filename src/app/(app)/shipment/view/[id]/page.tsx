@@ -355,24 +355,24 @@ export default function ShipmentViewPage() {
             </div>
 
             <div className="flex items-center gap-2">
-              {s.label_storage_key && (
+              {s.label_storage_key && can("shipment.label") && (
                 <button type="button" onClick={handleOpenLabel} disabled={openingLabel} className={headerBtn}>
                   {openingLabel ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Package className="h-3.5 w-3.5" />}
                   Open label
                 </button>
               )}
-              {s.label_storage_key && (
+              {s.label_storage_key && can("shipment.waybill") && (
                 <button type="button" onClick={handleOpenWaybill} disabled={openingWaybill} className={headerBtn}>
                   {openingWaybill ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Receipt className="h-3.5 w-3.5" />}
                   Open waybill
                 </button>
               )}
-              {s.carrier === "DHL" && s.waybill_storage_key && (
+              {s.carrier === "DHL" && s.waybill_storage_key && can("shipment.waybill") && (
                 <button type="button" onClick={handleDownloadOriginalWaybill} className={headerBtn} title="ไฟล์ Waybill Doc จาก DHL โดยตรง (ไม่มีส่วน Payment of Charges ของ MADD)">
                   <Download className="h-3.5 w-3.5" /> DHL original waybill
                 </button>
               )}
-              {s.commercial_invoice_storage_key && (
+              {s.commercial_invoice_storage_key && can("shipment.invoice") && (
                 <button type="button" onClick={handleOpenInvoice} disabled={openingInvoice} className={headerBtn}>
                   {openingInvoice ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileCheck className="h-3.5 w-3.5" />}
                   Open invoice
@@ -551,7 +551,7 @@ export default function ShipmentViewPage() {
                       <td className="py-1.5 tabular-nums text-slate-900">{piece.tracking_number ?? "—"}</td>
                       <td className="py-1.5 text-slate-500">{piece.description}</td>
                       <td className="py-1.5 text-right">
-                        {piece.label_storage_key && (
+                        {piece.label_storage_key && can("shipment.label") && (
                           <button
                             type="button"
                             onClick={() => handleOpenPieceLabel(piece.tracking_number)}
