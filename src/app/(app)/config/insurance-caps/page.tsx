@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Globe2, Pencil, Plus, Search, Trash2, Upload } from "lucide-react";
+import { useAccess } from "@/components/auth/AccessProvider";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import PageLoading from "@/components/ui/PageLoading";
@@ -162,6 +163,7 @@ function CapForm({
 }
 
 export default function InsuranceCountryCapsPage() {
+  const { can } = useAccess();
   const [rows, setRows] = useState<InsuranceCountryCap[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -250,18 +252,20 @@ export default function InsuranceCountryCapsPage() {
           description={`Max insurance coverage per box, by country/carrier — ${total.toLocaleString()} countries`}
         />
         <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              setShowUpload(true);
-              setUploadMessage("");
-              setUploadError("");
-            }}
-            className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
-          >
-            <Upload className="h-4 w-4" />
-            Upload CSV
-          </button>
+          {can("config.insurance_import") && (
+            <button
+              type="button"
+              onClick={() => {
+                setShowUpload(true);
+                setUploadMessage("");
+                setUploadError("");
+              }}
+              className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+            >
+              <Upload className="h-4 w-4" />
+              Upload CSV
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setModalRow("new")}
@@ -390,7 +394,7 @@ export default function InsuranceCountryCapsPage() {
         </Modal>
       )}
 
-      {showUpload && (
+      {showUpload && can("config.insurance_import") && (
         <Modal title="Upload CSV (Full Replace)" onClose={() => setShowUpload(false)}>
           <div className="flex flex-col gap-3">
             <p className="text-xs text-slate-400">

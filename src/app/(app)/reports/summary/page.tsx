@@ -5,6 +5,7 @@ import Link from "next/link";
 import { AlertTriangle, ChevronDown, Download, Loader2, Table2, X } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import PageLoading from "@/components/ui/PageLoading";
+import { useAccess } from "@/components/auth/AccessProvider";
 import { listBranches, type Branch } from "@/lib/branches";
 import {
   downloadShipmentAnalytics,
@@ -65,6 +66,7 @@ const periodLabel = (p: string, group: ShipmentAnalytics["group"]) => {
 const selectClass = "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15";
 
 export default function ShipmentAnalyticsPage() {
+  const { can } = useAccess();
   const [filters, setFilters] = useState<AnalyticsFilters>({ date_from: shift(today(), -29), date_to: today() });
   const [data, setData] = useState<ShipmentAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
@@ -104,24 +106,26 @@ export default function ShipmentAnalyticsPage() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <PageHeader title="Shipment Analytics" description="ภาพรวมปริมาณงานและการปฏิบัติงาน เทียบกับช่วงก่อนหน้า — เฉพาะ Shipment โหมดจริง ตามขอบเขตสาขาของคุณ" />
-        <button
-          type="button"
-          disabled={exporting || !data}
-          onClick={async () => {
-            setExporting(true);
-            try {
-              await downloadShipmentAnalytics(filters);
-            } catch (err) {
-              setError(err instanceof Error ? err.message : "Export ไม่สำเร็จ");
-            } finally {
-              setExporting(false);
-            }
-          }}
-          className="flex shrink-0 items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-        >
-          {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-          Export Excel
-        </button>
+        {can("report.summary_export") && (
+          <button
+            type="button"
+            disabled={exporting || !data}
+            onClick={async () => {
+              setExporting(true);
+              try {
+                await downloadShipmentAnalytics(filters);
+              } catch (err) {
+                setError(err instanceof Error ? err.message : "Export ไม่สำเร็จ");
+              } finally {
+                setExporting(false);
+              }
+            }}
+            className="flex shrink-0 items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            Export Excel
+          </button>
+        )}
       </div>
 
       {/* Filters — one row, above every chart */}

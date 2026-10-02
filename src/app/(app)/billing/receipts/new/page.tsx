@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Plus, Trash2, X } from "lucide-react";
 import PageLoading from "@/components/ui/PageLoading";
+import { useAccess } from "@/components/auth/AccessProvider";
 import Modal from "@/components/ui/Modal";
 import CarrierBadge from "@/components/ui/CarrierBadge";
 import BillingCustomerManagerModal from "@/components/config/BillingCustomerManagerModal";
@@ -89,6 +90,7 @@ function Card({ title, children, right }: { title: string; children: React.React
 export default function IssueReceiptPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { can } = useAccess();
   const initialShipmentIds = useMemo(
     () =>
       (searchParams.get("shipment_ids") ?? "")
@@ -498,25 +500,29 @@ export default function IssueReceiptPage() {
             <span className="text-slate-600">
               Cash Receipt <span className="font-mono text-xs text-slate-400">{successPair.cash_receipt.vol_no}/{successPair.cash_receipt.no}</span>
             </span>
-            <button
-              type="button"
-              onClick={() => openReceiptPdf(successPair.cash_receipt.id)}
-              className="rounded-lg bg-brand-navy-dark px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-navy-dark/90"
-            >
-              Open PDF
-            </button>
+            {can("receipt.print") && (
+              <button
+                type="button"
+                onClick={() => openReceiptPdf(successPair.cash_receipt.id)}
+                className="rounded-lg bg-brand-navy-dark px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-navy-dark/90"
+              >
+                Open PDF
+              </button>
+            )}
           </div>
           <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-white px-3 py-2 text-left text-sm">
             <span className="text-slate-600">
               Tax Invoice <span className="font-mono text-xs text-slate-400">{successPair.tax_invoice.vol_no}/{successPair.tax_invoice.no}</span>
             </span>
-            <button
-              type="button"
-              onClick={() => openReceiptPdf(successPair.tax_invoice.id)}
-              className="rounded-lg bg-brand-amber px-3 py-1.5 text-xs font-semibold text-slate-900 hover:bg-brand-amber/90"
-            >
-              Open PDF
-            </button>
+            {can("receipt.print") && (
+              <button
+                type="button"
+                onClick={() => openReceiptPdf(successPair.tax_invoice.id)}
+                className="rounded-lg bg-brand-amber px-3 py-1.5 text-xs font-semibold text-slate-900 hover:bg-brand-amber/90"
+              >
+                Open PDF
+              </button>
+            )}
           </div>
         </div>
         <button

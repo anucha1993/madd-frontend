@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, ClipboardList, Download, Search, Loader2, ChevronRight } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
+import { useAccess } from "@/components/auth/AccessProvider";
 import { listBranches, type Branch } from "@/lib/branches";
 import {
   listManifestReport,
@@ -29,6 +30,7 @@ function formatNumber(n: number) {
 }
 
 export default function ManifestPage() {
+  const { can } = useAccess();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [range, setRange] = useState<ManifestRangePreset>("daily");
   const [dateFrom, setDateFrom] = useState("");
@@ -169,15 +171,17 @@ export default function ManifestPage() {
           Search
         </button>
 
-        <button
-          type="button"
-          onClick={handleExport}
-          disabled={exporting || !result || result.total_shipments === 0}
-          className="flex items-center gap-2 rounded-lg border border-brand-navy-dark px-4 py-2 text-sm font-semibold text-brand-navy-dark hover:bg-brand-navy-dark/5 disabled:opacity-50"
-        >
-          {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-          Export Excel
-        </button>
+        {can("report.manifest_export") && (
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={exporting || !result || result.total_shipments === 0}
+            className="flex items-center gap-2 rounded-lg border border-brand-navy-dark px-4 py-2 text-sm font-semibold text-brand-navy-dark hover:bg-brand-navy-dark/5 disabled:opacity-50"
+          >
+            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            Export Excel
+          </button>
+        )}
       </div>
 
       {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}

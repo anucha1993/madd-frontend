@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useState } from "react";
 import { BellRing, CheckCheck, ChevronDown } from "lucide-react";
+import { useAccess } from "@/components/auth/AccessProvider";
 import PageHeader from "@/components/layout/PageHeader";
 import PageLoading from "@/components/ui/PageLoading";
 import {
@@ -26,6 +27,7 @@ const inputClass =
   "rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15";
 
 export default function SystemAlertsPage() {
+  const { can } = useAccess();
   const [filters, setFilters] = useState<SystemAlertFilters>({ status: "open" });
   const [page, setPage] = useState(1);
   const [reload, setReload] = useState(0);
@@ -105,7 +107,7 @@ export default function SystemAlertsPage() {
             ))}
           </select>
         </label>
-        {filters.status !== "resolved" && total > 0 && (
+        {can("config.system_alerts_resolve") && filters.status !== "resolved" && total > 0 && (
           <button
             type="button"
             disabled={busy}
@@ -172,7 +174,7 @@ export default function SystemAlertsPage() {
                               {alert.resolved_by?.name ?? "—"} · {new Date(alert.resolved_at).toLocaleString()}
                             </div>
                           </span>
-                        ) : (
+                        ) : can("config.system_alerts_resolve") ? (
                           <button
                             type="button"
                             disabled={busy}
@@ -181,6 +183,8 @@ export default function SystemAlertsPage() {
                           >
                             แก้ไขแล้ว
                           </button>
+                        ) : (
+                          <span className="text-xs text-slate-400">ยังไม่แก้ไข</span>
                         )}
                       </td>
                     </tr>

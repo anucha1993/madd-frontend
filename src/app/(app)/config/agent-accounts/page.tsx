@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Banknote, Image as ImageIcon, KeyRound, Loader2, Pencil, Plug, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { useAccess } from "@/components/auth/AccessProvider";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import PageLoading from "@/components/ui/PageLoading";
@@ -97,6 +98,7 @@ function FormulaTester({ formula }: { formula: string }) {
 }
 
 export default function AgentAccountsPage() {
+  const { can } = useAccess();
   const [agents, setAgents] = useState<Agent[]>([]);
   const [accounts, setAccounts] = useState<AgentAccount[]>([]);
   const [loading, setLoading] = useState(true);
@@ -670,16 +672,18 @@ export default function AgentAccountsPage() {
                             )}
                           </td>
                           <td className="px-5 py-3 text-right">
-                            <button
-                              type="button"
-                              onClick={() => handleTest(account)}
-                              disabled={testingId === account.id}
-                              className="mr-2 rounded-lg p-1.5 text-brand-navy hover:bg-slate-100 disabled:opacity-50"
-                              aria-label="ทดสอบ"
-                              title="ทดสอบการเชื่อมต่อ API"
-                            >
-                              <Plug className="h-4 w-4" />
-                            </button>
+                            {can("config.agent_accounts_test") && (
+                              <button
+                                type="button"
+                                onClick={() => handleTest(account)}
+                                disabled={testingId === account.id}
+                                className="mr-2 rounded-lg p-1.5 text-brand-navy hover:bg-slate-100 disabled:opacity-50"
+                                aria-label="ทดสอบ"
+                                title="ทดสอบการเชื่อมต่อ API"
+                              >
+                                <Plug className="h-4 w-4" />
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => openFixedCharges(account)}
@@ -877,25 +881,37 @@ export default function AgentAccountsPage() {
                               )}
                             </td>
                             <td className="px-3 py-2">
-                              <button
-                                type="button"
-                                onClick={() => handleToggleFixedOverrideStatus(o)}
-                                className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                                  o.status ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-500"
-                                }`}
-                              >
-                                {o.status ? "Active" : "Inactive"}
-                              </button>
+                              {can("config.markup") ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleFixedOverrideStatus(o)}
+                                  className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                                    o.status ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-500"
+                                  }`}
+                                >
+                                  {o.status ? "Active" : "Inactive"}
+                                </button>
+                              ) : (
+                                <span
+                                  className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                                    o.status ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-500"
+                                  }`}
+                                >
+                                  {o.status ? "Active" : "Inactive"}
+                                </span>
+                              )}
                             </td>
                             <td className="px-3 py-2 text-right">
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteFixedOverride(o)}
-                                className="rounded-lg p-1.5 text-red-500 hover:bg-red-50"
-                                aria-label="ลบ"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
+                              {can("config.markup") && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteFixedOverride(o)}
+                                  className="rounded-lg p-1.5 text-red-500 hover:bg-red-50"
+                                  aria-label="ลบ"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              )}
                             </td>
                           </tr>
                         ))}
@@ -904,280 +920,283 @@ export default function AgentAccountsPage() {
                   </div>
                 )}
 
-                <div className="flex flex-col gap-2.5 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <div className="flex flex-wrap items-end gap-3">
-                    <label className="relative flex flex-1 min-w-[200px] flex-col gap-1.5">
-                      <span className="text-xs font-medium text-slate-600">Charge Code</span>
-                      <input
-                        type="text"
-                        value={
-                          newFixedCodeDropdownOpen
-                            ? newFixedCodeQuery
-                            : (() => {
-                                const selected = fixedChargeCodes.find((c) => c.id === newFixedCodeId);
-                                return selected ? `${selected.label} (${selected.code})` : newFixedCodeQuery;
-                              })()
-                        }
-                        onFocus={() => {
-                          setNewFixedCodeQuery("");
-                          setNewFixedCodeDropdownOpen(true);
-                        }}
-                        onChange={(e) => setNewFixedCodeQuery(e.target.value)}
-                        onBlur={() => setTimeout(() => setNewFixedCodeDropdownOpen(false), 150)}
-                        placeholder="พิมพ์ค้นหา Charge Code..."
-                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
-                      />
-                      {newFixedCodeDropdownOpen && (
-                        <div className="absolute top-full z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
-                          {(() => {
-                            const q = newFixedCodeQuery.trim().toLowerCase();
-                            const options = fixedChargeCodes
-                              .filter((c) => !fixedOverrides.some((o) => o.charge_code_id === c.id))
-                              .filter((c) => !q || `${c.label} ${c.code}`.toLowerCase().includes(q));
-                            if (options.length === 0) {
-                              return <p className="px-3 py-2 text-xs text-slate-400">ไม่พบ Charge Code ที่ตรงกัน</p>;
-                            }
-                            return options.map((c) => (
-                              <button
-                                type="button"
-                                key={c.id}
-                                onMouseDown={(e) => e.preventDefault()}
-                                onClick={() => {
-                                  setNewFixedCodeId(c.id);
-                                  setNewFixedCodeQuery("");
-                                  setNewFixedCodeDropdownOpen(false);
-                                }}
-                                className="block w-full border-b border-slate-50 px-3 py-2 text-left text-xs last:border-0 hover:bg-slate-50"
-                              >
-                                <span className="font-medium text-slate-700">{c.label}</span>{" "}
-                                <span className="text-slate-400">({c.code})</span>
-                              </button>
-                            ));
-                          })()}
-                        </div>
-                      )}
-                    </label>
-                    <div className="flex gap-1 rounded-lg border border-slate-300 bg-white p-1">
-                      <button
-                        type="button"
-                        onClick={() => setNewOverrideType("FIXED")}
-                        className={`rounded-md px-3 py-1 text-xs font-semibold ${
-                          newOverrideType === "FIXED" ? "bg-brand-navy-dark text-white" : "text-slate-500 hover:bg-slate-100"
-                        }`}
-                      >
-                        Fixed Amount
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setNewOverrideType("FORMULA")}
-                        className={`rounded-md px-3 py-1 text-xs font-semibold ${
-                          newOverrideType === "FORMULA" ? "bg-brand-navy-dark text-white" : "text-slate-500 hover:bg-slate-100"
-                        }`}
-                      >
-                        Formula
-                      </button>
-                    </div>
-                  </div>
-
-                  {newOverrideType === "FIXED" ? (
-                    <div className="flex items-end gap-2">
-                      <label className="flex flex-1 flex-col gap-1.5">
-                        <span className="text-xs font-medium text-slate-600">
-                          {newFixedUnit === "PERCENTAGE" ? "Fixed Amount (% ของยอดจริงจาก API)" : "Fixed Amount (THB)"}
-                        </span>
+                {/* Adding/creating charge codes and formula preview all write to config.markup endpoints. */}
+                {can("config.markup") && (
+                  <div className="flex flex-col gap-2.5 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="flex flex-wrap items-end gap-3">
+                      <label className="relative flex flex-1 min-w-[200px] flex-col gap-1.5">
+                        <span className="text-xs font-medium text-slate-600">Charge Code</span>
                         <input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          value={newFixedAmount}
-                          onChange={(e) => setNewFixedAmount(e.target.value)}
+                          type="text"
+                          value={
+                            newFixedCodeDropdownOpen
+                              ? newFixedCodeQuery
+                              : (() => {
+                                  const selected = fixedChargeCodes.find((c) => c.id === newFixedCodeId);
+                                  return selected ? `${selected.label} (${selected.code})` : newFixedCodeQuery;
+                                })()
+                          }
+                          onFocus={() => {
+                            setNewFixedCodeQuery("");
+                            setNewFixedCodeDropdownOpen(true);
+                          }}
+                          onChange={(e) => setNewFixedCodeQuery(e.target.value)}
+                          onBlur={() => setTimeout(() => setNewFixedCodeDropdownOpen(false), 150)}
+                          placeholder="พิมพ์ค้นหา Charge Code..."
                           className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
                         />
+                        {newFixedCodeDropdownOpen && (
+                          <div className="absolute top-full z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                            {(() => {
+                              const q = newFixedCodeQuery.trim().toLowerCase();
+                              const options = fixedChargeCodes
+                                .filter((c) => !fixedOverrides.some((o) => o.charge_code_id === c.id))
+                                .filter((c) => !q || `${c.label} ${c.code}`.toLowerCase().includes(q));
+                              if (options.length === 0) {
+                                return <p className="px-3 py-2 text-xs text-slate-400">ไม่พบ Charge Code ที่ตรงกัน</p>;
+                              }
+                              return options.map((c) => (
+                                <button
+                                  type="button"
+                                  key={c.id}
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={() => {
+                                    setNewFixedCodeId(c.id);
+                                    setNewFixedCodeQuery("");
+                                    setNewFixedCodeDropdownOpen(false);
+                                  }}
+                                  className="block w-full border-b border-slate-50 px-3 py-2 text-left text-xs last:border-0 hover:bg-slate-50"
+                                >
+                                  <span className="font-medium text-slate-700">{c.label}</span>{" "}
+                                  <span className="text-slate-400">({c.code})</span>
+                                </button>
+                              ));
+                            })()}
+                          </div>
+                        )}
                       </label>
                       <div className="flex gap-1 rounded-lg border border-slate-300 bg-white p-1">
                         <button
                           type="button"
-                          onClick={() => setNewFixedUnit("THB")}
+                          onClick={() => setNewOverrideType("FIXED")}
                           className={`rounded-md px-3 py-1 text-xs font-semibold ${
-                            newFixedUnit === "THB" ? "bg-brand-navy-dark text-white" : "text-slate-500 hover:bg-slate-100"
+                            newOverrideType === "FIXED" ? "bg-brand-navy-dark text-white" : "text-slate-500 hover:bg-slate-100"
                           }`}
                         >
-                          THB
+                          Fixed Amount
                         </button>
                         <button
                           type="button"
-                          onClick={() => setNewFixedUnit("PERCENTAGE")}
+                          onClick={() => setNewOverrideType("FORMULA")}
                           className={`rounded-md px-3 py-1 text-xs font-semibold ${
-                            newFixedUnit === "PERCENTAGE" ? "bg-brand-navy-dark text-white" : "text-slate-500 hover:bg-slate-100"
+                            newOverrideType === "FORMULA" ? "bg-brand-navy-dark text-white" : "text-slate-500 hover:bg-slate-100"
                           }`}
                         >
-                          %
+                          Formula
                         </button>
                       </div>
                     </div>
-                  ) : (
-                    <div className="flex flex-col gap-1.5">
-                      <span className="text-xs font-medium text-slate-600">
-                        Formula — คลิก Charge Code ด้านล่างเพื่อแทรก เช่น Excel (รองรับตัวแปรพิเศษ {"{BILLED_WEIGHT}"}, {"{TOTAL}"} ด้วย)
-                      </span>
-                      <textarea
-                        ref={formulaInputRef}
-                        value={newFormula}
-                        onChange={(e) => setNewFormula(e.target.value)}
-                        placeholder="e.g. ({BASE} + {434}) * 35%"
-                        rows={2}
-                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-mono text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
-                      />
-                      <div className="flex flex-wrap gap-1">
-                        {["+", "-", "*", "/", "(", ")", "%"].map((op) => (
-                          <button
-                            key={op}
-                            type="button"
-                            onClick={() => insertFormulaToken(op)}
-                            className="rounded-md border border-slate-300 bg-white px-2.5 py-1 font-mono text-xs text-slate-600 hover:bg-slate-100"
-                          >
-                            {op}
-                          </button>
-                        ))}
-                      </div>
-                      <div ref={formulaCodeBoxRef} className="relative">
-                        <input
-                          type="text"
-                          value={formulaCodeQuery}
-                          onFocus={() => setFormulaCodeDropdownOpen(true)}
-                          onChange={(e) => {
-                            setFormulaCodeQuery(e.target.value);
-                            setFormulaCodeDropdownOpen(true);
-                          }}
-                          placeholder="พิมพ์ค้นหา Charge Code เพื่อแทรกลงในสูตร..."
-                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
-                        />
-                        {formulaCodeDropdownOpen && (
-                          <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
-                            {fixedChargeCodes.filter((c) => {
-                              const q = formulaCodeQuery.trim().toLowerCase();
-                              if (!q) return true;
-                              return `${c.label} ${c.code}`.toLowerCase().includes(q);
-                            }).length === 0 ? (
-                              <div className="px-3 py-2">
-                                <p className="text-xs text-slate-400">ไม่พบ Charge Code ที่ตรงกัน</p>
-                                <button
-                                  type="button"
-                                  onMouseDown={(e) => e.preventDefault()}
-                                  onClick={() => {
-                                    setNewFormulaCodeValue(formulaCodeQuery.trim());
-                                    setShowNewFormulaCode(true);
-                                    setFormulaCodeDropdownOpen(false);
-                                  }}
-                                  className="mt-1 text-xs font-medium text-amber-600 hover:underline"
-                                >
-                                  + เพิ่ม Charge Code ใหม่{formulaCodeQuery.trim() ? ` "${formulaCodeQuery.trim()}"` : ""}
-                                </button>
-                              </div>
-                            ) : (
-                              fixedChargeCodes
-                                .filter((c) => {
-                                  const q = formulaCodeQuery.trim().toLowerCase();
-                                  if (!q) return true;
-                                  return `${c.label} ${c.code}`.toLowerCase().includes(q);
-                                })
-                                .map((c) => (
-                                  <button
-                                    type="button"
-                                    key={c.id}
-                                    onClick={() => {
-                                      insertFormulaToken(`{${c.code}}`);
-                                      setFormulaCodeQuery("");
-                                      setFormulaCodeDropdownOpen(false);
-                                    }}
-                                    className="block w-full border-b border-slate-50 px-3 py-2 text-left text-xs last:border-0 hover:bg-slate-50"
-                                  >
-                                    <span className="font-medium text-slate-700">{c.label}</span>{" "}
-                                    <span className="text-slate-400">({c.code})</span>
-                                  </button>
-                                ))
-                            )}
-                          </div>
-                        )}
-                      </div>
 
-                      {!showNewFormulaCode ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setNewFormulaCodeValue("");
-                            setShowNewFormulaCode(true);
-                          }}
-                          className="self-start text-xs font-medium text-amber-600 hover:underline"
-                        >
-                          + Charge code ไม่มีในระบบ? เพิ่มเอง
-                        </button>
-                      ) : (
-                        <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                          <p className="text-xs text-slate-400">
-                            เพิ่ม Charge Code ใหม่สำหรับ &quot;{fixedChargesAccount.agent?.agent_code}&quot; (เช่น ค่าธรรมเนียมที่ Carrier
-                            เรียกเก็บแต่ยังไม่มีในระบบ)
-                          </p>
-                          <div className="grid grid-cols-2 gap-2">
-                            <input
-                              type="text"
-                              placeholder="Code (e.g. 434)"
-                              value={newFormulaCodeValue}
-                              onChange={(e) => setNewFormulaCodeValue(e.target.value)}
-                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
-                            />
-                            <input
-                              type="text"
-                              placeholder="Label (e.g. Surge Fee Commercial)"
-                              value={newFormulaCodeLabel}
-                              onChange={(e) => setNewFormulaCodeLabel(e.target.value)}
-                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
-                            />
-                          </div>
+                    {newOverrideType === "FIXED" ? (
+                      <div className="flex items-end gap-2">
+                        <label className="flex flex-1 flex-col gap-1.5">
+                          <span className="text-xs font-medium text-slate-600">
+                            {newFixedUnit === "PERCENTAGE" ? "Fixed Amount (% ของยอดจริงจาก API)" : "Fixed Amount (THB)"}
+                          </span>
                           <input
-                            type="text"
-                            placeholder="Category (optional)"
-                            value={newFormulaCodeCategory}
-                            onChange={(e) => setNewFormulaCodeCategory(e.target.value)}
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={newFixedAmount}
+                            onChange={(e) => setNewFixedAmount(e.target.value)}
                             className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
                           />
-                          {newFormulaCodeError && <p className="text-xs text-red-600">{newFormulaCodeError}</p>}
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setShowNewFormulaCode(false)}
-                              className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
-                            >
-                              ยกเลิก
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handleCreateFormulaCode}
-                              disabled={creatingFormulaCode || !newFormulaCodeValue || !newFormulaCodeLabel}
-                              className="rounded-lg bg-brand-navy-dark px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-navy-dark/90 disabled:opacity-60"
-                            >
-                              {creatingFormulaCode ? "กำลังเพิ่ม..." : "เพิ่มและแทรกลงสูตร"}
-                            </button>
-                          </div>
+                        </label>
+                        <div className="flex gap-1 rounded-lg border border-slate-300 bg-white p-1">
+                          <button
+                            type="button"
+                            onClick={() => setNewFixedUnit("THB")}
+                            className={`rounded-md px-3 py-1 text-xs font-semibold ${
+                              newFixedUnit === "THB" ? "bg-brand-navy-dark text-white" : "text-slate-500 hover:bg-slate-100"
+                            }`}
+                          >
+                            THB
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setNewFixedUnit("PERCENTAGE")}
+                            className={`rounded-md px-3 py-1 text-xs font-semibold ${
+                              newFixedUnit === "PERCENTAGE" ? "bg-brand-navy-dark text-white" : "text-slate-500 hover:bg-slate-100"
+                            }`}
+                          >
+                            %
+                          </button>
                         </div>
-                      )}
-                      <FormulaTester formula={newFormula} />
-                    </div>
-                  )}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-xs font-medium text-slate-600">
+                          Formula — คลิก Charge Code ด้านล่างเพื่อแทรก เช่น Excel (รองรับตัวแปรพิเศษ {"{BILLED_WEIGHT}"}, {"{TOTAL}"} ด้วย)
+                        </span>
+                        <textarea
+                          ref={formulaInputRef}
+                          value={newFormula}
+                          onChange={(e) => setNewFormula(e.target.value)}
+                          placeholder="e.g. ({BASE} + {434}) * 35%"
+                          rows={2}
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-mono text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
+                        />
+                        <div className="flex flex-wrap gap-1">
+                          {["+", "-", "*", "/", "(", ")", "%"].map((op) => (
+                            <button
+                              key={op}
+                              type="button"
+                              onClick={() => insertFormulaToken(op)}
+                              className="rounded-md border border-slate-300 bg-white px-2.5 py-1 font-mono text-xs text-slate-600 hover:bg-slate-100"
+                            >
+                              {op}
+                            </button>
+                          ))}
+                        </div>
+                        <div ref={formulaCodeBoxRef} className="relative">
+                          <input
+                            type="text"
+                            value={formulaCodeQuery}
+                            onFocus={() => setFormulaCodeDropdownOpen(true)}
+                            onChange={(e) => {
+                              setFormulaCodeQuery(e.target.value);
+                              setFormulaCodeDropdownOpen(true);
+                            }}
+                            placeholder="พิมพ์ค้นหา Charge Code เพื่อแทรกลงในสูตร..."
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
+                          />
+                          {formulaCodeDropdownOpen && (
+                            <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                              {fixedChargeCodes.filter((c) => {
+                                const q = formulaCodeQuery.trim().toLowerCase();
+                                if (!q) return true;
+                                return `${c.label} ${c.code}`.toLowerCase().includes(q);
+                              }).length === 0 ? (
+                                <div className="px-3 py-2">
+                                  <p className="text-xs text-slate-400">ไม่พบ Charge Code ที่ตรงกัน</p>
+                                  <button
+                                    type="button"
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() => {
+                                      setNewFormulaCodeValue(formulaCodeQuery.trim());
+                                      setShowNewFormulaCode(true);
+                                      setFormulaCodeDropdownOpen(false);
+                                    }}
+                                    className="mt-1 text-xs font-medium text-amber-600 hover:underline"
+                                  >
+                                    + เพิ่ม Charge Code ใหม่{formulaCodeQuery.trim() ? ` "${formulaCodeQuery.trim()}"` : ""}
+                                  </button>
+                                </div>
+                              ) : (
+                                fixedChargeCodes
+                                  .filter((c) => {
+                                    const q = formulaCodeQuery.trim().toLowerCase();
+                                    if (!q) return true;
+                                    return `${c.label} ${c.code}`.toLowerCase().includes(q);
+                                  })
+                                  .map((c) => (
+                                    <button
+                                      type="button"
+                                      key={c.id}
+                                      onClick={() => {
+                                        insertFormulaToken(`{${c.code}}`);
+                                        setFormulaCodeQuery("");
+                                        setFormulaCodeDropdownOpen(false);
+                                      }}
+                                      className="block w-full border-b border-slate-50 px-3 py-2 text-left text-xs last:border-0 hover:bg-slate-50"
+                                    >
+                                      <span className="font-medium text-slate-700">{c.label}</span>{" "}
+                                      <span className="text-slate-400">({c.code})</span>
+                                    </button>
+                                  ))
+                              )}
+                            </div>
+                          )}
+                        </div>
 
-                  <button
-                    type="button"
-                    onClick={handleAddFixedOverride}
-                    disabled={
-                      fixedSaving ||
-                      !newFixedCodeId ||
-                      (newOverrideType === "FIXED" ? !newFixedAmount : !newFormula.trim())
-                    }
-                    className="flex items-center justify-center gap-1.5 self-start whitespace-nowrap rounded-lg bg-brand-amber px-3 py-1.5 text-sm font-semibold text-brand-navy-dark hover:bg-brand-amber/90 disabled:opacity-60"
-                  >
-                    <Plus className="h-4 w-4" /> {fixedSaving ? "..." : "Add"}
-                  </button>
-                </div>
+                        {!showNewFormulaCode ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNewFormulaCodeValue("");
+                              setShowNewFormulaCode(true);
+                            }}
+                            className="self-start text-xs font-medium text-amber-600 hover:underline"
+                          >
+                            + Charge code ไม่มีในระบบ? เพิ่มเอง
+                          </button>
+                        ) : (
+                          <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                            <p className="text-xs text-slate-400">
+                              เพิ่ม Charge Code ใหม่สำหรับ &quot;{fixedChargesAccount.agent?.agent_code}&quot; (เช่น ค่าธรรมเนียมที่ Carrier
+                              เรียกเก็บแต่ยังไม่มีในระบบ)
+                            </p>
+                            <div className="grid grid-cols-2 gap-2">
+                              <input
+                                type="text"
+                                placeholder="Code (e.g. 434)"
+                                value={newFormulaCodeValue}
+                                onChange={(e) => setNewFormulaCodeValue(e.target.value)}
+                                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
+                              />
+                              <input
+                                type="text"
+                                placeholder="Label (e.g. Surge Fee Commercial)"
+                                value={newFormulaCodeLabel}
+                                onChange={(e) => setNewFormulaCodeLabel(e.target.value)}
+                                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
+                              />
+                            </div>
+                            <input
+                              type="text"
+                              placeholder="Category (optional)"
+                              value={newFormulaCodeCategory}
+                              onChange={(e) => setNewFormulaCodeCategory(e.target.value)}
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
+                            />
+                            {newFormulaCodeError && <p className="text-xs text-red-600">{newFormulaCodeError}</p>}
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setShowNewFormulaCode(false)}
+                                className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                              >
+                                ยกเลิก
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleCreateFormulaCode}
+                                disabled={creatingFormulaCode || !newFormulaCodeValue || !newFormulaCodeLabel}
+                                className="rounded-lg bg-brand-navy-dark px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-navy-dark/90 disabled:opacity-60"
+                              >
+                                {creatingFormulaCode ? "กำลังเพิ่ม..." : "เพิ่มและแทรกลงสูตร"}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        <FormulaTester formula={newFormula} />
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={handleAddFixedOverride}
+                      disabled={
+                        fixedSaving ||
+                        !newFixedCodeId ||
+                        (newOverrideType === "FIXED" ? !newFixedAmount : !newFormula.trim())
+                      }
+                      className="flex items-center justify-center gap-1.5 self-start whitespace-nowrap rounded-lg bg-brand-amber px-3 py-1.5 text-sm font-semibold text-brand-navy-dark hover:bg-brand-amber/90 disabled:opacity-60"
+                    >
+                      <Plus className="h-4 w-4" /> {fixedSaving ? "..." : "Add"}
+                    </button>
+                  </div>
+                )}
               </>
             )}
 

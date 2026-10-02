@@ -1084,6 +1084,7 @@ export default function ShipmentListPage() {
                           style={{ position: "fixed", top: actionsMenuPos.top, right: actionsMenuPos.right }}
                           className="z-50 w-64 rounded-lg border border-slate-200 bg-white p-1.5 text-left shadow-lg"
                         >
+                          {can("shipment.detail") && (
                           <Link
                             href={`/shipment/view/${s.id}`}
                             onClick={() => setActionsMenuId(null)}
@@ -1092,7 +1093,8 @@ export default function ShipmentListPage() {
                             <FileText className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                             View Shipment Details
                           </Link>
-                          {can("shipment.label") && (
+                          )}
+                          {(describeShipmentPieces(s).length > 1 ? can(["shipment.label", "shipment.label_all"]) : can("shipment.label")) && (
                           <>
                           <button
                             type="button"
@@ -1112,6 +1114,7 @@ export default function ShipmentListPage() {
                               <p className="px-2 py-1 text-[11px] font-semibold text-slate-400">
                                 Select a box to open its label ({describeShipmentPieces(s).length} boxes)
                               </p>
+                              {can("shipment.label_all") && (
                               <button
                                 type="button"
                                 onClick={() => handleOpenAllLabels(s)}
@@ -1125,7 +1128,8 @@ export default function ShipmentListPage() {
                                   <Printer className="h-3 w-3 shrink-0" />
                                 )}
                               </button>
-                              {describeShipmentPieces(s).map((piece, i) => {
+                              )}
+                              {can("shipment.label") && describeShipmentPieces(s).map((piece, i) => {
                                 const key = `${s.id}:${piece.tracking_number}`;
                                 return (
                                   <button
@@ -1153,7 +1157,6 @@ export default function ShipmentListPage() {
                           </>
                           )}
                           {can("shipment.waybill") && (
-                          <>
                           <button
                             type="button"
                             onClick={() => {
@@ -1170,7 +1173,8 @@ export default function ShipmentListPage() {
                             )}
                             {s.label_storage_key ? "Open Waybill (Shipper's Copy)" : "No Waybill available"}
                           </button>
-                          {s.carrier === "DHL" && s.waybill_storage_key && (
+                          )}
+                          {s.carrier === "DHL" && s.waybill_storage_key && can("shipment.waybill_original") && (
                             <button
                               type="button"
                               onClick={() => {
@@ -1182,8 +1186,6 @@ export default function ShipmentListPage() {
                               <Download className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                               Download DHL original waybill
                             </button>
-                          )}
-                          </>
                           )}
                           {can("shipment.invoice") && (
                           <button
@@ -1203,7 +1205,7 @@ export default function ShipmentListPage() {
                             {s.commercial_invoice_storage_key ? "Open Commercial Invoice" : "No Commercial Invoice available"}
                           </button>
                           )}
-                          {can("receipt.create") && (
+                          {can("shipment.issue_receipt") && can("receipt.create") && (
                           <button
                             type="button"
                             onClick={() => {
@@ -1216,7 +1218,7 @@ export default function ShipmentListPage() {
                             Issue Receipt / Tax Invoice
                           </button>
                           )}
-                          {s.status === "booked" && !s.picked_up_at && can("pickup.confirm") && (
+                          {s.status === "booked" && !s.picked_up_at && can("shipment.mark_picked_up") && (
                             <button
                               type="button"
                               onClick={() => {
@@ -1247,8 +1249,9 @@ export default function ShipmentListPage() {
                               {s.carrier === "UPS" ? "Void shipment with UPS" : "Void (แจ้งยกเลิก DHL)"}
                             </button>
                           )}
-                          {s.status === "voided" && s.carrier_cancel_status === "pending" && can("shipment.void") && (
+                          {s.status === "voided" && s.carrier_cancel_status === "pending" && (
                             <>
+                              {can("shipment.cancel_copy") && (
                               <button
                                 type="button"
                                 onClick={() => {
@@ -1260,6 +1263,8 @@ export default function ShipmentListPage() {
                                 <Copy className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                                 คัดลอกข้อความแจ้งยกเลิก DHL
                               </button>
+                              )}
+                              {can("shipment.cancel_notified") && (
                               <button
                                 type="button"
                                 onClick={() => {
@@ -1272,6 +1277,8 @@ export default function ShipmentListPage() {
                                 <Mail className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                                 {s.carrier_cancel_requested_at ? "แก้ไขบันทึกการแจ้ง DHL" : "บันทึกว่าแจ้ง DHL แล้ว"}
                               </button>
+                              )}
+                              {can("shipment.cancel_confirmed") && (
                               <button
                                 type="button"
                                 onClick={() => {
@@ -1284,19 +1291,22 @@ export default function ShipmentListPage() {
                                 <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
                                 DHL ยืนยันยกเลิกแล้ว
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  handleUnvoid(s);
-                                  setActionsMenuId(null);
-                                }}
-                                disabled={voidingId === s.id}
-                                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-40"
-                              >
-                                <RotateCcw className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                                ยกเลิก Void (กด Void ผิด)
-                              </button>
+                              )}
                             </>
+                          )}
+                          {s.status === "voided" && s.carrier_cancel_status === "pending" && can("shipment.unvoid") && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleUnvoid(s);
+                                setActionsMenuId(null);
+                              }}
+                              disabled={voidingId === s.id}
+                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                              ยกเลิก Void (กด Void ผิด)
+                            </button>
                           )}
                           {s.is_test && can("shipment.delete") && (
                             <button

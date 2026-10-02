@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useState } from "react";
 import { ChevronDown, ChevronRight, Loader2, PlayCircle, RefreshCw, Save } from "lucide-react";
+import { useAccess } from "@/components/auth/AccessProvider";
 import PageHeader from "@/components/layout/PageHeader";
 import PageLoading from "@/components/ui/PageLoading";
 import {
@@ -25,6 +26,7 @@ const STATUS_LABEL: Record<string, string> = {
 const statusLabel = (status: string | null) => (status ? STATUS_LABEL[status] ?? status : "(none)");
 
 export default function TrackingSyncPage() {
+  const { can } = useAccess();
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState<TrackingSyncSettings | null>(null);
   const [enabled, setEnabled] = useState(true);
@@ -145,15 +147,17 @@ export default function TrackingSyncPage() {
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             Save
           </button>
-          <button
-            type="button"
-            onClick={handleRunNow}
-            disabled={running}
-            className="flex items-center gap-2 rounded-lg border border-brand-navy-dark px-4 py-2 text-sm font-semibold text-brand-navy-dark hover:bg-brand-navy-dark/5 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
-            Run Now
-          </button>
+          {can("config.tracking_sync_run") && (
+            <button
+              type="button"
+              onClick={handleRunNow}
+              disabled={running}
+              className="flex items-center gap-2 rounded-lg border border-brand-navy-dark px-4 py-2 text-sm font-semibold text-brand-navy-dark hover:bg-brand-navy-dark/5 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
+              Run Now
+            </button>
+          )}
         </div>
         {saveMessage && <p className="mt-3 text-sm text-slate-500">{saveMessage}</p>}
         {settings?.last_run_at && (

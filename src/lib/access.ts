@@ -38,7 +38,9 @@ export function canEditField(access: Access, module: string, group: string): boo
 // /profile) is open to every signed-in user. Keep in sync with the `perm:` middleware in
 // madd-backend/routes/api.php.
 const ROUTE_PERMISSIONS: { pattern: RegExp; permission: string | string[] }[] = [
-  { pattern: /^\/shipment\/(create|draft)(\/|$)/, permission: "shipment.create" },
+  { pattern: /^\/shipment\/create(\/|$)/, permission: "shipment.create" },
+  { pattern: /^\/shipment\/draft(\/|$)/, permission: "shipment.draft" },
+  { pattern: /^\/shipment\/view(\/|$)/, permission: "shipment.detail" },
   { pattern: /^\/shipment(\/|$)/, permission: "shipment.view" },
   { pattern: /^\/dashboard(\/|$)/, permission: "shipment.view" },
   { pattern: /^\/pickup(\/|$)/, permission: "pickup.view" },

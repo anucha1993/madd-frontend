@@ -367,7 +367,7 @@ export default function ShipmentViewPage() {
                   Open waybill
                 </button>
               )}
-              {s.carrier === "DHL" && s.waybill_storage_key && can("shipment.waybill") && (
+              {s.carrier === "DHL" && s.waybill_storage_key && can("shipment.waybill_original") && (
                 <button type="button" onClick={handleDownloadOriginalWaybill} className={headerBtn} title="ไฟล์ Waybill Doc จาก DHL โดยตรง (ไม่มีส่วน Payment of Charges ของ MADD)">
                   <Download className="h-3.5 w-3.5" /> DHL original waybill
                 </button>
@@ -378,7 +378,7 @@ export default function ShipmentViewPage() {
                   Open invoice
                 </button>
               )}
-              {can("receipt.create") && s.status === "booked" && (
+              {can("shipment.issue_receipt") && can("receipt.create") && s.status === "booked" && (
                 <button type="button" onClick={() => router.push(`/billing/receipts/new?shipment_ids=${s.id}`)} className={headerBtn}>
                   <Printer className="h-3.5 w-3.5" /> Issue Receipt
                 </button>
@@ -464,7 +464,7 @@ export default function ShipmentViewPage() {
         )}
       </header>
 
-      {s.status === "booked" && !s.branch_id && can("shipment.create") && (
+      {s.status === "booked" && !s.branch_id && can("shipment.assign_branch") && (
         <AssignBranchBanner shipmentId={s.id} onAssigned={(updated) => setShipment({ ...s, ...updated })} />
       )}
 
@@ -500,18 +500,24 @@ export default function ShipmentViewPage() {
                 </p>
               )}
             </div>
-            {s.carrier_cancel_status === "pending" && can("shipment.void") && (
+            {s.carrier_cancel_status === "pending" && can(["shipment.cancel_copy", "shipment.cancel_notified", "shipment.cancel_confirmed", "shipment.unvoid"]) && (
               <div className="flex flex-wrap gap-2">
-                <CopyButton text={dhlCancelMessage(s)} label="คัดลอกข้อความแจ้ง DHL" />
-                <button type="button" onClick={handleMarkNotified} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
-                  {s.carrier_cancel_requested_at ? "แก้ไขบันทึกการแจ้ง DHL" : "บันทึกว่าแจ้ง DHL แล้ว"}
-                </button>
-                <button type="button" onClick={handleConfirmCarrierCancel} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700">
-                  DHL ยืนยันยกเลิกแล้ว
-                </button>
-                <button type="button" onClick={handleUnvoid} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
-                  ยกเลิก Void (กดผิด)
-                </button>
+                {can("shipment.cancel_copy") && <CopyButton text={dhlCancelMessage(s)} label="คัดลอกข้อความแจ้ง DHL" />}
+                {can("shipment.cancel_notified") && (
+                    <button type="button" onClick={handleMarkNotified} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                      {s.carrier_cancel_requested_at ? "แก้ไขบันทึกการแจ้ง DHL" : "บันทึกว่าแจ้ง DHL แล้ว"}
+                    </button>
+                )}
+                {can("shipment.cancel_confirmed") && (
+                    <button type="button" onClick={handleConfirmCarrierCancel} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700">
+                      DHL ยืนยันยกเลิกแล้ว
+                    </button>
+                )}
+                {can("shipment.unvoid") && (
+                  <button type="button" onClick={handleUnvoid} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                    ยกเลิก Void (กดผิด)
+                  </button>
+                )}
               </div>
             )}
           </div>

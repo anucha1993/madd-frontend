@@ -82,8 +82,16 @@ export default function BranchPage() {
   }
 
   async function handleSubmit(data: BranchInput, carrierAccounts: BranchCarrierAccountInput[]) {
-    const branch = modalBranch && modalBranch !== "new" ? await updateBranch(modalBranch.id, data) : await createBranch(data);
-    await syncBranchCarrierAccounts(branch.id, carrierAccounts);
+    // Details and carrier accounts are separate permissions — only call the endpoints the user holds.
+    let branch: Branch;
+    if (modalBranch && modalBranch !== "new") {
+      branch = can("branch.edit") ? await updateBranch(modalBranch.id, data) : modalBranch;
+    } else {
+      branch = await createBranch(data);
+    }
+    if (can("branch.carrier_accounts")) {
+      await syncBranchCarrierAccounts(branch.id, carrierAccounts);
+    }
     setModalBranch(null);
     await loadAll();
   }
@@ -195,13 +203,19 @@ export default function BranchPage() {
                   </td>
                   <td className="px-5 py-3 text-slate-500">{branch.phone ?? "-"}</td>
                   <td className="px-5 py-3">
-                    <button
-                      type="button"
-                      onClick={() => openModal(branch)}
-                      className="rounded-full bg-brand-navy/5 px-2.5 py-0.5 text-xs font-medium text-brand-navy-dark hover:bg-brand-navy/10"
-                    >
-                      {branch.carrier_accounts_count ? `${branch.carrier_accounts_count} บัญชี` : "ทั้งหมด (ค่าเริ่มต้น)"}
-                    </button>
+                    {can("branch.edit") || can("branch.carrier_accounts") ? (
+                      <button
+                        type="button"
+                        onClick={() => openModal(branch)}
+                        className="rounded-full bg-brand-navy/5 px-2.5 py-0.5 text-xs font-medium text-brand-navy-dark hover:bg-brand-navy/10"
+                      >
+                        {branch.carrier_accounts_count ? `${branch.carrier_accounts_count} บัญชี` : "ทั้งหมด (ค่าเริ่มต้น)"}
+                      </button>
+                    ) : (
+                      <span className="rounded-full bg-brand-navy/5 px-2.5 py-0.5 text-xs font-medium text-brand-navy-dark">
+                        {branch.carrier_accounts_count ? `${branch.carrier_accounts_count} บัญชี` : "ทั้งหมด (ค่าเริ่มต้น)"}
+                      </span>
+                    )}
                   </td>
                   <td className="px-5 py-3">
                     <button
@@ -272,6 +286,8 @@ export default function BranchPage() {
               initial={modalBranch === "new" ? null : modalBranch}
               agentAccounts={agentAccounts}
               initialCarrierAccounts={modalCarrierAccounts}
+              canEditDetails={modalBranch === "new" ? can("branch.create") : can("branch.edit")}
+              canEditCarrierAccounts={can("branch.carrier_accounts")}
               onSubmit={handleSubmit}
               onCancel={() => setModalBranch(null)}
             />

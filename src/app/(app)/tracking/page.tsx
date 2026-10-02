@@ -15,6 +15,7 @@ import {
   Truck,
 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
+import { useAccess } from "@/components/auth/AccessProvider";
 import { listAgentAccounts, type AgentAccount } from "@/lib/agentAccounts";
 import { trackDhlShipment } from "@/lib/dhlTracking";
 import { trackUpsShipment, type UpsTrackingAccount, type UpsTrackingActivity, type UpsTrackingPackage } from "@/lib/upsTracking";
@@ -95,7 +96,7 @@ function getActivityTone(activity: UpsTrackingActivity): Tone {
   return TONES[classifyText(activity.description)];
 }
 
-function PackageCard({ pkg }: { pkg: UpsTrackingPackage }) {
+function PackageCard({ pkg, canPod }: { pkg: UpsTrackingPackage; canPod: boolean }) {
   const tone = getPackageTone(pkg);
   const StatusIcon = tone.icon;
 
@@ -123,7 +124,7 @@ function PackageCard({ pkg }: { pkg: UpsTrackingPackage }) {
           </p>
         )}
 
-        {(pkg.podImageBase64 || pkg.signatureImageBase64) && (
+        {canPod && (pkg.podImageBase64 || pkg.signatureImageBase64) && (
           <div className="mb-3 flex flex-wrap gap-3 rounded-lg bg-emerald-50/60 p-3">
             {pkg.podImageBase64 && (
               <div className="flex items-center gap-2 text-xs text-emerald-700">
@@ -186,6 +187,8 @@ function PackageCard({ pkg }: { pkg: UpsTrackingPackage }) {
 }
 
 export default function TrackingPage() {
+  const { can } = useAccess();
+  const canPod = can("tracking.pod");
   const [carrier, setCarrier] = useState<Carrier>("ups");
   const [mode, setMode] = useState<SearchMode>("inquiry");
   const [number, setNumber] = useState("");
@@ -237,8 +240,8 @@ export default function TrackingPage() {
               mode,
               number: number.trim(),
               agentAccountId: agentAccountId === "" ? undefined : agentAccountId,
-              returnPod,
-              returnSignature,
+              returnPod: canPod && returnPod,
+              returnSignature: canPod && returnSignature,
               offset: mode === "inquiry" && offset ? Number(offset) : undefined,
               count: mode === "inquiry" && count ? Number(count) : undefined,
               fromPickupDate: mode === "reference" && fromPickupDate ? fromPickupDate : undefined,
@@ -377,18 +380,22 @@ export default function TrackingPage() {
 
         {carrier === "ups" && showAdvanced && (
           <div className="mt-3 flex flex-wrap items-end gap-3 rounded-lg border-t border-slate-100 bg-slate-50/60 p-3">
-            <label className="flex items-center gap-2 text-sm text-slate-600">
-              <input type="checkbox" checked={returnPod} onChange={(e) => setReturnPod(e.target.checked)} />
-              Return Proof of Delivery
-            </label>
-            <label className="flex items-center gap-2 text-sm text-slate-600">
-              <input
-                type="checkbox"
-                checked={returnSignature}
-                onChange={(e) => setReturnSignature(e.target.checked)}
-              />
-              Return Signature
-            </label>
+            {canPod && (
+              <>
+                <label className="flex items-center gap-2 text-sm text-slate-600">
+                  <input type="checkbox" checked={returnPod} onChange={(e) => setReturnPod(e.target.checked)} />
+                  Return Proof of Delivery
+                </label>
+                <label className="flex items-center gap-2 text-sm text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={returnSignature}
+                    onChange={(e) => setReturnSignature(e.target.checked)}
+                  />
+                  Return Signature
+                </label>
+              </>
+            )}
 
             {mode === "inquiry" ? (
               <>
@@ -458,7 +465,7 @@ export default function TrackingPage() {
       {packages && packages.length > 0 && (
         <div className="space-y-4">
           {packages.map((pkg, i) => (
-            <PackageCard key={pkg.trackingNumber ?? i} pkg={pkg} />
+            <PackageCard key={pkg.trackingNumber ?? i} pkg={pkg} canPod={canPod} />
           ))}
         </div>
       )}

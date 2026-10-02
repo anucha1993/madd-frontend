@@ -277,29 +277,29 @@ export default function PickupListPage() {
                             {confirmingId === p.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
                           </button>
                         )}
+                        {p.status === "requested" && p.carrier_reference && can("pickup.reschedule") && (
+                          <button
+                            type="button"
+                            onClick={() => handleReschedule(p)}
+                            disabled={cancellingId === p.id}
+                            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                            aria-label="Reschedule Pickup"
+                            title="ยกเลิกแล้วนัดหมายใหม่ (เปลี่ยนวัน/เวลา/ที่อยู่)"
+                          >
+                            {cancellingId === p.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                          </button>
+                        )}
                         {p.status === "requested" && p.carrier_reference && can("pickup.cancel") && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => handleReschedule(p)}
-                              disabled={cancellingId === p.id}
-                              className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
-                              aria-label="Reschedule Pickup"
-                              title="ยกเลิกแล้วนัดหมายใหม่ (เปลี่ยนวัน/เวลา/ที่อยู่)"
-                            >
-                              {cancellingId === p.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleCancel(p)}
-                              disabled={cancellingId === p.id}
-                              className="rounded-lg p-1.5 text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
-                              aria-label="Cancel Pickup"
-                              title="ยกเลิก Pickup"
-                            >
-                              {cancellingId === p.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
-                            </button>
-                          </>
+                          <button
+                            type="button"
+                            onClick={() => handleCancel(p)}
+                            disabled={cancellingId === p.id}
+                            className="rounded-lg p-1.5 text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            aria-label="Cancel Pickup"
+                            title="ยกเลิก Pickup"
+                          >
+                            {cancellingId === p.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+                          </button>
                         )}
                       </div>
                     </td>

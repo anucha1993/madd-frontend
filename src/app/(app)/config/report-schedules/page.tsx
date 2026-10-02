@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { CalendarClock, Loader2, Pencil, Plus, Send, Trash2 } from "lucide-react";
+import { useAccess } from "@/components/auth/AccessProvider";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import PageLoading from "@/components/ui/PageLoading";
@@ -29,6 +30,7 @@ function scheduleSummary(s: ReportSchedule): string {
 }
 
 export default function ReportSchedulesPage() {
+  const { can } = useAccess();
   const [schedules, setSchedules] = useState<ReportSchedule[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [agentAccounts, setAgentAccounts] = useState<AgentAccount[]>([]);
@@ -172,15 +174,17 @@ export default function ReportSchedulesPage() {
                   </td>
                   <td className="px-5 py-3">
                     <div className="flex justify-end gap-1">
-                      <button
-                        type="button"
-                        onClick={() => handleSendNow(schedule)}
-                        disabled={sendingId === schedule.id}
-                        title="Send now"
-                        className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 disabled:opacity-60"
-                      >
-                        {sendingId === schedule.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                      </button>
+                      {can("config.report_schedules_send") && (
+                        <button
+                          type="button"
+                          onClick={() => handleSendNow(schedule)}
+                          disabled={sendingId === schedule.id}
+                          title="Send now"
+                          className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 disabled:opacity-60"
+                        >
+                          {sendingId === schedule.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => setModalSchedule(schedule)}

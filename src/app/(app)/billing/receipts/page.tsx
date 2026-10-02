@@ -634,7 +634,7 @@ export default function ReceiptsListPage() {
 
       {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
-      {receipts.length > 0 && (
+      {receipts.length > 0 && can("receipt.print") && (
         <div className="mb-3 flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-2">
           <span className="text-sm text-slate-500">
             {selectedKeys.size > 0 ? `${selectedKeys.size} selected` : "Select documents to Mass Print"}
@@ -674,15 +674,17 @@ export default function ReceiptsListPage() {
           <table className="w-full text-left text-sm">
             <thead className="bg-gradient-to-r from-brand-navy-dark to-brand-navy text-xs uppercase tracking-wide text-white/90">
               <tr>
-                <th className="w-10 px-5 py-3">
-                  <input
-                    type="checkbox"
-                    checked={groupedRows.length > 0 && selectedKeys.size === groupedRows.length}
-                    onChange={toggleSelectAll}
-                    className="h-4 w-4 rounded border-white/40"
-                    aria-label="Select all"
-                  />
-                </th>
+                {can("receipt.print") && (
+                  <th className="w-10 px-5 py-3">
+                    <input
+                      type="checkbox"
+                      checked={groupedRows.length > 0 && selectedKeys.size === groupedRows.length}
+                      onChange={toggleSelectAll}
+                      className="h-4 w-4 rounded border-white/40"
+                      aria-label="Select all"
+                    />
+                  </th>
+                )}
                 {columnsMgr.columnSlots.map((slot) => (
                   <th
                     key={slot.map((c) => c.id).join("+")}
@@ -699,15 +701,17 @@ export default function ReceiptsListPage() {
                 const rep = (row.cashReceipt ?? row.taxInvoice)!;
                 return (
                   <tr key={row.key} className="border-b border-slate-100 align-middle last:border-0 hover:bg-slate-50/70">
-                    <td className="px-5 py-4 align-middle">
-                      <input
-                        type="checkbox"
-                        checked={selectedKeys.has(row.key)}
-                        onChange={() => toggleRowSelected(row.key)}
-                        className="h-4 w-4 rounded border-slate-300"
-                        aria-label="Select row"
-                      />
-                    </td>
+                    {can("receipt.print") && (
+                      <td className="px-5 py-4 align-middle">
+                        <input
+                          type="checkbox"
+                          checked={selectedKeys.has(row.key)}
+                          onChange={() => toggleRowSelected(row.key)}
+                          className="h-4 w-4 rounded border-slate-300"
+                          aria-label="Select row"
+                        />
+                      </td>
+                    )}
                     {columnsMgr.columnSlots.map((slot) => (
                       <td
                         key={slot.map((c) => c.id).join("+")}
@@ -755,17 +759,19 @@ export default function ReceiptsListPage() {
                                   <FileText className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                                   View/Edit
                                 </Link>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    openReceiptPdf(row.cashReceipt!.id);
-                                    setActionsMenuKey(null);
-                                  }}
-                                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
-                                >
-                                  <Printer className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                                  Print PDF
-                                </button>
+                                {can("receipt.print") && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      openReceiptPdf(row.cashReceipt!.id);
+                                      setActionsMenuKey(null);
+                                    }}
+                                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                                  >
+                                    <Printer className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                                    Print PDF
+                                  </button>
+                                )}
                               </>
                             )}
                             {row.taxInvoice && (
@@ -781,17 +787,19 @@ export default function ReceiptsListPage() {
                                   <FileCheck className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                                   View/Edit
                                 </Link>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    openReceiptPdf(row.taxInvoice!.id);
-                                    setActionsMenuKey(null);
-                                  }}
-                                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
-                                >
-                                  <Printer className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                                  Print PDF
-                                </button>
+                                {can("receipt.print") && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      openReceiptPdf(row.taxInvoice!.id);
+                                      setActionsMenuKey(null);
+                                    }}
+                                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                                  >
+                                    <Printer className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                                    Print PDF
+                                  </button>
+                                )}
                               </>
                             )}
                             {can("receipt.timeline") && (

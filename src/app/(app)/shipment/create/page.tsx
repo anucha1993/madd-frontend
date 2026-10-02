@@ -921,6 +921,7 @@ export default function ShipmentCreatePage() {
   }
 
   useEffect(() => {
+    if (!can("shipment.draft")) return;
     const draftParam = searchParams.get("draft");
     if (!draftParam) return;
     const id = Number(draftParam);
@@ -2285,29 +2286,31 @@ export default function ShipmentCreatePage() {
     <div>
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <PageHeader title="Create Shipment / Check Rate" description="Origin: Thailand — Destination: international only" />
-        <div className="flex flex-col items-end gap-1">
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={draftName}
-              onChange={(e) => setDraftName(e.target.value)}
-              placeholder="ชื่อฉบับร่าง (optional)"
-              className="w-48 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
-            />
-            <button
-              type="button"
-              onClick={handleSaveDraft}
-              disabled={savingDraft || loadingDraft}
-              className="flex items-center gap-2 whitespace-nowrap rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-600 shadow-sm hover:bg-slate-50 disabled:opacity-60"
-            >
-              {savingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {draftId ? "บันทึกฉบับร่าง (อัปเดต)" : "บันทึกฉบับร่าง"}
-            </button>
+        {can("shipment.draft") && (
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={draftName}
+                onChange={(e) => setDraftName(e.target.value)}
+                placeholder="ชื่อฉบับร่าง (optional)"
+                className="w-48 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
+              />
+              <button
+                type="button"
+                onClick={handleSaveDraft}
+                disabled={savingDraft || loadingDraft}
+                className="flex items-center gap-2 whitespace-nowrap rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-600 shadow-sm hover:bg-slate-50 disabled:opacity-60"
+              >
+                {savingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {draftId ? "บันทึกฉบับร่าง (อัปเดต)" : "บันทึกฉบับร่าง"}
+              </button>
+            </div>
+            {loadingDraft && <span className="text-xs text-slate-400">Loading draft...</span>}
+            {draftMessage && <span className="text-xs font-medium text-emerald-600">{draftMessage}</span>}
+            {draftError && <span className="text-xs font-medium text-red-600">{draftError}</span>}
           </div>
-          {loadingDraft && <span className="text-xs text-slate-400">Loading draft...</span>}
-          {draftMessage && <span className="text-xs font-medium text-emerald-600">{draftMessage}</span>}
-          {draftError && <span className="text-xs font-medium text-red-600">{draftError}</span>}
-        </div>
+        )}
       </div>
 
       <div className="mb-4 flex items-center gap-2">
@@ -4453,7 +4456,7 @@ export default function ShipmentCreatePage() {
                   ];
 
                   const documents: { label: string; icon: typeof FileText; onOpen: () => void; loading: boolean }[] = [
-                    ...(hasLabel && can("shipment.label")
+                    ...(hasLabel && can(isMultiPiece ? "shipment.label_all" : "shipment.label")
                       ? [
                           isMultiPiece
                             ? { label: `Shipping Label (รวม ${pieces.length} กล่อง)`, icon: Package, onOpen: handleOpenAllLabels, loading: openingAllLabels }
@@ -4463,7 +4466,7 @@ export default function ShipmentCreatePage() {
                     ...(hasWaybill && can("shipment.waybill")
                       ? [{ label: "Waybill (Shipper's Copy)", icon: FileText, onOpen: handleOpenWaybill, loading: openingWaybill }]
                       : []),
-                    ...(bookedShipment.carrier === "DHL" && bookedShipment.waybill_storage_key && can("shipment.waybill")
+                    ...(bookedShipment.carrier === "DHL" && bookedShipment.waybill_storage_key && can("shipment.waybill_original")
                       ? [
                           {
                             label: "DHL original waybill (ดาวน์โหลด)",
@@ -4596,18 +4599,20 @@ export default function ShipmentCreatePage() {
                 </div>
 
                 <div className="grid grid-cols-2 gap-2.5">
-                  <button
-                    type="button"
-                    onClick={() => router.push("/billing/receipts/new")}
-                    className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-                  >
-                    <Printer className="h-4 w-4" />
-                    ออกใบเสร็จ / ใบกำกับภาษี
-                  </button>
+                  {can("shipment.issue_receipt") && can("receipt.create") && (
+                    <button
+                      type="button"
+                      onClick={() => router.push("/billing/receipts/new")}
+                      className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                    >
+                      <Printer className="h-4 w-4" />
+                      ออกใบเสร็จ / ใบกำกับภาษี
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setViewBookedRaw(true)}
-                    className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                    className={`flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50${can("shipment.issue_receipt") && can("receipt.create") ? "" : " col-span-2"}`}
                   >
                     <Code className="h-4 w-4" />
                     ดู Raw Response (หลักฐาน)

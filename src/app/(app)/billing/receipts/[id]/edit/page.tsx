@@ -323,25 +323,29 @@ export default function EditReceiptPage() {
             </p>
           </Card>
 
-          <Card title="Actions">
-            <button
-              type="button"
-              onClick={() => openReceiptPdf(receipt.id)}
-              className="w-full rounded-lg bg-brand-navy-dark/10 px-3 py-2 text-sm font-medium text-brand-navy-dark hover:bg-brand-navy-dark/20"
-            >
-              Print / Open PDF
-            </button>
-            {receipt.is_test && (
-              <button
-                type="button"
-                onClick={handleDelete}
-                disabled={deleting}
-                className="mt-2 w-full rounded-lg bg-purple-50 px-3 py-2 text-sm font-medium text-purple-600 hover:bg-purple-100 disabled:opacity-50"
-              >
-                {deleting ? "Deleting..." : "Delete TEST Document"}
-              </button>
-            )}
-          </Card>
+          {(can("receipt.print") || (receipt.is_test && can("receipt.delete"))) && (
+            <Card title="Actions">
+              {can("receipt.print") && (
+                <button
+                  type="button"
+                  onClick={() => openReceiptPdf(receipt.id)}
+                  className="w-full rounded-lg bg-brand-navy-dark/10 px-3 py-2 text-sm font-medium text-brand-navy-dark hover:bg-brand-navy-dark/20"
+                >
+                  Print / Open PDF
+                </button>
+              )}
+              {receipt.is_test && can("receipt.delete") && (
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className={`${can("receipt.print") ? "mt-2 " : ""}w-full rounded-lg bg-purple-50 px-3 py-2 text-sm font-medium text-purple-600 hover:bg-purple-100 disabled:opacity-50`}
+                >
+                  {deleting ? "Deleting..." : "Delete TEST Document"}
+                </button>
+              )}
+            </Card>
+          )}
         </div>
 
         <div className="flex flex-col gap-3 lg:order-1">

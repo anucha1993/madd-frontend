@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { BarChart3, Download, FlaskConical, KeyRound, Pencil, Plus, Puzzle, RefreshCw, Trash2 } from "lucide-react";
+import { useAccess } from "@/components/auth/AccessProvider";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import PageLoading from "@/components/ui/PageLoading";
@@ -54,6 +55,7 @@ const EMPTY: ApiClientInput = {
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
 
 export default function ApiClientsPage() {
+  const { can } = useAccess();
   const [clients, setClients] = useState<ApiClientRecord[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
@@ -191,15 +193,19 @@ export default function ApiClientsPage() {
                   </td>
                   <td className="px-4 py-2.5">
                     <div className="flex justify-end gap-1">
-                      <button type="button" onClick={() => setTesting(c)} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100" title="ทดสอบเช็คราคา">
-                        <FlaskConical className="h-4 w-4" />
-                      </button>
+                      {can("config.api_clients_test") && (
+                        <button type="button" onClick={() => setTesting(c)} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100" title="ทดสอบเช็คราคา">
+                          <FlaskConical className="h-4 w-4" />
+                        </button>
+                      )}
                       <button type="button" onClick={() => setEditing(c)} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100" title="แก้ไข">
                         <Pencil className="h-4 w-4" />
                       </button>
-                      <button type="button" onClick={() => handleRegenerate(c)} className="rounded-lg p-1.5 text-amber-600 hover:bg-amber-50" title="สร้าง Key ใหม่">
-                        <RefreshCw className="h-4 w-4" />
-                      </button>
+                      {can("config.api_clients_regenerate") && (
+                        <button type="button" onClick={() => handleRegenerate(c)} className="rounded-lg p-1.5 text-amber-600 hover:bg-amber-50" title="สร้าง Key ใหม่">
+                          <RefreshCw className="h-4 w-4" />
+                        </button>
+                      )}
                       <button type="button" onClick={() => handleDelete(c)} className="rounded-lg p-1.5 text-red-500 hover:bg-red-50" title="ลบ">
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -212,7 +218,7 @@ export default function ApiClientsPage() {
         </div>
       )}
 
-      <WordPressPlugins />
+      {can("config.wordpress_plugin") && <WordPressPlugins />}
 
       <RequestLogs clients={clients} reloadKey={reload} />
 

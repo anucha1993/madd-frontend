@@ -242,28 +242,28 @@ export default function SupplyStockPage() {
                       <td className="px-4 py-2.5">
                         <div className="flex justify-end gap-1.5">
                           {can("supply_stock.receive") && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setAction({ mode: "receive", supply, cell })
-                                }
-                                className="flex items-center gap-1 rounded-lg border border-emerald-300 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
-                              >
-                                <PackagePlus className="h-3.5 w-3.5" />
-                                รับเข้า
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setAction({ mode: "adjust", supply, cell })
-                                }
-                                className="flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                              >
-                                <ClipboardCheck className="h-3.5 w-3.5" />
-                                ปรับยอด
-                              </button>
-                            </>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setAction({ mode: "receive", supply, cell })
+                              }
+                              className="flex items-center gap-1 rounded-lg border border-emerald-300 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
+                            >
+                              <PackagePlus className="h-3.5 w-3.5" />
+                              รับเข้า
+                            </button>
+                          )}
+                          {can("supply_stock.adjust") && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setAction({ mode: "adjust", supply, cell })
+                              }
+                              className="flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                            >
+                              <ClipboardCheck className="h-3.5 w-3.5" />
+                              ปรับยอด
+                            </button>
                           )}
                           {can("supply_stock.settings") && (
                             <button
@@ -750,6 +750,7 @@ function MovementsTab({
 }
 
 function ReportTab({ branches }: { branches: StockBranch[] }) {
+  const { can } = useAccess();
   const [filters, setFilters] = useState({
     date_from: monthStart(),
     date_to: today(),
@@ -854,24 +855,26 @@ function ReportTab({ branches }: { branches: StockBranch[] }) {
           <Search className="h-4 w-4" />
           ดูรายงาน
         </button>
-        <button
-          type="button"
-          disabled={exporting}
-          onClick={async () => {
-            setExporting(true);
-            try {
-              await downloadStockReport(applied);
-            } catch (err) {
-              setError(errorText(err));
-            } finally {
-              setExporting(false);
-            }
-          }}
-          className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-        >
-          <Download className="h-4 w-4" />
-          Export Excel
-        </button>
+        {can("supply_stock.export") && (
+          <button
+            type="button"
+            disabled={exporting}
+            onClick={async () => {
+              setExporting(true);
+              try {
+                await downloadStockReport(applied);
+              } catch (err) {
+                setError(errorText(err));
+              } finally {
+                setExporting(false);
+              }
+            }}
+            className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            <Download className="h-4 w-4" />
+            Export Excel
+          </button>
+        )}
       </form>
 
       {error && (

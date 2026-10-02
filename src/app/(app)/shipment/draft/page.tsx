@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { FilePenLine, Loader2, Trash2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
+import { useAccess } from "@/components/auth/AccessProvider";
 import { listShipmentDrafts, deleteShipmentDraft, type ShipmentDraft } from "@/lib/shipmentDrafts";
 
 // Best-effort summary line pulled straight out of the draft's raw form_state (see
@@ -17,6 +18,7 @@ function draftSummary(draft: ShipmentDraft): string {
 }
 
 export default function ShipmentDraftListPage() {
+  const { can } = useAccess();
   const [drafts, setDrafts] = useState<ShipmentDraft[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -91,24 +93,28 @@ export default function ShipmentDraftListPage() {
                   <td className="px-5 py-3 text-slate-500">{new Date(d.updated_at).toLocaleString()}</td>
                   <td className="px-5 py-3">
                     <div className="flex items-center justify-end gap-1.5">
-                      <Link
-                        href={`/shipment/create?draft=${d.id}`}
-                        className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-brand-navy hover:bg-slate-100"
-                        title="แก้ไขฉบับร่าง"
-                      >
-                        <FilePenLine className="h-4 w-4" />
-                        แก้ไข
-                      </Link>
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(d)}
-                        disabled={deletingId === d.id}
-                        className="rounded-lg p-1.5 text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
-                        aria-label="Delete draft"
-                        title="ลบฉบับร่าง"
-                      >
-                        {deletingId === d.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                      </button>
+                      {can("shipment.create") && (
+                        <Link
+                          href={`/shipment/create?draft=${d.id}`}
+                          className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-brand-navy hover:bg-slate-100"
+                          title="แก้ไขฉบับร่าง"
+                        >
+                          <FilePenLine className="h-4 w-4" />
+                          แก้ไข
+                        </Link>
+                      )}
+                      {can("shipment.draft") && (
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(d)}
+                          disabled={deletingId === d.id}
+                          className="rounded-lg p-1.5 text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                          aria-label="Delete draft"
+                          title="ลบฉบับร่าง"
+                        >
+                          {deletingId === d.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

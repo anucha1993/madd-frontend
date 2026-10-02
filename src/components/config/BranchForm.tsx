@@ -12,9 +12,21 @@ type Props = {
   initialCarrierAccounts: BranchCarrierAccount[];
   onSubmit: (data: BranchInput, carrierAccounts: BranchCarrierAccountInput[]) => Promise<void>;
   onCancel: () => void;
+  /** false → branch detail fields are read-only (user may only manage carrier accounts). */
+  canEditDetails?: boolean;
+  /** false → the UPS/DHL carrier-accounts picker is hidden (branch.carrier_accounts). */
+  canEditCarrierAccounts?: boolean;
 };
 
-export default function BranchForm({ initial, agentAccounts, initialCarrierAccounts, onSubmit, onCancel }: Props) {
+export default function BranchForm({
+  initial,
+  agentAccounts,
+  initialCarrierAccounts,
+  onSubmit,
+  onCancel,
+  canEditDetails = true,
+  canEditCarrierAccounts = true,
+}: Props) {
   const [name, setName] = useState(initial?.name ?? "");
   const [companyName, setCompanyName] = useState(initial?.company_name ?? "");
   const [code, setCode] = useState(initial?.code ?? "");
@@ -82,84 +94,88 @@ export default function BranchForm({ initial, agentAccounts, initialCarrierAccou
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <label className="flex flex-col gap-1.5">
-        <span className={labelClass}>ชื่อบริษัท</span>
-        <input
-          type="text"
-          value={companyName}
-          onChange={(e) => setCompanyName(e.target.value)}
-          className={inputClass}
-        />
-      </label>
-
-      <div className="grid grid-cols-2 gap-4">
+      <fieldset disabled={!canEditDetails} className="flex flex-col gap-4 disabled:opacity-60">
         <label className="flex flex-col gap-1.5">
-          <span className={labelClass}>ชื่อสาขา</span>
-          <input type="text" value={name} onChange={(e) => setName(e.target.value)} className={inputClass} />
-        </label>
-        <label className="flex flex-col gap-1.5">
-          <span className={labelClass}>รหัสสาขา</span>
+          <span className={labelClass}>ชื่อบริษัท</span>
           <input
             type="text"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            placeholder="เช่น SILOM"
+            value={companyName}
+            onChange={(e) => setCompanyName(e.target.value)}
             className={inputClass}
           />
         </label>
-      </div>
 
-      <label className="flex flex-col gap-1.5">
-        <span className={labelClass}>เลขประจำตัวผู้เสียภาษี (Tax ID)</span>
-        <input type="text" value={taxId} onChange={(e) => setTaxId(e.target.value)} className={inputClass} />
-      </label>
-
-      <label className="flex flex-col gap-1.5">
-        <span className={labelClass}>ที่อยู่</span>
-        <textarea
-          value={address}
-          onChange={(e) => setAddress(e.target.value)}
-          rows={3}
-          className={`${inputClass} resize-y`}
-        />
-      </label>
-
-      <label className="flex flex-col gap-1.5">
-        <span className={labelClass}>เบอร์โทร</span>
-        <input type="text" value={phone} onChange={(e) => setPhone(e.target.value)} className={inputClass} />
-      </label>
-
-      <label className="flex flex-col gap-1.5">
-        <span className={labelClass}>โทรสาร (Fax)</span>
-        <input type="text" value={fax} onChange={(e) => setFax(e.target.value)} className={inputClass} />
-      </label>
-
-      <label className="flex items-center gap-2 text-sm text-slate-600">
-        <input
-          type="checkbox"
-          checked={isHeadOffice}
-          onChange={(e) => setIsHeadOffice(e.target.checked)}
-          className="h-4 w-4 rounded border-slate-300 accent-brand-amber"
-        />
-        เป็นสำนักงานใหญ่ (แสดงเป็นที่อยู่หลักบนใบเสร็จ/ใบกำกับภาษีทุกฉบับ)
-      </label>
-
-      <label className="flex items-center gap-2 text-sm text-slate-600">
-        <input
-          type="checkbox"
-          checked={status}
-          onChange={(e) => setStatus(e.target.checked)}
-          className="h-4 w-4 rounded border-slate-300 accent-brand-amber"
-        />
-        เปิดใช้งานสาขานี้
-      </label>
-
-      <div className="border-t border-slate-100 pt-4">
-        <span className="text-sm font-medium text-slate-600">บัญชี Agent (UPS/DHL)</span>
-        <div className="mt-2">
-          <BranchCarrierAccountsFields agentAccounts={agentAccounts} value={carrierAccounts} onChange={setCarrierAccounts} />
+        <div className="grid grid-cols-2 gap-4">
+          <label className="flex flex-col gap-1.5">
+            <span className={labelClass}>ชื่อสาขา</span>
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)} className={inputClass} />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className={labelClass}>รหัสสาขา</span>
+            <input
+              type="text"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="เช่น SILOM"
+              className={inputClass}
+            />
+          </label>
         </div>
-      </div>
+
+        <label className="flex flex-col gap-1.5">
+          <span className={labelClass}>เลขประจำตัวผู้เสียภาษี (Tax ID)</span>
+          <input type="text" value={taxId} onChange={(e) => setTaxId(e.target.value)} className={inputClass} />
+        </label>
+
+        <label className="flex flex-col gap-1.5">
+          <span className={labelClass}>ที่อยู่</span>
+          <textarea
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            rows={3}
+            className={`${inputClass} resize-y`}
+          />
+        </label>
+
+        <label className="flex flex-col gap-1.5">
+          <span className={labelClass}>เบอร์โทร</span>
+          <input type="text" value={phone} onChange={(e) => setPhone(e.target.value)} className={inputClass} />
+        </label>
+
+        <label className="flex flex-col gap-1.5">
+          <span className={labelClass}>โทรสาร (Fax)</span>
+          <input type="text" value={fax} onChange={(e) => setFax(e.target.value)} className={inputClass} />
+        </label>
+
+        <label className="flex items-center gap-2 text-sm text-slate-600">
+          <input
+            type="checkbox"
+            checked={isHeadOffice}
+            onChange={(e) => setIsHeadOffice(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300 accent-brand-amber"
+          />
+          เป็นสำนักงานใหญ่ (แสดงเป็นที่อยู่หลักบนใบเสร็จ/ใบกำกับภาษีทุกฉบับ)
+        </label>
+
+        <label className="flex items-center gap-2 text-sm text-slate-600">
+          <input
+            type="checkbox"
+            checked={status}
+            onChange={(e) => setStatus(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300 accent-brand-amber"
+          />
+          เปิดใช้งานสาขานี้
+        </label>
+      </fieldset>
+
+      {canEditCarrierAccounts && (
+        <div className="border-t border-slate-100 pt-4">
+          <span className="text-sm font-medium text-slate-600">บัญชี Agent (UPS/DHL)</span>
+          <div className="mt-2">
+            <BranchCarrierAccountsFields agentAccounts={agentAccounts} value={carrierAccounts} onChange={setCarrierAccounts} />
+          </div>
+        </div>
+      )}
 
       {error && (
         <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600" role="alert">

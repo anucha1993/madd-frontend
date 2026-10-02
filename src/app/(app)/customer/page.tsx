@@ -122,14 +122,21 @@ export default function CustomerPage() {
                   <td className="px-5 py-3 text-slate-500">{customer.phone || "-"}</td>
                   <td className="px-5 py-3 text-slate-500">{customer.email || "-"}</td>
                   <td className="px-5 py-3">
-                    <button
-                      type="button"
-                      onClick={() => setModalCustomer(customer)}
-                      className="flex items-center gap-1 rounded-full bg-brand-navy/5 px-2.5 py-0.5 text-xs font-medium text-brand-navy-dark hover:bg-brand-navy/10"
-                    >
-                      <MapPin className="h-3 w-3" />
-                      {customer.addresses_count ?? 0} ที่อยู่
-                    </button>
+                    {can("customer.edit") ? (
+                      <button
+                        type="button"
+                        onClick={() => setModalCustomer(customer)}
+                        className="flex items-center gap-1 rounded-full bg-brand-navy/5 px-2.5 py-0.5 text-xs font-medium text-brand-navy-dark hover:bg-brand-navy/10"
+                      >
+                        <MapPin className="h-3 w-3" />
+                        {customer.addresses_count ?? 0} ที่อยู่
+                      </button>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-brand-navy/5 px-2.5 py-0.5 text-xs font-medium text-brand-navy-dark">
+                        <MapPin className="h-3 w-3" />
+                        {customer.addresses_count ?? 0} ที่อยู่
+                      </span>
+                    )}
                   </td>
                   <td className="px-5 py-3 text-right">
                     {can("customer.edit") && (

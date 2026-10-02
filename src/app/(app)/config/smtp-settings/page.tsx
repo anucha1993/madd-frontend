@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Loader2, Mail, Save, Send } from "lucide-react";
+import { useAccess } from "@/components/auth/AccessProvider";
 import PageHeader from "@/components/layout/PageHeader";
 import PageLoading from "@/components/ui/PageLoading";
 import { getSmtpSettings, updateSmtpSettings, testSmtpSettings, type SmtpSettings } from "@/lib/smtpSettings";
@@ -11,6 +12,7 @@ const inputClass =
 const labelClass = "text-sm font-medium text-slate-600";
 
 export default function SmtpSettingsPage() {
+  const { can } = useAccess();
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState<SmtpSettings | null>(null);
 
@@ -140,31 +142,33 @@ export default function SmtpSettingsPage() {
         </div>
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="mb-4 text-sm font-semibold text-slate-700">Send Test Email</h2>
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="flex flex-col gap-1.5">
-            <span className={labelClass}>Send To</span>
-            <input
-              type="email"
-              value={testTo}
-              onChange={(e) => setTestTo(e.target.value)}
-              placeholder="you@example.com"
-              className={`${inputClass} w-64`}
-            />
-          </label>
-          <button
-            type="button"
-            onClick={handleTest}
-            disabled={testing || !testTo.trim()}
-            className="flex items-center gap-2 rounded-lg border border-brand-navy-dark px-4 py-2 text-sm font-semibold text-brand-navy-dark hover:bg-brand-navy-dark/5 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            Send Test
-          </button>
+      {can("config.smtp_test") && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-sm font-semibold text-slate-700">Send Test Email</h2>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1.5">
+              <span className={labelClass}>Send To</span>
+              <input
+                type="email"
+                value={testTo}
+                onChange={(e) => setTestTo(e.target.value)}
+                placeholder="you@example.com"
+                className={`${inputClass} w-64`}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={handleTest}
+              disabled={testing || !testTo.trim()}
+              className="flex items-center gap-2 rounded-lg border border-brand-navy-dark px-4 py-2 text-sm font-semibold text-brand-navy-dark hover:bg-brand-navy-dark/5 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              Send Test
+            </button>
+          </div>
+          {testMessage && <p className="mt-3 text-sm text-slate-500">{testMessage}</p>}
         </div>
-        {testMessage && <p className="mt-3 text-sm text-slate-500">{testMessage}</p>}
-      </div>
+      )}
     </div>
   );
 }
