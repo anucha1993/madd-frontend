@@ -563,6 +563,24 @@ async function openShipmentDocument(path: string, title: string, notFoundMessage
 export const openShipmentWaybill = (shipmentId: number) =>
   openShipmentDocument(`/shipments/${shipmentId}/waybill`, "UPS Waybill", "เปิด Waybill ไม่สำเร็จ");
 
+// DHL's own Waybill Doc exactly as returned at booking (no MADD payment block) — downloaded as a
+// file rather than opened, since it's what DHL / customs ask to be sent.
+export async function downloadDhlOriginalWaybill(shipment: Pick<Shipment, "id" | "tracking_number">) {
+  const token = getToken();
+  const res = await fetch(`${API_URL}/shipments/${shipment.id}/waybill/original`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error("ดาวน์โหลด Waybill ต้นฉบับจาก DHL ไม่สำเร็จ");
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `DHL-waybill-${shipment.tracking_number ?? shipment.id}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export const openShipmentCommercialInvoice = (shipmentId: number) =>
   openShipmentDocument(`/shipments/${shipmentId}/commercial-invoice`, "Commercial Invoice", "เปิด Commercial Invoice ไม่สำเร็จ");
 

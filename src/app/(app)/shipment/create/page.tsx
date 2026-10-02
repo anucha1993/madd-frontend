@@ -23,7 +23,7 @@ import { checkRate, type CheckRateInput, type RateChargeLine, type RateQuote, ty
 import { lookupInsuranceCountryCap, type InsuranceCountryCap } from "@/lib/insuranceCountryCaps";
 import { validateAddress, type AddressValidationResult } from "@/lib/addressValidation";
 import { ApiError } from "@/lib/apiClient";
-import { bookShipment, describeShipmentPieces, openShipmentCommercialInvoice, openShipmentLabel, openShipmentWaybill, printAllShipmentLabels, uploadCommercialInvoiceFile, type BookShipmentInput, type Shipment } from "@/lib/shipments";
+import { bookShipment, describeShipmentPieces, downloadDhlOriginalWaybill, openShipmentCommercialInvoice, openShipmentLabel, openShipmentWaybill, printAllShipmentLabels, uploadCommercialInvoiceFile, type BookShipmentInput, type Shipment } from "@/lib/shipments";
 import { getShipmentDraft, createShipmentDraft, updateShipmentDraft, deleteShipmentDraft } from "@/lib/shipmentDrafts";
 import { getUser } from "@/lib/auth";
 import {
@@ -4462,6 +4462,18 @@ export default function ShipmentCreatePage() {
                       : []),
                     ...(hasWaybill
                       ? [{ label: "Waybill (Shipper's Copy)", icon: FileText, onOpen: handleOpenWaybill, loading: openingWaybill }]
+                      : []),
+                    ...(bookedShipment.carrier === "DHL" && bookedShipment.waybill_storage_key
+                      ? [
+                          {
+                            label: "DHL original waybill (ดาวน์โหลด)",
+                            icon: FileText,
+                            onOpen: () => {
+                              downloadDhlOriginalWaybill(bookedShipment).catch((err) => alert(err instanceof Error ? err.message : "ดาวน์โหลดไม่สำเร็จ"));
+                            },
+                            loading: false,
+                          },
+                        ]
                       : []),
                     ...(hasInvoice
                       ? [{ label: "Commercial Invoice", icon: Receipt, onOpen: handleOpenCommercialInvoice, loading: openingInvoice }]

@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  Download,
   FileText,
   Printer,
   Search,
@@ -49,6 +50,7 @@ import {
   printAllShipmentLabels,
   describeShipmentPieces,
   openShipmentWaybill,
+  downloadDhlOriginalWaybill,
   openShipmentCommercialInvoice,
   unvoidShipment,
   confirmCarrierCancel,
@@ -1162,6 +1164,19 @@ export default function ShipmentListPage() {
                             )}
                             {s.label_storage_key ? "Open Waybill (Shipper's Copy)" : "No Waybill available"}
                           </button>
+                          {s.carrier === "DHL" && s.waybill_storage_key && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActionsMenuId(null);
+                                downloadDhlOriginalWaybill(s).catch((err) => alert(err instanceof Error ? err.message : "ดาวน์โหลดไม่สำเร็จ"));
+                              }}
+                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                            >
+                              <Download className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                              Download DHL original waybill
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => {

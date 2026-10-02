@@ -5,12 +5,13 @@ import { useParams, useRouter } from "next/navigation";
 import { useAccess } from "@/components/auth/AccessProvider";
 import VoidShipmentModal, { CopyButton, dhlCancelMessage } from "@/components/shipment/VoidShipmentModal";
 import Timeline from "@/components/timeline/Timeline";
-import { ArrowLeft, ArrowRight, Loader2, Package, Printer, Receipt, FileCheck, XCircle, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Download, Loader2, Package, Printer, Receipt, FileCheck, XCircle, Trash2 } from "lucide-react";
 import {
   getShipment,
   openShipmentLabel,
   describeShipmentPieces,
   openShipmentWaybill,
+  downloadDhlOriginalWaybill,
   openShipmentCommercialInvoice,
   unvoidShipment,
   confirmCarrierCancel,
@@ -186,6 +187,16 @@ export default function ShipmentViewPage() {
     }
   }
 
+  async function handleDownloadOriginalWaybill() {
+    if (!shipment) return;
+    setLabelError("");
+    try {
+      await downloadDhlOriginalWaybill(shipment);
+    } catch (err) {
+      setLabelError(err instanceof Error ? err.message : "ดาวน์โหลด Waybill ต้นฉบับไม่สำเร็จ");
+    }
+  }
+
   async function handleOpenWaybill() {
     if (!shipment) return;
     setOpeningWaybill(true);
@@ -354,6 +365,11 @@ export default function ShipmentViewPage() {
                 <button type="button" onClick={handleOpenWaybill} disabled={openingWaybill} className={headerBtn}>
                   {openingWaybill ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Receipt className="h-3.5 w-3.5" />}
                   Open waybill
+                </button>
+              )}
+              {s.carrier === "DHL" && s.waybill_storage_key && (
+                <button type="button" onClick={handleDownloadOriginalWaybill} className={headerBtn} title="ไฟล์ Waybill Doc จาก DHL โดยตรง (ไม่มีส่วน Payment of Charges ของ MADD)">
+                  <Download className="h-3.5 w-3.5" /> DHL original waybill
                 </button>
               )}
               {s.commercial_invoice_storage_key && (
