@@ -2302,6 +2302,16 @@ export default function ShipmentCreatePage() {
   // Required fields for the picked carrier that are still blank, shown on each step and in
   // Payment Info (with a jump to the step) — booking stays disabled until they're filled.
   const missingFields = selectedQuote ? missingRequiredFields(buildBookingPayload(), fieldRules, selectedQuote.carrier) : [];
+  // Red * on a required field's label: for the picked carrier, or — before a rate is picked —
+  // only fields every carrier requires.
+  const requiredKeys = new Set(
+    !fieldRules
+      ? []
+      : selectedQuote
+        ? (fieldRules.rules[selectedQuote.carrier] ?? [])
+        : fieldRules.fields.map((f) => f.key).filter((k) => fieldRules.carriers.every((c) => (fieldRules.rules[c] ?? []).includes(k))),
+  );
+  const req = (key: string) => (requiredKeys.has(key) ? <span className="text-red-500"> *</span> : null);
   const requiredNotice = (forStep: 1 | 2 | 3 | "all") => {
     const list = forStep === "all" ? missingFields : missingFields.filter((f) => f.step === forStep);
     if (!selectedQuote || !list.length) return null;
@@ -2459,7 +2469,7 @@ export default function ShipmentCreatePage() {
           <div className="mt-2.5 flex flex-col gap-2.5">
             <div className="grid grid-cols-2 gap-2.5">
               <label className="flex flex-col gap-1">
-                <span className={labelClass}>Contact Name</span>
+                <span className={labelClass}>Contact Name{req("origin.contact_name")}</span>
                 <div className="relative">
                   <input
                     type="text"
@@ -2475,7 +2485,7 @@ export default function ShipmentCreatePage() {
                 </div>
               </label>
               <label className="flex flex-col gap-1">
-                <span className={labelClass}>Company</span>
+                <span className={labelClass}>Company{req("origin.company")}</span>
                 <div className="relative">
                   <input type="text" value={originCompany} onChange={(e) => setOriginCompany(e.target.value)} placeholder="Company name (optional)" className={`${inputClass} ${originCompany ? "pr-8" : ""}`} />
                   {originCompany && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
@@ -2483,7 +2493,7 @@ export default function ShipmentCreatePage() {
               </label>
             </div>
             <label className="flex flex-col gap-1">
-              <span className={labelClass}>Tax ID No.</span>
+              <span className={labelClass}>Tax ID No.{req("origin.tax_id")}</span>
               <div className="relative">
                 <input type="text" value={originTaxId} onChange={(e) => setOriginTaxId(e.target.value)} placeholder="Tax ID / เลขประจำตัวผู้เสียภาษี (optional)" className={`${inputClass} ${originTaxId ? "pr-8" : ""}`} />
                 {originTaxId && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
@@ -2529,7 +2539,7 @@ export default function ShipmentCreatePage() {
               </label>
             </div>
             <label className="flex flex-col gap-1">
-              <span className={labelClass}>Telephone</span>
+              <span className={labelClass}>Telephone{req("origin.phone")}</span>
               <div className="relative">
                 <input type="text" value={originPhone} onChange={(e) => setOriginPhone(e.target.value)} placeholder="e.g. 0812345678" className={`${inputClass} ${originPhone ? "pr-8" : ""}`} />
                 {originPhone && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
@@ -2565,7 +2575,7 @@ export default function ShipmentCreatePage() {
           <div className="mt-2.5 flex flex-col gap-2.5">
             <div className="grid grid-cols-2 gap-2.5">
               <label className="flex flex-col gap-1">
-                <span className={labelClass}>Contact Name</span>
+                <span className={labelClass}>Contact Name{req("destination.contact_name")}</span>
                 <div className="relative">
                   <input
                     type="text"
@@ -2583,7 +2593,7 @@ export default function ShipmentCreatePage() {
                 </div>
               </label>
               <label className="flex flex-col gap-1">
-                <span className={labelClass}>Company</span>
+                <span className={labelClass}>Company{req("destination.company")}</span>
                 <div className="relative">
                   <input
                     type="text"
@@ -2599,7 +2609,7 @@ export default function ShipmentCreatePage() {
               </label>
             </div>
             <label className="flex flex-col gap-1">
-              <span className={labelClass}>Tax ID No.</span>
+              <span className={labelClass}>Tax ID No.{req("destination.tax_id")}</span>
               <div className="relative">
                 <input
                   type="text"
@@ -2627,7 +2637,7 @@ export default function ShipmentCreatePage() {
               </label>
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>
-                  State / Province{(destinationCountry === "US" || destinationCountry === "CA") && " *"}
+                  State / Province{(destinationCountry === "US" || destinationCountry === "CA") ? <span className="text-red-500"> *</span> : req("destination.state")}
                 </span>
                 <div className="relative">
                   <input
@@ -2645,7 +2655,7 @@ export default function ShipmentCreatePage() {
               </label>
             </div>
             <label className="flex flex-col gap-1">
-              <span className={labelClass}>Postal Code</span>
+              <span className={labelClass}>Postal Code{req("destination.postcode")}</span>
               <div className="relative">
                 <input
                   type="text"
@@ -2660,7 +2670,7 @@ export default function ShipmentCreatePage() {
               </div>
             </label>
             <label className="flex flex-col gap-1">
-              <span className={labelClass}>Address 1</span>
+              <span className={labelClass}>Address 1{req("destination.address")}</span>
               <div className="relative">
                 <input
                   type="text"
@@ -2709,7 +2719,7 @@ export default function ShipmentCreatePage() {
 
             <div className="grid grid-cols-2 gap-2.5">
               <label className="flex flex-col gap-1">
-                <span className={labelClass}>Telephone</span>
+                <span className={labelClass}>Telephone{req("destination.phone")}</span>
                 <div className="relative">
                   <input
                     type="text"
@@ -2724,7 +2734,7 @@ export default function ShipmentCreatePage() {
                 </div>
               </label>
               <label className="flex flex-col gap-1">
-                <span className={labelClass}>Email</span>
+                <span className={labelClass}>Email{req("destination.email")}</span>
                 <div className="relative">
                   <input
                     type="email"
@@ -3333,7 +3343,7 @@ export default function ShipmentCreatePage() {
                       checkbox above already decides/auto-selects it, no picker needed. */}
                   {pkg.insured && !pkg.is_document && renderInsurancePicker(pkg)}
                   <label className="flex flex-col gap-1">
-                    <span className={labelClass}>Description of Goods</span>
+                    <span className={labelClass}>Description of Goods{req("packages.*.description")}</span>
                     <input
                       type="text"
                       value={pkg.description ?? ""}
@@ -3696,9 +3706,9 @@ export default function ShipmentCreatePage() {
                     <th className="whitespace-nowrap px-2 py-1 font-medium">Description</th>
                     <th className="w-16 whitespace-nowrap px-2 py-1 font-medium text-right">Qty</th>
                     <th className="w-32 whitespace-nowrap px-2 py-1 font-medium text-right">Unit Value (THB)</th>
-                    <th className="w-24 whitespace-nowrap px-2 py-1 font-medium text-right">Weight (kg)</th>
+                    <th className="w-24 whitespace-nowrap px-2 py-1 font-medium text-right">Weight (kg){req("invoice_lines.*.weight")}</th>
                     <th className="w-36 whitespace-nowrap px-2 py-1 font-medium">Country of Origin</th>
-                    <th className="w-28 whitespace-nowrap px-2 py-1 font-medium">HS Code</th>
+                    <th className="w-28 whitespace-nowrap px-2 py-1 font-medium">HS Code{req("invoice_lines.*.hs_code")}</th>
                     <th className="w-24 whitespace-nowrap px-2 py-1 font-medium text-right">Amount</th>
                     <th className="w-8 px-1 py-1"></th>
                   </tr>
@@ -3811,7 +3821,7 @@ export default function ShipmentCreatePage() {
           <div className="mt-4 flex flex-col gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/50 p-3">
             <label className="flex flex-col gap-1.5">
               <span className="text-xs font-semibold text-slate-700">
-                ไฟล์ Commercial Invoice (เสริม — PDF/JPG/PNG)
+                ไฟล์ Commercial Invoice (เสริม — PDF/JPG/PNG){req("commercial_invoice_upload_key")}
               </span>
               <span className="text-[11px] text-slate-500">
                 ถ้าคุณมีไฟล์ Invoice ของบริษัทเอง แนบที่นี่ได้ — ไม่แทนที่ข้อมูลรายการสินค้าด้านบน
@@ -3869,7 +3879,7 @@ export default function ShipmentCreatePage() {
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Payment Method</h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="flex flex-col gap-1">
-            <span className={labelClass}>Payment Method</span>
+            <span className={labelClass}>Payment Method{req("payment_method")}</span>
             <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={inputClass}>
               {paymentOptions.map((opt) => (
                 <option key={opt.id} value={opt.code}>
@@ -3985,7 +3995,7 @@ export default function ShipmentCreatePage() {
             </>
           )}
           <label className="flex flex-col gap-1">
-            <span className={labelClass}>Ref. Invoice No.</span>
+            <span className={labelClass}>Ref. Invoice No.{req("ref_invoice_no")}</span>
             <input
               type="text"
               value={refInvoiceNo}
@@ -3996,7 +4006,7 @@ export default function ShipmentCreatePage() {
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className={labelClass}>Ref. Insurance No.</span>
+            <span className={labelClass}>Ref. Insurance No.{req("ref_insurance_no")}</span>
             <input
               type="text"
               value={refInsuranceNo}
@@ -4007,7 +4017,7 @@ export default function ShipmentCreatePage() {
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className={labelClass}>Ref. Purchase No.</span>
+            <span className={labelClass}>Ref. Purchase No.{req("ref_purchase_no")}</span>
             <input
               type="text"
               value={refPurchaseNo}
