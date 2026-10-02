@@ -90,6 +90,7 @@ export const NAV_SECTIONS: NavItem[] = [
     icon: Settings,
     children: [
       { label: "Agent Accounts (UPS/DHL)", href: "/config/agent-accounts" },
+      { label: "Shipment Required Fields", href: "/config/shipment-fields" },
       { label: "Thai Address Database", href: "/config/thai-address" },
       { label: "Users", href: "/config/users" },
       { label: "Roles & Permissions", href: "/config/roles" },

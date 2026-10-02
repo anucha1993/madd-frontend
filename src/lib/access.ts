@@ -73,6 +73,7 @@ const ROUTE_PERMISSIONS: { pattern: RegExp; permission: string | string[] }[] = 
   { pattern: /^\/config\/api-clients(\/|$)/, permission: "config.api_clients" },
   { pattern: /^\/config\/integrations(\/|$)/, permission: "config.integrations" },
   { pattern: /^\/config\/tracking-sync(\/|$)/, permission: "config.tracking_sync" },
+  { pattern: /^\/config\/shipment-fields(\/|$)/, permission: "config.shipment_fields" },
   { pattern: /^\/config\/report-schedules(\/|$)/, permission: "config.report_schedules" },
   { pattern: /^\/config\/smtp-settings(\/|$)/, permission: "config.smtp" },
 ];

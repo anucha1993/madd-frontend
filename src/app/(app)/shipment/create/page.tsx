@@ -26,6 +26,7 @@ import { ApiError } from "@/lib/apiClient";
 import { bookShipment, describeShipmentPieces, downloadDhlOriginalWaybill, openShipmentCommercialInvoice, openShipmentLabel, openShipmentWaybill, printAllShipmentLabels, uploadCommercialInvoiceFile, type BookShipmentInput, type Shipment } from "@/lib/shipments";
 import { getShipmentDraft, createShipmentDraft, updateShipmentDraft, deleteShipmentDraft } from "@/lib/shipmentDrafts";
 import { getUser } from "@/lib/auth";
+import { getShipmentFieldRules, missingRequiredFields, type ShipmentFieldRules } from "@/lib/shipmentFields";
 import {
   listCustomers,
   createCustomer,
@@ -323,6 +324,17 @@ export default function ShipmentCreatePage() {
   // Booking branch: users with one branch are bound to it (server side); users who can book
   // for several / all branches must pick one before confirming.
   const [allBranches, setAllBranches] = useState<{ id: number; name: string; code?: string | null }[]>([]);
+  // Per-carrier required fields (/config/shipment-fields) — the server enforces the same list.
+  const [fieldRules, setFieldRules] = useState<ShipmentFieldRules | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getShipmentFieldRules()
+      .then((res) => !cancelled && setFieldRules(res))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   useEffect(() => {
     if (!currentUser?.can_access_all_branches) return;
     listBranches()
@@ -1748,6 +1760,11 @@ export default function ShipmentCreatePage() {
   async function handleConfirmBooking() {
     const payload = buildBookingPayload();
     if (!payload) return;
+    const missing = missingRequiredFields(payload, fieldRules, payload.carrier);
+    if (missing.length) {
+      setBookingError(`${payload.carrier} กำหนดให้กรอก: ${missing.map((f) => f.label).join(", ")}`);
+      return;
+    }
     // DHL Express has no cancel API — a real booking can only be cancelled by contacting DHL.
     if (
       selectedQuote?.carrier === "DHL" &&
@@ -2282,6 +2299,37 @@ export default function ShipmentCreatePage() {
     );
   }
 
+  // Required fields for the picked carrier that are still blank, shown on each step and in
+  // Payment Info (with a jump to the step) — booking stays disabled until they're filled.
+  const missingFields = selectedQuote ? missingRequiredFields(buildBookingPayload(), fieldRules, selectedQuote.carrier) : [];
+  const requiredNotice = (forStep: 1 | 2 | 3 | "all") => {
+    const list = forStep === "all" ? missingFields : missingFields.filter((f) => f.step === forStep);
+    if (!selectedQuote || !list.length) return null;
+    return (
+      <div className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold">
+            {selectedQuote.carrier} กำหนดให้กรอกก่อนจอง — ยังขาด {list.length} ช่อง
+          </p>
+          <ul className="mt-1.5 flex flex-wrap gap-1.5">
+            {list.map((f) => (
+              <li key={f.key}>
+                {forStep === "all" && f.step !== step ? (
+                  <button type="button" onClick={() => setStep(f.step)} className="rounded-full border border-amber-300 bg-white px-2.5 py-0.5 text-xs hover:bg-amber-100">
+                    {f.label} → ขั้นตอน {f.step}
+                  </button>
+                ) : (
+                  <span className="inline-block rounded-full border border-amber-300 bg-white px-2.5 py-0.5 text-xs">{f.label}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div>
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
@@ -2337,6 +2385,7 @@ export default function ShipmentCreatePage() {
 
       {step === 1 && (
         <>
+      {requiredNotice(1)}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Customer Type</h2>
@@ -2839,6 +2888,7 @@ export default function ShipmentCreatePage() {
 
       {step === 2 && (
         <>
+      {requiredNotice(2)}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="flex flex-col gap-4 lg:col-span-2">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -3546,6 +3596,7 @@ export default function ShipmentCreatePage() {
 
       {step === 3 && (
         <>
+      {requiredNotice(3)}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="flex flex-col gap-4 lg:col-span-2">
       <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
@@ -3811,6 +3862,7 @@ export default function ShipmentCreatePage() {
 
       {step === 5 && (
         <>
+      {requiredNotice("all")}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="flex flex-col gap-4 lg:col-span-2">
       <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
@@ -3978,7 +4030,7 @@ export default function ShipmentCreatePage() {
         </button>
         <button
           type="button"
-          disabled={!selectedQuote || !paymentInfoValid}
+          disabled={!selectedQuote || !paymentInfoValid || missingFields.length > 0}
           onClick={() => {
             setBookedShipment(null);
             setBookingError("");
