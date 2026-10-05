@@ -254,7 +254,7 @@ export type Shipment = {
   error_message: string | null;
   created_at: string;
   agent_account?: { id: number; username_acc: string; mode?: "test" | "production" | null; agent?: { agent_code: string; name?: string; logo_url?: string } } | null;
-  branch?: { id: number; name: string; code: string } | null;
+  branch?: { id: number; name: string; code: string; nickname?: string | null } | null;
   // Count of Receipts/Tax Invoices this shipment is already attached to (any status, including
   // VOIDED — the global lock is permanent, see receipt_shipment). >0 means it can never be
   // selected for a new Receipt/Tax Invoice again. Only ever loaded from `listShipments()`.

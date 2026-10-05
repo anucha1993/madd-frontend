@@ -43,6 +43,7 @@ import SchedulePickupModal from "@/components/pickup/SchedulePickupModal";
 import { useManageColumns, type ColumnDef } from "@/hooks/useManageColumns";
 import { getUser } from "@/lib/auth";
 import { listManifestOptions, type ManifestOption } from "@/lib/manifestOptions";
+import { branchLabel } from "@/lib/branches";
 import {
   listShipments,
   getShipmentStats,
@@ -237,7 +238,7 @@ const SHIPMENT_COLUMNS: ShipmentColumn[] = [
     render: (s) => (s.cost_amount != null ? `${money(s.cost_amount)} ${s.cost_currency ?? ""}`.trim() : "-"),
   },
   { id: "agent_account", label: "Agent Account", render: (s) => s.agent_account?.username_acc ?? "-" },
-  { id: "branch", label: "Branch", render: (s) => (s.branch ? `${s.branch.code} · ${s.branch.name}` : "-") },
+  { id: "branch", label: "Branch", render: (s) => (s.branch ? branchLabel(s.branch) : "-") },
   { id: "customer_type", label: "Customer Type", render: (s) => s.customer_type ?? "-" },
   { id: "entity_type", label: "Entity Type", render: (s) => s.entity_type ?? "-" },
   { id: "freight_amount", label: "Freight Amount", align: "right", field: "pricing", render: (s) => money(s.freight_amount) },

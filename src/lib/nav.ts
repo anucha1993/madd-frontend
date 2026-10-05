@@ -56,6 +56,8 @@ export const NAV_SECTIONS: NavItem[] = [
     icon: FileBarChart2,
     children: [
       { label: "Manifest", href: "/manifest" },
+      { label: "Carrier Invoices", href: "/billing/carrier-invoices" },
+      { label: "Key Billing Report", href: "/reports/key-billing" },
       { label: "Shipment Analytics", href: "/reports/summary" },
       { label: "Revenue & Expense Report", href: "/reports/finance" },
     ],

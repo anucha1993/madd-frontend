@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import type { Branch } from "@/lib/branches";
+import { branchLabel } from "@/lib/branches";
 import type { AppUser, AppUserInput } from "@/lib/users";
 import type { Role } from "@/lib/roles";
 
@@ -143,16 +144,16 @@ export default function UserForm({ branches, roles, initial, onSubmit, onCancel 
               <p className="col-span-2 text-sm text-slate-400">ยังไม่มีสาขาในระบบ</p>
             ) : (
               branches.map((branch) => (
-                <label key={branch.id} className="flex min-w-0 items-center gap-2 text-sm text-slate-600" title={branch.name}>
+                <label key={branch.id} className="flex min-w-0 items-center gap-2 text-sm text-slate-600" title={branchLabel(branch)}>
                   <input
                     type="checkbox"
                     checked={branchIds.includes(branch.id)}
                     onChange={() => toggleBranch(branch.id)}
                     className="h-4 w-4 shrink-0 rounded border-slate-300 accent-brand-amber"
                   />
-                  {/* Branch names are often all the same company name — the code is what tells them apart. */}
+                  {/* Branch names are often all the same company name — the nickname (fallback: code) is what tells them apart. */}
                   <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs font-semibold text-slate-700">
-                    {branch.code}
+                    {branch.nickname || branch.code}
                   </span>
                   <span className="min-w-0 truncate">{branch.name}</span>
                 </label>

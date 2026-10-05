@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { listBranches } from "@/lib/branches";
+import { listBranches, branchLabel } from "@/lib/branches";
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Code, Copy, ExternalLink, FileText, ListChecks, Loader2, Lock, MinusCircle, Package, Plus, Printer, Receipt, Search, ShieldCheck, Sparkles, Tag, Trash2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import { useAccess } from "@/components/auth/AccessProvider";
@@ -320,10 +320,10 @@ export default function ShipmentCreatePage() {
   const currentUser = getUser();
   const currentUserBranchLabel = currentUser?.can_access_all_branches
     ? "ทุกสาขา"
-    : currentUser?.branches?.map((b) => b.name).join(", ") || "-";
+    : currentUser?.branches?.map((b) => branchLabel(b)).join(", ") || "-";
   // Booking branch: users with one branch are bound to it (server side); users who can book
   // for several / all branches must pick one before confirming.
-  const [allBranches, setAllBranches] = useState<{ id: number; name: string; code?: string | null }[]>([]);
+  const [allBranches, setAllBranches] = useState<{ id: number; name: string; code?: string | null; nickname?: string | null }[]>([]);
   // Per-carrier required fields (/config/shipment-fields) — the server enforces the same list.
   const [fieldRules, setFieldRules] = useState<ShipmentFieldRules | null>(null);
   useEffect(() => {
@@ -4719,7 +4719,7 @@ export default function ShipmentCreatePage() {
                     <option value="">— เลือกสาขา —</option>
                     {bookingBranchOptions.map((b) => (
                       <option key={b.id} value={b.id}>
-                        {b.name}
+                        {branchLabel(b)}
                       </option>
                     ))}
                   </select>

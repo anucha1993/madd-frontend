@@ -7,7 +7,7 @@ import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import PageLoading from "@/components/ui/PageLoading";
 import UserForm from "@/components/config/UserForm";
-import { listBranches, type Branch } from "@/lib/branches";
+import { listBranches, branchLabel, type Branch } from "@/lib/branches";
 import { createUser, deleteUser, listUsers, updateUser, type AppUser, type AppUserInput } from "@/lib/users";
 import { listRoles, type Role } from "@/lib/roles";
 import { getUser } from "@/lib/auth";
@@ -124,7 +124,7 @@ export default function UsersPage() {
                     {user.can_access_all_branches
                       ? "ทุกสาขา"
                       : user.branches.length > 0
-                        ? user.branches.map((b) => `${b.code} · ${b.name}`).join(", ")
+                          ? user.branches.map((b) => branchLabel(b)).join(", ")
                         : "-"}
                   </td>
                   <td className="px-5 py-3 text-right">

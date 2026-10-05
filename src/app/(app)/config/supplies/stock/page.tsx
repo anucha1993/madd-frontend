@@ -32,6 +32,7 @@ import {
   type StockReportRow,
   type StockSupplyRow,
 } from "@/lib/supplyStock";
+import { branchLabel } from "@/lib/branches";
 
 type Tab = "balance" | "movements" | "report";
 type Action = {
@@ -174,8 +175,7 @@ export default function SupplyStockPage() {
               >
                 {branches.map((b) => (
                   <option key={b.id} value={b.id}>
-                    {b.code ? `${b.code} — ` : ""}
-                    {b.name}
+                    {branchLabel(b)}
                   </option>
                 ))}
               </select>
@@ -369,7 +369,7 @@ function StockActionModal({
       <form onSubmit={submit} className="space-y-4">
         <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
           <div className="font-medium text-slate-800">{supply.name}</div>
-          สาขา {branch?.name ?? "-"} · คงเหลือปัจจุบัน{" "}
+          สาขา {branch ? branchLabel(branch) : "-"} · คงเหลือปัจจุบัน{" "}
           <b>{cell.quantity.toLocaleString()}</b>
         </div>
 
@@ -570,7 +570,7 @@ function MovementsTab({
               <option value="">ทุกสาขา</option>
               {branches.map((b) => (
                 <option key={b.id} value={b.id}>
-                  {b.name}
+                  {branchLabel(b)}
                 </option>
               ))}
             </select>
@@ -680,7 +680,7 @@ function MovementsTab({
                     {new Date(m.created_at).toLocaleString()}
                   </td>
                   <td className="px-4 py-2.5 text-slate-600">
-                    {m.branch?.name ?? "—"}
+                    {m.branch ? branchLabel(m.branch) : "—"}
                   </td>
                   <td className="px-4 py-2.5 font-medium text-slate-700">
                     {m.supply?.name ?? "—"}
@@ -818,7 +818,7 @@ function ReportTab({ branches }: { branches: StockBranch[] }) {
               <option value="">ทุกสาขา</option>
               {branches.map((b) => (
                 <option key={b.id} value={b.id}>
-                  {b.name}
+                  {branchLabel(b)}
                 </option>
               ))}
             </select>

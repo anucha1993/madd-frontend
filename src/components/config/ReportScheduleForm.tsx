@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import type { Branch } from "@/lib/branches";
+import { branchLabel } from "@/lib/branches";
 import type { AgentAccount } from "@/lib/agentAccounts";
 import type { ReportSchedule, ReportScheduleInput } from "@/lib/reportSchedules";
 
@@ -170,7 +171,7 @@ export default function ReportScheduleForm({ initial, branches, agentAccounts, o
             <option value="">All Branches</option>
             {branches.map((b) => (
               <option key={b.id} value={b.id}>
-                {b.name} ({b.code})
+                {branchLabel(b)}
               </option>
             ))}
           </select>

@@ -9,7 +9,7 @@ import Modal from "@/components/ui/Modal";
 import PageLoading from "@/components/ui/PageLoading";
 import { CopyButton } from "@/components/shipment/VoidShipmentModal";
 import { API_URL } from "@/lib/apiUrl";
-import { listBranches, type Branch } from "@/lib/branches";
+import { listBranches, branchLabel, type Branch } from "@/lib/branches";
 import {
   createApiClient,
   deleteApiClient,
@@ -174,7 +174,7 @@ export default function ApiClientsPage() {
                   <td className="px-4 py-2.5 font-medium text-slate-700">{c.name}</td>
                   <td className="px-4 py-2.5 font-mono text-xs text-slate-500">{c.key_prefix ? `${c.key_prefix}…` : "—"}</td>
                   <td className="px-4 py-2.5 text-slate-600">
-                    {c.branch?.name ?? "ทุกบัญชี Carrier"}
+                    {c.branch ? branchLabel(c.branch) : "ทุกบัญชี Carrier"}
                     <div className="text-xs text-slate-400">
                       {c.origin_city} {c.origin_postcode}
                     </div>
@@ -310,7 +310,7 @@ function ClientForm({ client, branches, onClose, onSaved }: { client: ApiClientR
               <option value="">ทุกบัญชีที่เปิดใช้งาน</option>
               {branches.map((b) => (
                 <option key={b.id} value={b.id}>
-                  {b.name}
+                  {branchLabel(b)}
                 </option>
               ))}
             </select>

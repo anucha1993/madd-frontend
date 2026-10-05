@@ -3,6 +3,10 @@ import { apiClient } from "./apiClient";
 export type Branch = {
   id: number;
   name: string;
+  // Short, easy-to-remember label staff use to tell branches apart (e.g. "บางใหญ่") — shown
+  // next to the company name everywhere it's displayed, since every branch otherwise shares the
+  // identical `name`/`company_name` text and only the (hard to remember) `code` differs.
+  nickname: string | null;
   company_name: string;
   code: string;
   tax_id: string;
@@ -20,6 +24,7 @@ export type Branch = {
 
 export type BranchInput = {
   name: string;
+  nickname?: string;
   company_name: string;
   code: string;
   tax_id: string;
@@ -29,6 +34,16 @@ export type BranchInput = {
   is_head_office?: boolean;
   status?: boolean;
 };
+
+/** Company/branch name + "(nickname)" — the one shared format for every branch display in the app, e.g. "บริษัท เอ็มเอดีดี จำกัด (บางใหญ่)". Falls back to the branch code when no nickname is set yet. */
+export function branchLabel(b: { name: string; code?: string | null; nickname?: string | null }): string {
+  return b.nickname || b.code ? `${b.name} (${b.nickname || b.code})` : b.name;
+}
+
+/** Same idea, anchored on the company name specifically (used wherever `company_name` is the primary text, e.g. document headers). */
+export function companyDisplayName(b: { company_name: string; nickname?: string | null }): string {
+  return b.nickname ? `${b.company_name} (${b.nickname})` : b.company_name;
+}
 
 export type DocumentNumberSequence = {
   id: number;

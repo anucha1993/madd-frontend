@@ -6,7 +6,7 @@ import { getToken } from "./auth";
 // automatically (never blocked, balance may go negative); Void returns the units.
 export type StockLevel = "low" | "over" | "ok";
 
-export type StockBranch = { id: number; name: string; code: string | null };
+export type StockBranch = { id: number; name: string; code: string | null; nickname?: string | null };
 
 export type StockCell = {
   branch_id: number;

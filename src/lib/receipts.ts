@@ -53,7 +53,7 @@ export type Receipt = {
   voided_at: string | null;
   void_note: string | null;
   created_at: string;
-  branch?: { id: number; name: string; code: string } | null;
+  branch?: { id: number; name: string; code: string; nickname?: string | null } | null;
   lines?: ReceiptLine[];
   shipments?: {
     id: number;

@@ -6,7 +6,7 @@ import { AlertTriangle, ChevronDown, Download, Loader2, Table2, X } from "lucide
 import PageHeader from "@/components/layout/PageHeader";
 import PageLoading from "@/components/ui/PageLoading";
 import { useAccess } from "@/components/auth/AccessProvider";
-import { listBranches, type Branch } from "@/lib/branches";
+import { listBranches, branchLabel, type Branch } from "@/lib/branches";
 import {
   downloadShipmentAnalytics,
   getShipmentAnalytics,
@@ -154,7 +154,7 @@ export default function ShipmentAnalyticsPage() {
             <option value="">ทุกสาขา</option>
             {branches.map((b) => (
               <option key={b.id} value={b.id}>
-                {b.name}
+                {branchLabel(b)}
               </option>
             ))}
           </select>

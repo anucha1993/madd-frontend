@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Search } from "lucide-react";
 import type { Branch } from "@/lib/branches";
+import { branchLabel } from "@/lib/branches";
 
 type Props = {
   branches: Branch[];
@@ -12,7 +13,7 @@ type Props = {
 };
 
 function label(b: Branch): string {
-  return `${b.name} (${b.code})`;
+  return branchLabel(b);
 }
 
 // Searchable Branch combobox — replaces a plain native <select> (which renders an unstyled
@@ -45,7 +46,7 @@ export default function BranchSelect({ branches, value, onChange, className }: P
   const term = query.trim().toLowerCase();
   const results =
     open && term && term !== (selected ? label(selected).toLowerCase() : "")
-      ? branches.filter((b) => `${b.name} ${b.code} ${b.company_name}`.toLowerCase().includes(term))
+      ? branches.filter((b) => `${b.name} ${b.code} ${b.nickname ?? ""} ${b.company_name}`.toLowerCase().includes(term))
       : branches;
 
   return (
@@ -83,6 +84,7 @@ export default function BranchSelect({ branches, value, onChange, className }: P
               >
                 <span className="font-medium text-slate-700">{b.name}</span>
                 <span className="text-xs text-slate-400">
+                  {b.nickname ? `${b.nickname} — ` : ""}
                   {b.code} — {b.company_name}
                 </span>
               </button>

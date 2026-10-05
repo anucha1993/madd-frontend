@@ -9,7 +9,7 @@ export type ApiClientRecord = {
   name: string;
   key_prefix: string | null;
   branch_id: number | null;
-  branch?: { id: number; name: string; code: string | null } | null;
+  branch?: { id: number; name: string; code: string | null; nickname?: string | null } | null;
   origin_city: string;
   origin_postcode: string;
   carriers: ("UPS" | "DHL")[] | null;

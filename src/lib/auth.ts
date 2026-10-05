@@ -6,7 +6,7 @@ export type AuthUser = {
   username: string;
   email: string;
   can_access_all_branches?: boolean;
-  branches?: { id: number; name: string }[];
+  branches?: { id: number; name: string; code?: string | null; nickname?: string | null }[];
   access?: Access;
 };
 

@@ -14,6 +14,7 @@ import {
   updateBranch,
   getDocumentNumberSettings,
   updateDocumentNumberSettings,
+  companyDisplayName,
   type Branch,
   type BranchInput,
   type DocumentNumberSequence,
@@ -193,8 +194,11 @@ export default function BranchPage() {
               {branches.map((branch) => (
                 <tr key={branch.id} className="border-b border-slate-200 last:border-0">
                   <td className="px-5 py-3">
-                    <div className="font-medium text-slate-700">{branch.name}</div>
-                    <div className="text-xs text-slate-400">{branch.company_name}</div>
+                    <div className="font-medium text-slate-700">
+                      {branch.name}
+                      {branch.nickname && <span className="ml-1 text-slate-400">({branch.nickname})</span>}
+                    </div>
+                    <div className="text-xs text-slate-400">{companyDisplayName(branch)}</div>
                   </td>
                   <td className="px-5 py-3 text-slate-500">{branch.code}</td>
                   <td className="px-5 py-3 text-slate-500">{branch.tax_id || "-"}</td>

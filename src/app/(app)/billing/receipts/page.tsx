@@ -12,7 +12,7 @@ import ManageColumnsModal from "@/components/ui/ManageColumnsModal";
 import ColumnProfileSelect from "@/components/ui/ColumnProfileSelect";
 import { useManageColumns, type ColumnDef } from "@/hooks/useManageColumns";
 import { listReceipts, voidReceipt, deleteReceipt, openReceiptPdf, printReceiptsBatch, type Receipt, type ReceiptType } from "@/lib/receipts";
-import { listBranches, type Branch } from "@/lib/branches";
+import { listBranches, branchLabel, type Branch } from "@/lib/branches";
 
 const inputClass =
   "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15";
@@ -70,9 +70,7 @@ const RECEIPT_COLUMNS: ReceiptColumn[] = [
     label: "Branch",
     render: (_row, rep) =>
       rep.branch ? (
-        <span className="whitespace-nowrap">
-          <span className="font-mono text-xs font-semibold text-slate-600">{rep.branch.code}</span> {rep.branch.name}
-        </span>
+        <span className="whitespace-nowrap">{branchLabel(rep.branch)}</span>
       ) : (
         "-"
       ),
@@ -515,7 +513,7 @@ export default function ReceiptsListPage() {
                 <option value="">All</option>
                 {branches.map((b) => (
                   <option key={b.id} value={b.id}>
-                    {b.code} - {b.name}
+                    {branchLabel(b)}
                   </option>
                 ))}
               </select>

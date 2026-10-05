@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, ClipboardList, Download, Search, Loader2, ChevronRight } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import { useAccess } from "@/components/auth/AccessProvider";
-import { listBranches, type Branch } from "@/lib/branches";
+import { listBranches, branchLabel, type Branch } from "@/lib/branches";
 import {
   listManifestReport,
   downloadManifestReport,
@@ -142,7 +142,7 @@ export default function ManifestPage() {
             <option value="">All Branches</option>
             {branches.map((b) => (
               <option key={b.id} value={b.id}>
-                {b.name} ({b.code})
+                {branchLabel(b)}
               </option>
             ))}
           </select>

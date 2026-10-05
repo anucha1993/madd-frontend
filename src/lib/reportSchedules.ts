@@ -13,7 +13,7 @@ export type ReportSchedule = {
   day_of_month: number | null;
   report_range: ReportRange;
   branch_id: number | null;
-  branch?: { id: number; name: string; code: string } | null;
+  branch?: { id: number; name: string; code: string; nickname?: string | null } | null;
   carrier: "UPS" | "DHL" | null;
   agent_account_id: number | null;
   agent_account?: { id: number; username_acc: string } | null;

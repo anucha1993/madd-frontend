@@ -28,6 +28,7 @@ export default function BranchForm({
   canEditCarrierAccounts = true,
 }: Props) {
   const [name, setName] = useState(initial?.name ?? "");
+  const [nickname, setNickname] = useState(initial?.nickname ?? "");
   const [companyName, setCompanyName] = useState(initial?.company_name ?? "");
   const [code, setCode] = useState(initial?.code ?? "");
   const [taxId, setTaxId] = useState(initial?.tax_id ?? "");
@@ -70,6 +71,7 @@ export default function BranchForm({
       await onSubmit(
         {
           name: name.trim(),
+          nickname: nickname.trim() || undefined,
           company_name: companyName.trim(),
           code: code.trim(),
           tax_id: taxId.trim(),
@@ -121,6 +123,20 @@ export default function BranchForm({
             />
           </label>
         </div>
+
+        <label className="flex flex-col gap-1.5">
+          <span className={labelClass}>ชื่อเรียกสาขา (nickname)</span>
+          <input
+            type="text"
+            value={nickname}
+            onChange={(e) => setNickname(e.target.value)}
+            placeholder="เช่น บางใหญ่"
+            className={inputClass}
+          />
+          <span className="text-xs text-slate-400">
+            ใช้เรียกและแสดงกำกับชื่อบริษัทแทนรหัสสาขา เช่น &quot;บริษัท เอ็มเอดีดี จำกัด (บางใหญ่)&quot;
+          </span>
+        </label>
 
         <label className="flex flex-col gap-1.5">
           <span className={labelClass}>เลขประจำตัวผู้เสียภาษี (Tax ID)</span>

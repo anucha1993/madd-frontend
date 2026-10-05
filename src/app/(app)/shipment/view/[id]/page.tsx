@@ -20,7 +20,7 @@ import {
   assignShipmentBranch,
   type Shipment,
 } from "@/lib/shipments";
-import { listBranches } from "@/lib/branches";
+import { listBranches, branchLabel } from "@/lib/branches";
 import { getUser } from "@/lib/auth";
 
 /* ---------------------------------------------------------------------------
@@ -786,7 +786,7 @@ export default function ShipmentViewPage() {
 // do. Lets a user who books for several/all branches set it once.
 function AssignBranchBanner({ shipmentId, onAssigned }: { shipmentId: number; onAssigned: (s: Shipment) => void }) {
   const user = getUser();
-  const [options, setOptions] = useState<{ id: number; name: string }[]>(user?.can_access_all_branches ? [] : (user?.branches ?? []));
+  const [options, setOptions] = useState<{ id: number; name: string; code?: string | null; nickname?: string | null }[]>(user?.can_access_all_branches ? [] : (user?.branches ?? []));
   const [branchId, setBranchId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -821,7 +821,7 @@ function AssignBranchBanner({ shipmentId, onAssigned }: { shipmentId: number; on
         <option value="">— เลือกสาขา —</option>
         {options.map((b) => (
           <option key={b.id} value={b.id}>
-            {b.name}
+            {branchLabel(b)}
           </option>
         ))}
       </select>

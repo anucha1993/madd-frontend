@@ -7,6 +7,7 @@ import PageLoading from "@/components/ui/PageLoading";
 import { getAiSettings, toggleAi, updateAiSettings, type AiSettings } from "@/lib/ai";
 import { getRestCountriesSettings, updateRestCountriesSettings, type RestCountriesSettings } from "@/lib/countries";
 import { getR2Settings, updateR2Settings, type R2Settings } from "@/lib/r2";
+import { getGoogleVisionSettings, updateGoogleVisionSettings, type GoogleVisionSettings } from "@/lib/googleVision";
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-sm text-slate-800 outline-none transition focus:border-brand-navy focus:bg-white focus:ring-2 focus:ring-brand-navy/15";
@@ -36,15 +37,22 @@ export default function IntegrationsPage() {
   const [driveMessage, setDriveMessage] = useState("");
   const [driveError, setDriveError] = useState("");
 
+  const [visionSettings, setVisionSettings] = useState<GoogleVisionSettings | null>(null);
+  const [visionKeyInput, setVisionKeyInput] = useState("");
+  const [visionSavingKey, setVisionSavingKey] = useState(false);
+  const [visionKeyMessage, setVisionKeyMessage] = useState("");
+  const [visionKeyError, setVisionKeyError] = useState("");
+
   useEffect(() => {
-    Promise.all([getRestCountriesSettings(), getAiSettings(), getR2Settings()])
-      .then(([rc, ai, r2]) => {
+    Promise.all([getRestCountriesSettings(), getAiSettings(), getR2Settings(), getGoogleVisionSettings()])
+      .then(([rc, ai, r2, vision]) => {
         setSettings(rc);
         setAiSettings(ai);
         setDriveSettings(r2);
         setDriveAccessKeyId(r2.access_key_id ?? "");
         setDriveBucket(r2.bucket ?? "");
         setDriveEndpoint(r2.endpoint ?? "");
+        setVisionSettings(vision);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -94,6 +102,23 @@ export default function IntegrationsPage() {
       setAiKeyError(err instanceof Error ? err.message : "Failed to toggle AI");
     } finally {
       setAiToggling(false);
+    }
+  }
+
+  async function handleSaveVisionApiKey() {
+    if (!visionKeyInput.trim()) return;
+    setVisionSavingKey(true);
+    setVisionKeyError("");
+    setVisionKeyMessage("");
+    try {
+      const res = await updateGoogleVisionSettings(visionKeyInput.trim());
+      setVisionSettings({ is_configured: res.is_configured });
+      setVisionKeyMessage(res.message);
+      setVisionKeyInput("");
+    } catch (err) {
+      setVisionKeyError(err instanceof Error ? err.message : "Failed to save API key");
+    } finally {
+      setVisionSavingKey(false);
     }
   }
 
@@ -323,6 +348,48 @@ export default function IntegrationsPage() {
             </div>
             {driveMessage && <p className="mt-2 text-sm text-emerald-600">{driveMessage}</p>}
             {driveError && <p className="mt-2 text-sm text-red-600">{driveError}</p>}
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="mb-3 flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-slate-400" />
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Google Cloud Vision (Carrier Invoice OCR)</h2>
+            </div>
+            <p className="mb-3 text-xs text-slate-400">
+              ใช้อ่านไฟล์ PDF ใบแจ้งหนี้จริงจาก UPS/DHL อัตโนมัติ — สร้าง API Key จาก Google Cloud Console (เปิดใช้งาน Vision API)
+            </p>
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium text-slate-600">Status</span>
+                <span
+                  className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                    visionSettings?.is_configured ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-500"
+                  }`}
+                >
+                  {visionSettings?.is_configured ? "Connected" : "Not configured"}
+                </span>
+              </div>
+              <label className="flex flex-1 min-w-[240px] flex-col gap-1.5">
+                <span className="text-sm font-medium text-slate-600">API Key</span>
+                <input
+                  type="password"
+                  value={visionKeyInput}
+                  onChange={(e) => setVisionKeyInput(e.target.value)}
+                  placeholder="AIza..."
+                  className={`${inputClass} font-mono text-xs`}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={handleSaveVisionApiKey}
+                disabled={visionSavingKey || !visionKeyInput.trim()}
+                className="flex items-center gap-2 rounded-lg bg-brand-amber px-4 py-2 text-sm font-semibold text-brand-navy-dark hover:bg-brand-amber/90 disabled:opacity-60"
+              >
+                {visionSavingKey ? "Saving..." : "Save Key"}
+              </button>
+            </div>
+            {visionKeyMessage && <p className="mt-2 text-sm text-emerald-600">{visionKeyMessage}</p>}
+            {visionKeyError && <p className="mt-2 text-sm text-red-600">{visionKeyError}</p>}
           </div>
         </div>
       )}
