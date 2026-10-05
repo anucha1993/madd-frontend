@@ -8,6 +8,7 @@ import Modal from "@/components/ui/Modal";
 import PageLoading from "@/components/ui/PageLoading";
 import { listAgents, listAgentAccounts, type Agent, type AgentAccount } from "@/lib/agentAccounts";
 import { createChargeCode, listChargeCodes, previewChargeFormula, updateChargeCode, type ChargeCode } from "@/lib/chargeCodes";
+import FormulaIfHelp from "@/components/charges/FormulaIfHelp";
 import {
   createMarkupRule,
   deleteMarkupRule,
@@ -695,7 +696,7 @@ export default function ConfigMarkupPage() {
                       <p className="text-xs text-slate-400">
                         พิมพ์ในช่อง &quot;กฎ&quot;: ตัวเลขธรรมดา = THB คงที่ / ลงท้ายด้วย % = เปอร์เซ็นต์ / ขึ้นต้นด้วย ={" "}
                         = สูตร เช่น ={"{BASE}"}+{"{FF}"}*7% — พิมพ์ชื่อ/รหัส Charge Code แล้วเลือกจากรายการที่ขึ้นมาเพื่อแทรก{" "}
-                        เว้นว่างแล้วออกจากช่อง = ลบกฎ
+                        เว้นว่างแล้วออกจากช่อง = ลบกฎ · ใช้ IF ได้ เช่น =IF({"{190}"} &gt; 0, 800, 0)
                       </p>
                       <button
                         type="button"
@@ -706,6 +707,9 @@ export default function ConfigMarkupPage() {
                         {simCalculating ? "กำลังคำนวณ..." : "คำนวณผลลัพธ์ทั้งหมด"}
                       </button>
                     </div>
+
+                    {/* Copy an example into a "กฎ" cell with a leading "=" — cells are too narrow for an insert button. */}
+                    <FormulaIfHelp />
 
                     <div className="flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-slate-50 p-3">
                       <span className="text-xs font-medium text-slate-600">ปักหมุด Charge Code เพิ่ม</span>

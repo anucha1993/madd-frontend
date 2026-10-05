@@ -8,6 +8,7 @@ import Modal from "@/components/ui/Modal";
 import PageLoading from "@/components/ui/PageLoading";
 import AgentAccountForm from "@/components/config/AgentAccountForm";
 import { createChargeCode, listChargeCodes, previewChargeFormula, type ChargeCode } from "@/lib/chargeCodes";
+import FormulaIfHelp from "@/components/charges/FormulaIfHelp";
 import {
   createChargeFixedOverride,
   deleteChargeFixedOverride,
@@ -30,6 +31,8 @@ import {
   type TestResult,
 } from "@/lib/agentAccounts";
 
+const ZONE_PRICE_FORMULA = "{ZONE_PRICE}";
+
 // Lets staff plug in made-up amounts for every {CODE} a formula references and see the
 // computed result immediately — so a typo/wrong logic is caught before saving, not silently
 // discovered later on a real shipment quote.
@@ -41,8 +44,11 @@ function FormulaTester({ formula }: { formula: string }) {
   const [result, setResult] = useState<number | null>(null);
   const [testError, setTestError] = useState("");
   const [testing, setTesting] = useState(false);
+  // BOX_OVER(kg) / BOX_KG_OVER(kg) need each box's own weight, e.g. "35, 12, 31".
+  const usesBoxOver = /\bBOX_(KG_)?OVER\s*\(/i.test(formula);
+  const [boxWeights, setBoxWeights] = useState("");
 
-  if (codes.length === 0) return null;
+  if (codes.length === 0 && !usesBoxOver) return null;
 
   async function handleTest() {
     setTesting(true);
@@ -53,7 +59,11 @@ function FormulaTester({ formula }: { formula: string }) {
       codes.forEach((c) => {
         values[c] = Number(testValues[c]) || 0;
       });
-      const res = await previewChargeFormula(formula, values);
+      const weights = boxWeights
+        .split(/[\s,]+/)
+        .map(Number)
+        .filter((w) => w > 0);
+      const res = await previewChargeFormula(formula, values, usesBoxOver ? weights : undefined);
       setResult(res.result);
     } catch (err) {
       setTestError(err instanceof Error ? err.message : "คำนวณไม่สำเร็จ");
@@ -79,6 +89,18 @@ function FormulaTester({ formula }: { formula: string }) {
           </label>
         ))}
       </div>
+      {usesBoxOver && (
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] text-slate-500">น้ำหนักแต่ละกล่อง (kg) สำหรับ BOX_OVER / BOX_KG_OVER — คั่นด้วย , เช่น 35, 12, 31</span>
+          <input
+            type="text"
+            value={boxWeights}
+            onChange={(e) => setBoxWeights(e.target.value)}
+            placeholder="35, 12, 31"
+            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-brand-navy focus:ring-1 focus:ring-brand-navy/20"
+          />
+        </label>
+      )}
       <button
         type="button"
         onClick={handleTest}
@@ -129,7 +151,8 @@ export default function AgentAccountsPage() {
   const [newFixedCodeDropdownOpen, setNewFixedCodeDropdownOpen] = useState(false);
   const [newFixedAmount, setNewFixedAmount] = useState("");
   const [newFixedUnit, setNewFixedUnit] = useState<"THB" | "PERCENTAGE">("THB");
-  const [newOverrideType, setNewOverrideType] = useState<"FIXED" | "FORMULA">("FIXED");
+  // "ZONE" is saved as a FORMULA override of {ZONE_PRICE} (staff's own price per zone, /config/countries).
+  const [newOverrideType, setNewOverrideType] = useState<"FIXED" | "FORMULA" | "ZONE">("FIXED");
   const [newFormula, setNewFormula] = useState("");
   const formulaInputRef = useRef<HTMLTextAreaElement>(null);
   const [formulaCodeQuery, setFormulaCodeQuery] = useState("");
@@ -313,10 +336,10 @@ export default function AgentAccountsPage() {
       await createChargeFixedOverride({
         agent_account_id: fixedChargesAccount.id,
         charge_code_id: Number(newFixedCodeId),
-        override_type: newOverrideType,
+        override_type: newOverrideType === "FIXED" ? "FIXED" : "FORMULA",
         fixed_amount: newOverrideType === "FIXED" ? Number(newFixedAmount) : null,
         unit: newOverrideType === "FIXED" ? newFixedUnit : undefined,
-        formula: newOverrideType === "FORMULA" ? newFormula.trim() : null,
+        formula: newOverrideType === "ZONE" ? ZONE_PRICE_FORMULA : newOverrideType === "FORMULA" ? newFormula.trim() : null,
       });
       setNewFixedCodeId("");
       setNewFixedCodeQuery("");
@@ -863,7 +886,14 @@ export default function AgentAccountsPage() {
                               <div className="text-xs text-slate-400">{o.charge_code?.code}</div>
                             </td>
                             <td className="px-3 py-2 text-slate-600">
-                              {o.override_type === "FORMULA" ? (
+                              {o.override_type === "FORMULA" && o.formula?.replace(/\s/g, "") === ZONE_PRICE_FORMULA ? (
+                                <>
+                                  <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                                    Manual Zone
+                                  </span>
+                                  <div className="text-xs text-slate-400">ราคาตาม Zone (ไม่มีราคา = ใช้ API)</div>
+                                </>
+                              ) : o.override_type === "FORMULA" ? (
                                 <>
                                   <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-600">
                                     Formula
@@ -994,10 +1024,25 @@ export default function AgentAccountsPage() {
                         >
                           Formula
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => setNewOverrideType("ZONE")}
+                          className={`rounded-md px-3 py-1 text-xs font-semibold ${
+                            newOverrideType === "ZONE" ? "bg-brand-navy-dark text-white" : "text-slate-500 hover:bg-slate-100"
+                          }`}
+                        >
+                          Manual Zone
+                        </button>
                       </div>
                     </div>
 
-                    {newOverrideType === "FIXED" ? (
+                    {newOverrideType === "ZONE" ? (
+                      <p className="rounded-lg border border-emerald-200 bg-emerald-50/50 px-3 py-2 text-xs text-slate-600">
+                        ใช้ราคาที่ตั้งเองตาม Zone ของประเทศปลายทาง (หน้า <b>Countries → ราคาตาม Zone</b>) แทนราคาจาก API —
+                        ถ้าปลายทางไม่มีราคาที่ตั้งไว้ จะใช้ราคาจาก API ตามเดิม · ต้องการคูณ/บวกเพิ่ม ใช้ Formula เช่น{" "}
+                        <code className="font-mono">{"{ZONE_PRICE} * {W}"}</code>
+                      </p>
+                    ) : newOverrideType === "FIXED" ? (
                       <div className="flex items-end gap-2">
                         <label className="flex flex-1 flex-col gap-1.5">
                           <span className="text-xs font-medium text-slate-600">
@@ -1036,7 +1081,7 @@ export default function AgentAccountsPage() {
                     ) : (
                       <div className="flex flex-col gap-1.5">
                         <span className="text-xs font-medium text-slate-600">
-                          Formula — คลิก Charge Code ด้านล่างเพื่อแทรก เช่น Excel (รองรับตัวแปรพิเศษ {"{BILLED_WEIGHT}"}, {"{TOTAL}"} ด้วย)
+                          Formula — คลิก Charge Code ด้านล่างเพื่อแทรก เช่น Excel (รองรับตัวแปรพิเศษ {"{BILLED_WEIGHT}"} / {"{W}"}, {"{TOTAL}"}, {"{BOX}"}, {"{ZONE_PRICE}"} และ IF ด้วย)
                         </span>
                         <textarea
                           ref={formulaInputRef}
@@ -1047,7 +1092,7 @@ export default function AgentAccountsPage() {
                           className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-mono text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
                         />
                         <div className="flex flex-wrap gap-1">
-                          {["+", "-", "*", "/", "(", ")", "%"].map((op) => (
+                          {["+", "-", "*", "/", "(", ")", "%", "IF(", ",", ">", "<", ">=", "<=", "=", "&", "|", "BOX_OVER(", "BOX_KG_OVER(", "{ZONE_PRICE}"].map((op) => (
                             <button
                               key={op}
                               type="button"
@@ -1058,6 +1103,7 @@ export default function AgentAccountsPage() {
                             </button>
                           ))}
                         </div>
+                        <FormulaIfHelp onInsert={setNewFormula} />
                         <div ref={formulaCodeBoxRef} className="relative">
                           <input
                             type="text"
@@ -1189,7 +1235,7 @@ export default function AgentAccountsPage() {
                       disabled={
                         fixedSaving ||
                         !newFixedCodeId ||
-                        (newOverrideType === "FIXED" ? !newFixedAmount : !newFormula.trim())
+                        (newOverrideType === "FIXED" ? !newFixedAmount : newOverrideType === "FORMULA" && !newFormula.trim())
                       }
                       className="flex items-center justify-center gap-1.5 self-start whitespace-nowrap rounded-lg bg-brand-amber px-3 py-1.5 text-sm font-semibold text-brand-navy-dark hover:bg-brand-amber/90 disabled:opacity-60"
                     >

@@ -77,6 +77,7 @@ export const NAV_SECTIONS: NavItem[] = [
     icon: Layers,
     children: [
       { label: "Mark-up Settings", href: "/config/markup" },
+      { label: "Charge Display Names", href: "/config/charge-names" },
       { label: "Add-on Settings", href: "/config/addon" },
       { label: "Insurance UPSC", href: "/config/insurance-caps" },
       { label: "Packaging Supplies", href: "/config/supplies" },

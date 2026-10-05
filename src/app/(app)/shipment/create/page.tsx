@@ -26,6 +26,7 @@ import { ApiError } from "@/lib/apiClient";
 import { bookShipment, describeShipmentPieces, downloadDhlOriginalWaybill, openShipmentCommercialInvoice, openShipmentLabel, openShipmentWaybill, printAllShipmentLabels, uploadCommercialInvoiceFile, type BookShipmentInput, type Shipment } from "@/lib/shipments";
 import { getShipmentDraft, createShipmentDraft, updateShipmentDraft, deleteShipmentDraft } from "@/lib/shipmentDrafts";
 import { getUser } from "@/lib/auth";
+import { useChargeDisplayNames } from "@/hooks/useChargeDisplayNames";
 import { getShipmentFieldRules, missingRequiredFields, type ShipmentFieldRules } from "@/lib/shipmentFields";
 import {
   listCustomers,
@@ -298,6 +299,7 @@ export default function ShipmentCreatePage() {
   // Field groups a Role may leave read-only (config/permissions.php) — the API rejects any
   // non-default value for them anyway, so the inputs are locked to their defaults here.
   const { can, canEditField, canSeeField } = useAccess();
+  const chargeName = useChargeDisplayNames();
   const canEditBilling = canEditField("shipment", "billing");
   const canEditRefs = canEditField("shipment", "references");
   // Rate-quote field groups (config/permissions.php `rate`) — the API already strips cost /
@@ -2111,7 +2113,7 @@ export default function ShipmentCreatePage() {
                   return (
                     <div key={li} className="flex items-center justify-between text-xs">
                       <span className={canSeeMarkup && line.isCustomCharge ? "text-emerald-600" : "text-slate-500"}>
-                        {line.description}
+                        {chargeName(selectedQuote.carrier, line.code, line.description, selectedQuote.chargeBreakdown)}
                         {line.code ? <span className="text-slate-300"> ({line.code})</span> : null}
                         {markupBasis && <span className="ml-1 text-emerald-600">({markupBasis})</span>}
                         {canSeeMarkup && insuranceMarkupPct !== 0 && <span className="ml-1 text-emerald-600">(+{insuranceMarkupPct}%)</span>}
@@ -3523,7 +3525,7 @@ export default function ShipmentCreatePage() {
                               return (
                               <div key={li} className="flex items-center justify-between text-xs">
                                 <span className={canSeeMarkup && line.isCustomCharge ? "text-emerald-600" : "text-slate-500"}>
-                                  {line.description}
+                                  {chargeName(r.carrier, line.code, line.description, r.chargeBreakdown)}
                                   {line.code ? <span className="text-slate-300"> ({line.code})</span> : null}
                                   {markupBasis && <span className="ml-1 text-emerald-600">({markupBasis})</span>}
                                   {canSeeMarkup && insuranceMarkupPct !== 0 && <span className="ml-1 text-emerald-600">(+{insuranceMarkupPct}%)</span>}

@@ -22,6 +22,7 @@ import {
 } from "@/lib/shipments";
 import { listBranches, branchLabel } from "@/lib/branches";
 import { getUser } from "@/lib/auth";
+import { useChargeDisplayNames } from "@/hooks/useChargeDisplayNames";
 
 /* ---------------------------------------------------------------------------
    Layout
@@ -128,6 +129,7 @@ const headerBtn =
 
 export default function ShipmentViewPage() {
   const { can, canSeeField } = useAccess();
+  const chargeName = useChargeDisplayNames();
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const shipmentId = Number(params.id);
@@ -685,7 +687,7 @@ export default function ShipmentViewPage() {
               <div className="mt-3 flex flex-col gap-1 border-t border-slate-100 pt-3 text-[13px]">
                 {charges.map((c, i) => (
                   <div key={i} className="flex justify-between gap-3 text-slate-500">
-                    <span className="min-w-0 truncate">{c.description}</span>
+                    <span className="min-w-0 truncate">{chargeName(s.carrier, c.code, c.description, charges)}</span>
                     <span className="shrink-0 tabular-nums">{money(c.amount)}</span>
                   </div>
                 ))}
