@@ -2117,7 +2117,7 @@ export default function ShipmentCreatePage() {
                         {canSeeMarkup && insuranceMarkupPct !== 0 && <span className="ml-1 text-emerald-600">(+{insuranceMarkupPct}%)</span>}
                       </span>
                       <span className={`font-medium ${canSeeMarkup && (line.isCustomCharge || insuranceMarkupPct !== 0) ? "text-emerald-600" : "text-slate-600"}`}>
-                        {displayAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {line.currency}
+                        {Math.ceil(displayAmount).toLocaleString(undefined, { maximumFractionDigits: 0 })} {line.currency}
                       </span>
                     </div>
                   );
@@ -3529,7 +3529,7 @@ export default function ShipmentCreatePage() {
                                   {canSeeMarkup && insuranceMarkupPct !== 0 && <span className="ml-1 text-emerald-600">(+{insuranceMarkupPct}%)</span>}
                                 </span>
                                 <span className={`font-medium ${canSeeMarkup && (line.isCustomCharge || insuranceMarkupPct !== 0) ? "text-emerald-600" : "text-slate-600"}`}>
-                                  {displayAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {line.currency}
+                                  {Math.ceil(displayAmount).toLocaleString(undefined, { maximumFractionDigits: 0 })} {line.currency}
                                 </span>
                               </div>
                               );
