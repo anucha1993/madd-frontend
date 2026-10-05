@@ -1968,7 +1968,9 @@ export default function ShipmentCreatePage() {
       .filter((c) => c.code && costOnlyCodes.includes(c.code))
       .reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
     const rawTotal = r.negotiated ?? r.published ?? 0;
-    return { sellAmount: rawTotal - costOnlyAmount, costOnlyCodes };
+    // Sell price is always a whole number — round UP (e.g. 4.9 -> 5), never down, so a leftover
+    // fraction is never quietly absorbed as a loss.
+    return { sellAmount: Math.ceil(rawTotal - costOnlyAmount), costOnlyCodes };
   }
 
   // The carrier's own cost-only insurance line (see getSellFreightAmount) only turns into an
@@ -2076,7 +2078,7 @@ export default function ShipmentCreatePage() {
                 <span className="text-sm font-semibold text-slate-700">{selectedQuote.carrier}</span>
               </div>
               <span className="text-sm font-bold text-brand-navy-dark">
-                {freightAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {selectedQuote.currency}
+                {freightAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })} {selectedQuote.currency}
               </span>
             </div>
             <p className="text-xs text-slate-500">{selectedQuote.serviceLabel}</p>
@@ -2139,7 +2141,7 @@ export default function ShipmentCreatePage() {
               Freight ({selectedQuote?.carrier ?? "-"})
             </span>
             <span className="font-medium text-slate-700">
-              {freightAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} THB
+              {freightAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })} THB
               {!!selectedQuote?.markupTotal && (
                 <span className="ml-1 font-normal text-emerald-600">
                   (+{selectedQuote.markupTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })} Marked Up)
@@ -3484,7 +3486,7 @@ export default function ShipmentCreatePage() {
                             <span className="text-sm font-semibold text-slate-700">{r.carrier}</span>
                           </div>
                           <span className="text-sm font-bold text-brand-navy-dark">
-                            {sellAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {r.currency}
+                            {sellAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })} {r.currency}
                           </span>
                         </div>
                         <p className="mt-0.5 text-xs text-slate-500">
