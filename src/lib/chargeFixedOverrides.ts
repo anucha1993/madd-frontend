@@ -46,3 +46,18 @@ export const updateChargeFixedOverride = (
 
 export const deleteChargeFixedOverride = (id: number) =>
   apiClient.delete<{ message: string }>(`/charge-fixed-overrides/${id}`);
+
+export type CloneChargeFixedOverridesInput = {
+  source_agent_account_id: number;
+  target_agent_account_ids: number[];
+  // Omit to clone every override of the source account.
+  override_ids?: number[];
+  // true = replace a code the target already has; false = skip it.
+  overwrite?: boolean;
+};
+
+export const cloneChargeFixedOverrides = (data: CloneChargeFixedOverridesInput) =>
+  apiClient.post<{ message: string; created: number; updated: number; skipped: number }>(
+    "/charge-fixed-overrides/clone",
+    data,
+  );

@@ -97,6 +97,12 @@ function explainAddressValidationError(message: string): {
   return { fieldKey, fieldLabel: fieldKey ? fieldLabel[fieldKey] : null, isSandboxLimitation };
 }
 
+// State codes are plain ASCII (NY, ON, ...). Pasted text often carries invisible characters
+// (zero-width spaces, direction marks) that look like "NY" but reach UPS as "??NY".
+function cleanStateCode(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
 function levenshteinDistance(a: string, b: string): number {
   if (a === b) return 0;
   if (!a.length) return b.length;
@@ -406,10 +412,33 @@ export default function ShipmentCreatePage() {
   const [addressValidationResult, setAddressValidationResult] = useState<AddressValidationResult | null>(null);
   const [addressValidationError, setAddressValidationError] = useState("");
   const [addressValidationOverridden, setAddressValidationOverridden] = useState(false);
-  // Which Ship To input the error message is guessed to be about (see
-  // explainAddressValidationError) — used to draw a red border on that specific input.
-  const addressValidationErrorField =
-    addressValidationStatus === "error" ? explainAddressValidationError(addressValidationError).fieldKey : null;
+  // UPS (verified live) still answers "valid" when the street exists but City/State/Postcode
+  // were typed wrong — it silently returns the corrected values in the candidate instead. These
+  // are the Ship To fields whose typed value differs from what UPS matched.
+  const addressValidationCorrections: { field: Exclude<AddressValidationFieldKey, null>; label: string; value: string }[] = (() => {
+    const top = addressValidationResult?.candidates[0];
+    if (addressValidationStatus !== "ok" || !top || addressValidationOverridden) return [];
+    const norm = (v: string | null | undefined) => (v ?? "").trim().toUpperCase();
+    const fixes: { field: Exclude<AddressValidationFieldKey, null>; label: string; value: string }[] = [];
+    if (top.city && norm(top.city) !== norm(destinationCity)) fixes.push({ field: "city", label: "City", value: top.city });
+    if (top.state && norm(top.state) !== norm(destinationState)) fixes.push({ field: "state", label: "State", value: top.state });
+    // Compare the 5-digit ZIP only — UPS appends ZIP+4 (e.g. 10118-0114) to every match.
+    if (top.postcode && norm(top.postcode).slice(0, 5) !== norm(destinationPostcode).slice(0, 5))
+      fixes.push({ field: "postcode", label: "Postal Code", value: top.postcode });
+    return fixes;
+  })();
+
+  // Which Ship To inputs get a red border: the field an error message is guessed to be about
+  // (see explainAddressValidationError); the street for "no candidates" — UPS (verified live)
+  // only answers that when it can't find the street itself, a wrong City/State/Postcode next to
+  // a real street still matches; or the fields UPS corrected above.
+  const addressValidationErrorFields = new Set<AddressValidationFieldKey>(
+    addressValidationStatus === "error"
+      ? [explainAddressValidationError(addressValidationError).fieldKey]
+      : addressValidationStatus === "invalid"
+        ? ["address"]
+        : addressValidationCorrections.map((c) => c.field),
+  );
 
   // Any edit to the Ship To address fields invalidates a previous validation result — staff
   // must re-check (or re-override) before Next is enabled again.
@@ -469,7 +498,7 @@ export default function ShipmentCreatePage() {
 
   const applyAddressValidationCandidate = (candidate: AddressValidationResult["candidates"][number]) => {
     if (candidate.city) setDestinationCity(candidate.city);
-    if (candidate.state) setDestinationState(candidate.state);
+    if (candidate.state) setDestinationState(cleanStateCode(candidate.state));
     if (candidate.postcode) setDestinationPostcode(candidate.postcode);
     if (candidate.addressLines[0]) setDestinationAddress(candidate.addressLines[0]);
     if (candidate.addressLines[1]) setDestinationAddress2(candidate.addressLines[1]);
@@ -888,7 +917,7 @@ export default function ShipmentCreatePage() {
     setDestinationTaxId(d.taxId ?? "");
     setDestinationCountry(d.country ?? "");
     setDestinationCity(d.city ?? "");
-    setDestinationState(d.state ?? "");
+    setDestinationState(cleanStateCode(d.state ?? ""));
     setDestinationPostcode(d.postcode ?? "");
     setDestinationAddress(d.address ?? "");
     setDestinationAddress2(d.address2 ?? "");
@@ -1477,7 +1506,7 @@ export default function ShipmentCreatePage() {
       setDestinationEmail(addr.email ?? "");
       if (addr.country) setDestinationCountry(addr.country);
       setDestinationCity(addr.city ?? "");
-      setDestinationState(addr.state_code ?? "");
+      setDestinationState(cleanStateCode(addr.state_code ?? ""));
       setDestinationPostcode(addr.postcode ?? "");
       setDestinationAddress(addr.address1 ?? "");
       setDestinationAddress2(addr.address2 ?? "");
@@ -1888,7 +1917,7 @@ export default function ShipmentCreatePage() {
   // Tailwind v4 important modifier is a trailing "!" (not a leading one) — needed here since it
   // must win over inputClass's own border-slate-300/focus:border-brand-navy utilities.
   const errorInputClass = (field: AddressValidationFieldKey) =>
-    addressValidationErrorField === field ? "border-red-400! focus:border-red-500! ring-1! ring-red-200!" : "";
+    field && addressValidationErrorFields.has(field) ? "border-red-400! focus:border-red-500! ring-1! ring-red-200!" : "";
 
   const okResults = (results ?? []).filter((r) => !r.error).sort((a, b) => (a.negotiated ?? a.published ?? Infinity) - (b.negotiated ?? b.published ?? Infinity));
   // Every failed account/service call, deduped by carrier+message — surfaced to staff instead of
@@ -2633,7 +2662,7 @@ export default function ShipmentCreatePage() {
             </label>
             <label className="flex flex-col gap-1">
               <span className={labelClass}>Country</span>
-              <CountrySelect value={destinationCountry} onChange={setDestinationCountry} invalid={addressValidationErrorField === "country"} />
+              <CountrySelect value={destinationCountry} onChange={setDestinationCountry} invalid={addressValidationErrorFields.has("country")} />
             </label>
             <div className="grid grid-cols-2 gap-2.5">
               <label className="flex flex-col gap-1">
@@ -2651,7 +2680,7 @@ export default function ShipmentCreatePage() {
                   <input
                     type="text"
                     value={destinationState}
-                    onChange={(e) => setDestinationState(e.target.value.toUpperCase())}
+                    onChange={(e) => setDestinationState(cleanStateCode(e.target.value))}
                     placeholder="e.g. NY"
                     maxLength={10}
                     className={`${inputClass} ${errorInputClass("state")} ${destinationState ? "pr-8" : ""}`}
@@ -2805,6 +2834,22 @@ export default function ShipmentCreatePage() {
             </p>
           )}
 
+          {addressValidationCorrections.length > 0 && addressValidationResult && (
+            <>
+              <p className="text-amber-700">
+                แต่ UPS จับคู่ได้กับค่าที่ต่างจากที่กรอก (ขึ้นกรอบสีแดงไว้ให้ด้านบน):{" "}
+                {addressValidationCorrections.map((c) => `${c.label} = ${c.value}`).join(", ")}
+              </p>
+              <button
+                type="button"
+                onClick={() => applyAddressValidationCandidate(addressValidationResult.candidates[0])}
+                className="self-start font-medium text-amber-700 underline hover:text-amber-800"
+              >
+                ใช้ค่าที่ UPS แนะนำ
+              </button>
+            </>
+          )}
+
           {addressValidationStatus === "error" && (() => {
             const { fieldLabel, isSandboxLimitation } = explainAddressValidationError(addressValidationError);
             return (
@@ -2839,6 +2884,9 @@ export default function ShipmentCreatePage() {
             <>
               <p className="flex items-center gap-1.5 font-medium text-amber-700">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> UPS ไม่พบที่อยู่นี้ในระบบ กรุณาตรวจสอบอีกครั้ง
+              </p>
+              <p className="text-slate-500">
+                UPS หา <strong>เลขที่ / ชื่อถนน</strong> นี้ไม่เจอ (ขึ้นกรอบสีแดงที่ Address 1) — ตรวจการสะกดชื่อถนน เลขที่ และตัวย่อ เช่น St / Ave
               </p>
               <button
                 type="button"

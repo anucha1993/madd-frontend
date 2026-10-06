@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Banknote, Image as ImageIcon, KeyRound, Loader2, Pencil, Plug, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { Banknote, Copy, Image as ImageIcon, KeyRound, Loader2, Pencil, Plug, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useAccess } from "@/components/auth/AccessProvider";
 import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
@@ -10,6 +10,7 @@ import AgentAccountForm from "@/components/config/AgentAccountForm";
 import { createChargeCode, listChargeCodes, previewChargeFormula, type ChargeCode } from "@/lib/chargeCodes";
 import FormulaIfHelp from "@/components/charges/FormulaIfHelp";
 import {
+  cloneChargeFixedOverrides,
   createChargeFixedOverride,
   deleteChargeFixedOverride,
   listChargeFixedOverrides,
@@ -165,6 +166,11 @@ export default function AgentAccountsPage() {
   const [creatingFormulaCode, setCreatingFormulaCode] = useState(false);
   const [newFormulaCodeError, setNewFormulaCodeError] = useState("");
   const [fixedSaving, setFixedSaving] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const [cloneTargetIds, setCloneTargetIds] = useState<Set<number>>(new Set());
+  const [cloneOverwrite, setCloneOverwrite] = useState(false);
+  const [cloneSaving, setCloneSaving] = useState(false);
+  const [cloneMessage, setCloneMessage] = useState("");
 
   const [bulkEditMode, setBulkEditMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -306,6 +312,10 @@ export default function AgentAccountsPage() {
     setNewFormulaCodeCategory("");
     setNewFormulaCodeError("");
     setFixedError("");
+    setCloneOpen(false);
+    setCloneTargetIds(new Set());
+    setCloneOverwrite(false);
+    setCloneMessage("");
     setFixedLoading(true);
     try {
       const [overrides, codes] = await Promise.all([
@@ -351,6 +361,43 @@ export default function AgentAccountsPage() {
       setFixedError(err instanceof Error ? err.message : "เพิ่มไม่สำเร็จ");
     } finally {
       setFixedSaving(false);
+    }
+  }
+
+  // Charge codes are per carrier, so only accounts of the same Agent can receive a clone.
+  const cloneCandidates = fixedChargesAccount
+    ? accounts.filter((a) => a.agent_id === fixedChargesAccount.agent_id && a.id !== fixedChargesAccount.id)
+    : [];
+
+  function toggleCloneTarget(id: number) {
+    setCloneTargetIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleCloneFixedOverrides() {
+    if (!fixedChargesAccount || cloneTargetIds.size === 0) return;
+    const targetNames = cloneCandidates.filter((a) => cloneTargetIds.has(a.id)).map((a) => a.username_acc).join(", ");
+    const action = cloneOverwrite ? "และเขียนทับรายการที่มีอยู่แล้ว" : "(ข้ามรายการที่มีอยู่แล้ว)";
+    if (!confirm(`Clone ${fixedOverrides.length} รายการไปยัง ${targetNames} ${action} ?`)) return;
+    setCloneSaving(true);
+    setFixedError("");
+    setCloneMessage("");
+    try {
+      const res = await cloneChargeFixedOverrides({
+        source_agent_account_id: fixedChargesAccount.id,
+        target_agent_account_ids: Array.from(cloneTargetIds),
+        overwrite: cloneOverwrite,
+      });
+      setCloneMessage(res.message);
+      setCloneTargetIds(new Set());
+    } catch (err) {
+      setFixedError(err instanceof Error ? err.message : "Clone ไม่สำเร็จ");
+    } finally {
+      setCloneSaving(false);
     }
   }
 
@@ -947,6 +994,60 @@ export default function AgentAccountsPage() {
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                )}
+
+                {can("config.markup") && fixedOverrides.length > 0 && (
+                  <div className="flex flex-col gap-2 rounded-lg border border-slate-200 p-3">
+                    <button
+                      type="button"
+                      onClick={() => setCloneOpen((v) => !v)}
+                      className="flex items-center gap-1.5 self-start text-sm font-medium text-brand-navy hover:underline"
+                    >
+                      <Copy className="h-4 w-4" /> Clone ทั้งหมด ({fixedOverrides.length} รายการ) ไปยังบัญชีอื่น
+                    </button>
+                    {cloneOpen &&
+                      (cloneCandidates.length === 0 ? (
+                        <p className="text-xs text-slate-400">ไม่มีบัญชีอื่นของ {fixedChargesAccount.agent?.agent_name ?? "Agent นี้"} ให้ Clone ไป</p>
+                      ) : (
+                        <>
+                          <p className="text-xs text-slate-400">
+                            เลือกบัญชีปลายทาง (เฉพาะ {fixedChargesAccount.agent?.agent_name ?? "Agent เดียวกัน"} เพราะ Charge Code แยกตาม Carrier)
+                          </p>
+                          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                            <input
+                              type="checkbox"
+                              checked={cloneTargetIds.size === cloneCandidates.length}
+                              onChange={(e) =>
+                                setCloneTargetIds(e.target.checked ? new Set(cloneCandidates.map((a) => a.id)) : new Set())
+                              }
+                            />
+                            เลือกทั้งหมด
+                          </label>
+                          <div className="grid max-h-40 grid-cols-2 gap-1 overflow-y-auto sm:grid-cols-3">
+                            {cloneCandidates.map((a) => (
+                              <label key={a.id} className="flex items-center gap-2 text-sm text-slate-700">
+                                <input type="checkbox" checked={cloneTargetIds.has(a.id)} onChange={() => toggleCloneTarget(a.id)} />
+                                {a.username_acc}
+                                {a.mode === "test" && <span className="text-[10px] uppercase text-slate-400">test</span>}
+                              </label>
+                            ))}
+                          </div>
+                          <label className="flex items-center gap-2 text-xs text-slate-600">
+                            <input type="checkbox" checked={cloneOverwrite} onChange={(e) => setCloneOverwrite(e.target.checked)} />
+                            เขียนทับ Charge Code ที่บัญชีปลายทางตั้งไว้แล้ว (ไม่ติ๊ก = ข้ามรายการนั้น)
+                          </label>
+                          <button
+                            type="button"
+                            onClick={handleCloneFixedOverrides}
+                            disabled={cloneSaving || cloneTargetIds.size === 0}
+                            className="flex items-center gap-1.5 self-start rounded-lg bg-brand-amber px-3 py-1.5 text-sm font-semibold text-brand-navy-dark hover:bg-brand-amber/90 disabled:opacity-60"
+                          >
+                            <Copy className="h-4 w-4" /> {cloneSaving ? "..." : `Clone ไป ${cloneTargetIds.size} บัญชี`}
+                          </button>
+                        </>
+                      ))}
+                    {cloneMessage && <p className="text-sm text-emerald-600">{cloneMessage}</p>}
                   </div>
                 )}
 
