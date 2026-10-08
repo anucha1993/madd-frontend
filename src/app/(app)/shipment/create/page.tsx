@@ -784,10 +784,11 @@ export default function ShipmentCreatePage() {
     if (!selectedQuote) return;
     packages.forEach((pkg) => {
       if (!pkg.insured || (selectedQuote.carrier === "UPS" && pkg.is_document)) return;
-      const { carrierOption, thirdPartyOption } = getInsuranceOptionsForPackage(pkg.productType);
+      const { carrierOption, thirdPartyOption, extraOptions } = getInsuranceOptionsForPackage(pkg.productType);
       const selectedRow = addonRows.find((r) => r.packageKey === pkg.key && r.category === "Insurance");
       const stillEligible =
-        !!selectedRow && (selectedRow.addonItemId === carrierOption?.id || selectedRow.addonItemId === thirdPartyOption?.id);
+        !!selectedRow &&
+        [carrierOption, thirdPartyOption, ...extraOptions].some((o) => o?.id === selectedRow.addonItemId);
       if (!stillEligible) autoSelectPackageInsurer(pkg);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1180,10 +1181,11 @@ export default function ShipmentCreatePage() {
     updatePackage(key, { productType });
     const pkg = packages.find((p) => p.key === key);
     if (!pkg?.insured) return;
-    const { carrierOption, thirdPartyOption } = getInsuranceOptionsForPackage(productType);
+    const { carrierOption, thirdPartyOption, extraOptions } = getInsuranceOptionsForPackage(productType);
     const selectedRow = addonRows.find((r) => r.packageKey === key && r.category === "Insurance");
     const stillEligible =
-      !!selectedRow && (selectedRow.addonItemId === carrierOption?.id || selectedRow.addonItemId === thirdPartyOption?.id);
+      !!selectedRow &&
+      [carrierOption, thirdPartyOption, ...extraOptions].some((o) => o?.id === selectedRow.addonItemId);
     if (stillEligible) return;
     applyDefaultInsurer(pkg, productType, carrierOption, thirdPartyOption);
   }
@@ -1994,9 +1996,14 @@ export default function ShipmentCreatePage() {
           return matchesCarrier && matchesCustomerType && matchesProductType;
         })
       : [];
+    // "แสดงทุกเมื่อ" (always_show) items — special customer rates — never take one of the two
+    // default slots below (so they can't shadow, or be shadowed by, the regular items) and are
+    // never auto-selected; they're listed as extra choices instead.
+    const regular = items.filter((i) => !i.always_show);
     return {
-      carrierOption: items.find((i) => !isThirdPartyInsuranceItem(i)) ?? null,
-      thirdPartyOption: items.find((i) => isThirdPartyInsuranceItem(i)) ?? null,
+      carrierOption: regular.find((i) => !isThirdPartyInsuranceItem(i)) ?? null,
+      thirdPartyOption: regular.find((i) => isThirdPartyInsuranceItem(i)) ?? null,
+      extraOptions: items.filter((i) => i.always_show),
     };
   }
 
@@ -2260,10 +2267,12 @@ export default function ShipmentCreatePage() {
   // per package rather than once for the whole shipment. Just two inline radio + label — details
   // (price basis / block reason) are in the title tooltip, not on-screen, to stay compact.
   function renderInsurancePicker(pkg: PackageRow) {
-    const { carrierOption: insuranceCarrierOption, thirdPartyOption: insuranceThirdPartyOption } = getInsuranceOptionsForPackage(
-      pkg.productType,
-    );
-    if (!insuranceCarrierOption && !insuranceThirdPartyOption) {
+    const {
+      carrierOption: insuranceCarrierOption,
+      thirdPartyOption: insuranceThirdPartyOption,
+      extraOptions: insuranceExtraOptions,
+    } = getInsuranceOptionsForPackage(pkg.productType);
+    if (!insuranceCarrierOption && !insuranceThirdPartyOption && insuranceExtraOptions.length === 0) {
       return <p className="text-sm text-slate-400">ไม่มีตัวเลือกประกันที่ตรงเงื่อนไข — กรุณาเลือก Rate Quote ก่อน</p>;
     }
     const radioName = `insurance-${pkg.key}`;
@@ -2336,6 +2345,45 @@ export default function ShipmentCreatePage() {
               </label>
             );
           })()}
+        {insuranceExtraOptions.map((option) => {
+          // Same guards selectPackageInsurance enforces, keyed off what kind of item this is.
+          const isThirdParty = isThirdPartyInsuranceItem(option);
+          const reason =
+            isThirdParty && insuranceCap?.note
+              ? `⚠ ไม่พร้อมขายสำหรับปลายทางนี้ (${insuranceCap.note})`
+              : !isThirdParty && upsDocumentNotCovered
+                ? "⚠ UPS ไม่คุ้มครองพัสดุประเภทเอกสาร (Document) ด้วยประกันของ UPS เอง"
+                : option.price_type === "API_COST" && quotedDeclaredValues[pkg.key] !== packageTotalDeclaredValue(pkg)
+                  ? "⚠ มูลค่าสินค้าเปลี่ยนไปตั้งแต่เช็ค Rate ล่าสุด — กรุณากด Check Rate ใหม่ก่อนเลือกประกันนี้"
+                  : null;
+          const selected = addonRows.some((r) => r.packageKey === pkg.key && r.addonItemId === option.id);
+          return (
+            <label
+              key={option.id}
+              title={
+                reason ??
+                `เรทพิเศษ (${option.carriers.join("/")}) — ${
+                  option.price_type === "PERCENT" && option.price != null
+                    ? `${Number(option.price).toLocaleString()}% ของมูลค่าสินค้า`
+                    : option.price_type === "API_COST"
+                      ? "ราคาขาย = ค่าประกันจริงที่ carrier เรียกเก็บ (ตาม API)"
+                      : "ราคาขายตามที่ตั้งค่าไว้ที่ Config"
+                }`
+              }
+              className={`flex items-center gap-1.5 ${reason ? "cursor-not-allowed text-slate-300" : "cursor-pointer text-slate-700"}`}
+            >
+              <input
+                type="radio"
+                name={radioName}
+                checked={selected}
+                disabled={!!reason}
+                onChange={() => selectPackageInsurance(pkg, option)}
+                className="h-3.5 w-3.5 text-brand-amber focus:ring-brand-amber/30"
+              />
+              {option.name}
+            </label>
+          );
+        })}
         </div>
         {upsDocumentNotCovered && (
           <p className="text-xs font-medium text-amber-600">⚠ UPS ไม่คุ้มครองพัสดุประเภทเอกสาร (Document) ด้วยประกันของ UPS เอง</p>

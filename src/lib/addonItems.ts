@@ -19,6 +19,8 @@ export type AddonItem = {
   // Extra % applied on top of whatever price_type already computes — independent of price_type.
   markup_percent: string | number | null;
   trigger_type: "MANUAL" | "AUTO";
+  // Insurance only — listed as an extra choice beside the usual carrier-own/UPSC pair.
+  always_show?: boolean;
   status: boolean;
   note: string | null;
   category?: AddonCategory;
@@ -48,6 +50,7 @@ export type AddonItemInput = {
   price?: number | null;
   markup_percent?: number | null;
   trigger_type: "MANUAL" | "AUTO";
+  always_show?: boolean;
   status?: boolean;
   note?: string;
 };

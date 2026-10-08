@@ -41,6 +41,7 @@ type ItemForm = {
   price: string;
   markup_percent: string;
   trigger_type: "MANUAL" | "AUTO";
+  always_show: boolean;
   status: boolean;
   note: string;
 };
@@ -54,6 +55,7 @@ const emptyForm: ItemForm = {
   price: "",
   markup_percent: "",
   trigger_type: "MANUAL",
+  always_show: false,
   status: true,
   note: "",
 };
@@ -102,6 +104,8 @@ export default function AddonSettingsPage() {
   }
 
   const visibleItems = items.filter((i) => i.addon_category_id === activeCategoryId);
+  // Create Shipment only treats the category literally named "Insurance" as insurance.
+  const isInsuranceCategory = categories.find((c) => c.id === activeCategoryId)?.name === "Insurance";
 
   async function handleAddCategory() {
     if (!newCategoryName.trim()) return;
@@ -150,6 +154,7 @@ export default function AddonSettingsPage() {
       price: item.price != null ? String(item.price) : "",
       markup_percent: item.markup_percent != null ? String(item.markup_percent) : "",
       trigger_type: item.trigger_type,
+      always_show: !!item.always_show,
       status: item.status,
       note: item.note ?? "",
     });
@@ -201,6 +206,7 @@ export default function AddonSettingsPage() {
         price: form.price ? Number(form.price) : null,
         markup_percent: form.markup_percent ? Number(form.markup_percent) : null,
         trigger_type: form.trigger_type,
+        always_show: isInsuranceCategory ? form.always_show : false,
         status: form.status,
         note: form.note.trim() || undefined,
       };
@@ -319,6 +325,11 @@ export default function AddonSettingsPage() {
                         <tr key={item.id} className="border-b border-slate-200 last:border-0">
                           <td className="px-5 py-3 font-medium text-slate-700">
                             {item.name}
+                            {item.always_show && (
+                              <span className="ml-1.5 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-600">
+                                แสดงทุกเมื่อ
+                              </span>
+                            )}
                             {item.note && <div className="text-xs font-normal text-slate-400">{item.note}</div>}
                           </td>
                           <td className="px-5 py-3 text-slate-500">{item.carriers.join(" / ")}</td>
@@ -559,6 +570,24 @@ export default function AddonSettingsPage() {
                     </select>
                   </label>
                 </div>
+
+                {isInsuranceCategory && (
+                  <label className="flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+                    <input
+                      type="checkbox"
+                      checked={form.always_show}
+                      onChange={(e) => setForm((prev) => ({ ...prev, always_show: e.target.checked }))}
+                      className="mt-0.5 h-4 w-4 rounded border-slate-300"
+                    />
+                    <span className="text-sm text-slate-600">
+                      แสดงทุกเมื่อ (เรทพิเศษ)
+                      <span className="block text-xs text-slate-400">
+                        ขึ้นเป็นตัวเลือกเพิ่มข้างประกันปกติ ไม่แย่งที่ และไม่ถูกเลือกให้อัตโนมัติ — ยังกรองตาม Carrier / Customer Type /
+                        Product Type ด้านบนเหมือนเดิม
+                      </span>
+                    </span>
+                  </label>
+                )}
 
                 <label className="flex flex-col gap-1.5">
                   <span className="text-sm font-medium text-slate-600">Note (optional)</span>
