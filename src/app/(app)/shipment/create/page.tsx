@@ -146,12 +146,12 @@ const DHL_CHECKBOX_OPTIONS = [
   { code: "WM", label: "Temporary Import/Export" },
 ];
 
-// UPS Optional Services — DCIS1/2/3 are the package-level DeliveryConfirmation signature
-// options (mutually exclusive, like DHL's); ADDRESSEE_ONLY/DIRECT_ONLY are also package-level;
-// SATURDAY is shipment-level (SaturdayDeliveryIndicator). See UpsShipmentService.php.
+// UPS Optional Services — DCIS2/3 are the signature options (mutually exclusive, like DHL's),
+// sent shipment-level since UPS only allows that internationally (no "Delivery Confirmation
+// without signature" exists there); ADDRESSEE_ONLY/DIRECT_ONLY are package-level; SATURDAY is
+// shipment-level. See backend app/Support/UpsOptionalServices.php.
 const UPS_SIGNATURE_OPTIONS = [
   { code: "", label: "None" },
-  { code: "DCIS1", label: "Delivery Confirmation" },
   { code: "DCIS2", label: "Signature Required" },
   { code: "DCIS3", label: "Adult Signature Required" },
 ];
@@ -245,6 +245,26 @@ function sellWeightFor(pkg: Pick<PackageRow, "weight" | "forcedWeightBandId" | "
 // The single source of truth for "how much is this whole row (all `quantity` boxes) insured
 // for" — always a TOTAL regardless of which input mode staff used, sent to the backend as-is
 // (DHL sums row totals directly; UPS divides by quantity per expanded box, see UpsRateService).
+// Insurance Country Caps (/config/insurance-caps) hold the coverage limit twice: *_max_value in
+// THB and *_max_declared in USD (e.g. Spain UPS 2,400,000 THB = 75,000 USD). Declared values here
+// are THB, so only the *_max_value columns may be compared against them.
+function insuranceCapThb(cap: InsuranceCountryCap | null, carrier: "UPS" | "DHL" | null | undefined): number | null {
+  if (!cap) return null;
+  const values =
+    carrier === "UPS" ? [cap.ups_max_value] : carrier === "DHL" ? [cap.dhl_max_value] : [cap.ups_max_value, cap.dhl_max_value];
+  const nums = values.filter((v): v is number | string => v != null && v !== "").map(Number);
+  return nums.length > 0 ? Math.min(...nums) : null;
+}
+
+// The cap is PER BOX, not per shipment — a row of `quantity` identical boxes is covered up to
+// cap × quantity (each box's own share of the row's declared value clamped to the cap).
+function cappedDeclaredValue(pkg: Pick<PackageRow, "declared_value" | "quantity" | "declared_value_mode">, capPerBox: number | null): number {
+  const total = packageTotalDeclaredValue(pkg);
+  if (capPerBox == null) return total;
+  const qty = Math.max(Number(pkg.quantity) || 1, 1);
+  return Math.min(total / qty, capPerBox) * qty;
+}
+
 function packageTotalDeclaredValue(pkg: Pick<PackageRow, "declared_value" | "quantity" | "declared_value_mode">): number {
   const raw = Number(pkg.declared_value) || 0;
   const qty = Math.max(Number(pkg.quantity) || 1, 1);
@@ -724,6 +744,8 @@ export default function ShipmentCreatePage() {
   // but DOCUMENT insurance is a flat toggle (never typed) that changes the quoted total outright
   // (DHL's IB charge), so flipping it always invalidates old quotes, forcing a guaranteed-fresh
   // re-check instead of ever showing a quote whose price doesn't match the current Insurance state.
+  // Optional Services (signature etc.) are carrier-priced too (e.g. UPS code 121), so changing
+  // them invalidates old quotes the same way.
   const rateAffectingSignature = JSON.stringify(
     packages.map((p) => [p.weight, p.length, p.width, p.height, p.quantity, p.is_document, p.is_document ? p.insured : false]),
   );
@@ -731,7 +753,7 @@ export default function ShipmentCreatePage() {
     setResults(null);
     setSelectedQuote(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rateAffectingSignature, selectedCarriers.join(",")]);
+  }, [rateAffectingSignature, selectedCarriers.join(","), dhlOptionalServiceCodes.join(","), upsOptionalServiceCodes.join(",")]);
 
   // UPS never covers Document packages with insurance at all — if the selected quote is UPS,
   // force-clear "Insurance" (and any leftover addon rows) on every Document package so staff
@@ -950,7 +972,8 @@ export default function ShipmentCreatePage() {
     if (Array.isArray(s.selectedCarriers)) setSelectedCarriers(s.selectedCarriers);
     if (typeof s.dhlSignatureOption === "string") setDhlSignatureOption(s.dhlSignatureOption);
     if (Array.isArray(s.dhlOptionalServices)) setDhlOptionalServices(new Set(s.dhlOptionalServices));
-    if (typeof s.upsSignatureOption === "string") setUpsSignatureOption(s.upsSignatureOption);
+    // DCIS1 (Delivery Confirmation) no longer exists — UPS doesn't offer it internationally.
+    if (typeof s.upsSignatureOption === "string") setUpsSignatureOption(s.upsSignatureOption === "DCIS1" ? "" : s.upsSignatureOption);
     if (Array.isArray(s.upsOptionalServices)) setUpsOptionalServices(new Set(s.upsOptionalServices));
     if (Array.isArray(s.results)) setResults(s.results);
     if (s.selectedQuote) setSelectedQuote(s.selectedQuote);
@@ -1105,18 +1128,12 @@ export default function ShipmentCreatePage() {
       return;
     }
 
-    // Third-party insurance (UPSC) is clamped to the destination country's max declared value
-    // cap (per carrier), per /config/insurance-caps — see InsuranceCountryCap. Carrier-own
+    // Third-party insurance (UPSC) is clamped to the destination country's per-box THB cap (per
+    // carrier), per /config/insurance-caps — see insuranceCapThb/cappedDeclaredValue. Carrier-own
     // insurance (ICDV, DHL) is unaffected — its real price comes from that carrier's own API.
-    const carrierMaxDeclared =
-      selectedQuote?.carrier === "DHL"
-        ? insuranceCap?.dhl_max_declared
-        : selectedQuote?.carrier === "UPS"
-          ? insuranceCap?.ups_max_declared
-          : null;
-    const rawDeclaredValue = packageTotalDeclaredValue(pkg);
-    const effectiveDeclaredValue =
-      isThirdParty && carrierMaxDeclared != null ? Math.min(rawDeclaredValue, Number(carrierMaxDeclared)) : rawDeclaredValue;
+    const effectiveDeclaredValue = isThirdParty
+      ? cappedDeclaredValue(pkg, selectedQuote ? insuranceCapThb(insuranceCap, selectedQuote.carrier as "UPS" | "DHL") : null)
+      : packageTotalDeclaredValue(pkg);
 
     // Carrier-own insurance (ICDV/DHL) SELLING price still follows whatever is configured for
     // this item at /config/addon (FIXED/PERCENT/MANUAL). The real charge the carrier's own API
@@ -3021,12 +3038,94 @@ export default function ShipmentCreatePage() {
         ) : insuranceCap ? (
           <p className="mt-2 text-xs text-slate-400">
             วงเงินคุ้มครองสูงสุดของประกันบุคคลที่สาม (UPSC) ที่ {insuranceCap.country_name}: UPS{" "}
-            {insuranceCap.ups_max_declared != null ? Number(insuranceCap.ups_max_declared).toLocaleString() : "-"} THB / DHL{" "}
-            {insuranceCap.dhl_max_declared != null ? Number(insuranceCap.dhl_max_declared).toLocaleString() : "-"} THB
+            {insuranceCap.ups_max_value != null ? Number(insuranceCap.ups_max_value).toLocaleString() : "-"} THB / DHL{" "}
+            {insuranceCap.dhl_max_value != null ? Number(insuranceCap.dhl_max_value).toLocaleString() : "-"} THB ต่อกล่อง
             (ตาม Insurance Country Caps — มูลค่าที่เกินจะถูกจำกัดอัตโนมัติเมื่อคิดค่าประกัน UPSC เท่านั้น ไม่กระทบ ICDV/DHL API)
           </p>
         ) : null}
       </div> */}
+
+      {/* Optional Services are priced by the carrier (e.g. UPS signature = code 121, DHL SD/NN),
+          so they're chosen BEFORE Check Rate and sent with it — changing one clears old quotes. */}
+      <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
+        <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <ShieldCheck className="h-4 w-4" /> Optional Services
+        </h2>
+        <p className="mb-3 text-xs text-slate-400">
+          บางบริการมีค่าใช้จ่ายเพิ่ม (เช่น Signature) — เลือกก่อนกด Check Rate เพื่อให้ราคารวมค่าบริการนี้แล้ว ใช้กับทั้ง Shipment (ไม่แยกรายกล่อง)
+        </p>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        {selectedCarriers.includes("DHL") && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+            <p className="mb-1.5 text-xs font-semibold text-slate-500">DHL Optional Services</p>
+            <div className="mb-2 flex flex-wrap gap-1">
+              {DHL_SIGNATURE_OPTIONS.map((opt) => (
+                <button
+                  type="button"
+                  key={opt.code}
+                  onClick={() => setDhlSignatureOption(opt.code)}
+                  className={`rounded-md px-2 py-1 text-[11px] font-medium transition ${
+                    dhlSignatureOption === opt.code
+                      ? "bg-brand-navy-dark text-white"
+                      : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {DHL_CHECKBOX_OPTIONS.map((opt) => (
+                <label key={opt.code} className="flex cursor-pointer items-center gap-1 text-[11px] text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={dhlOptionalServices.has(opt.code)}
+                    onChange={() => toggleDhlOptionalService(opt.code)}
+                    className="h-3 w-3 rounded border-slate-300 text-brand-navy focus:ring-brand-navy/30"
+                  />
+                  {opt.label}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {selectedCarriers.includes("UPS") && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+            <p className="mb-1.5 text-xs font-semibold text-slate-500">UPS Optional Services</p>
+            <div className="mb-2 flex flex-wrap gap-1">
+              {UPS_SIGNATURE_OPTIONS.map((opt) => (
+                <button
+                  type="button"
+                  key={opt.code || "none"}
+                  onClick={() => setUpsSignatureOption(opt.code)}
+                  className={`rounded-md px-2 py-1 text-[11px] font-medium transition ${
+                    upsSignatureOption === opt.code
+                      ? "bg-brand-navy-dark text-white"
+                      : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {UPS_CHECKBOX_OPTIONS.map((opt) => (
+                <label key={opt.code} className="flex cursor-pointer items-center gap-1 text-[11px] text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={upsOptionalServices.has(opt.code)}
+                    onChange={() => toggleUpsOptionalService(opt.code)}
+                    className="h-3 w-3 rounded border-slate-300 text-brand-navy focus:ring-brand-navy/30"
+                  />
+                  {opt.label}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+        </div>
+      </div>
 
       <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -3072,12 +3171,10 @@ export default function ShipmentCreatePage() {
                 ? addonItems.find((i) => i.id === selectedInsuranceRow.addonItemId)
                 : undefined;
               const isSelectedThirdParty = selectedInsuranceItem ? isThirdPartyInsuranceItem(selectedInsuranceItem) : false;
-              const capValues = [insuranceCap?.ups_max_declared, insuranceCap?.dhl_max_declared]
-                .filter((v): v is number | string => v != null)
-                .map(Number);
-              const maxCap = capValues.length > 0 ? Math.min(...capValues) : null;
+              // Before a quote is picked the carrier is unknown — preview with the stricter of the two.
+              const capPerBox = insuranceCapThb(insuranceCap, selectedQuote?.carrier as "UPS" | "DHL" | undefined);
               const declaredValueNum = packageTotalDeclaredValue(pkg);
-              const coveredValue = isSelectedThirdParty && maxCap != null ? Math.min(declaredValueNum, maxCap) : declaredValueNum;
+              const coveredValue = isSelectedThirdParty ? cappedDeclaredValue(pkg, capPerBox) : declaredValueNum;
               // API_COST items (e.g. DHL's own insurance) must reflect whatever service is
               // CURRENTLY selected — computed fresh from selectedQuote's real chargeBreakdown on
               // every render instead of a stored addon-row price, so switching between Rate
@@ -3391,7 +3488,7 @@ export default function ShipmentCreatePage() {
                   {pkg.insured && coveredValue < declaredValueNum && (
                     <p className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-700">
                       ⚠ มูลค่าสินค้าที่แจ้ง ({declaredValueNum.toLocaleString()} บาท) เกินวงเงินคุ้มครองสูงสุดของ{" "}
-                      {selectedInsuranceItem?.name ?? "ประกันนี้"} ที่ปลายทางนี้ — คุ้มครองได้สูงสุดแค่{" "}
+                      {selectedInsuranceItem?.name ?? "ประกันนี้"} ที่ปลายทางนี้ ({capPerBox?.toLocaleString()} บาท/กล่อง) — คุ้มครองได้สูงสุดแค่{" "}
                       <strong>{coveredValue.toLocaleString()} บาท</strong> เท่านั้น (ส่วนเกินจะไม่ได้รับความคุ้มครอง)
                     </p>
                   )}
@@ -3672,79 +3769,6 @@ export default function ShipmentCreatePage() {
         <p className="mb-3 text-xs text-slate-400">
           ใช้ออกใบ Invoice ศุลกากรตอนจองจริง ไม่ว่าจะซื้อประกันหรือไม่ก็ตาม — รายการไม่จำเป็นต้องตรงกับจำนวนกล่อง สามารถเพิ่ม/ลบได้ตามใจ
         </p>
-
-        {selectedQuote?.carrier === "DHL" && (
-          // DHL Optional Services don't change the quoted rate (no charge_code impact) — kept
-          // here instead of Step 2 Rate Quotes so it's clearly about customs/delivery handling.
-          <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
-            <p className="mb-1.5 text-xs font-semibold text-slate-500">DHL Optional Services</p>
-            <div className="mb-2 flex flex-wrap gap-1">
-              {DHL_SIGNATURE_OPTIONS.map((opt) => (
-                <button
-                  type="button"
-                  key={opt.code}
-                  onClick={() => setDhlSignatureOption(opt.code)}
-                  className={`rounded-md px-2 py-1 text-[11px] font-medium transition ${
-                    dhlSignatureOption === opt.code
-                      ? "bg-brand-navy-dark text-white"
-                      : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-100"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-x-3 gap-y-1">
-              {DHL_CHECKBOX_OPTIONS.map((opt) => (
-                <label key={opt.code} className="flex cursor-pointer items-center gap-1 text-[11px] text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={dhlOptionalServices.has(opt.code)}
-                    onChange={() => toggleDhlOptionalService(opt.code)}
-                    className="h-3 w-3 rounded border-slate-300 text-brand-navy focus:ring-brand-navy/30"
-                  />
-                  {opt.label}
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {selectedQuote?.carrier === "UPS" && (
-          // UPS Optional Services also don't change the quoted rate — same reasoning as DHL's.
-          <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
-            <p className="mb-1.5 text-xs font-semibold text-slate-500">UPS Optional Services</p>
-            <div className="mb-2 flex flex-wrap gap-1">
-              {UPS_SIGNATURE_OPTIONS.map((opt) => (
-                <button
-                  type="button"
-                  key={opt.code || "none"}
-                  onClick={() => setUpsSignatureOption(opt.code)}
-                  className={`rounded-md px-2 py-1 text-[11px] font-medium transition ${
-                    upsSignatureOption === opt.code
-                      ? "bg-brand-navy-dark text-white"
-                      : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-100"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-x-3 gap-y-1">
-              {UPS_CHECKBOX_OPTIONS.map((opt) => (
-                <label key={opt.code} className="flex cursor-pointer items-center gap-1 text-[11px] text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={upsOptionalServices.has(opt.code)}
-                    onChange={() => toggleUpsOptionalService(opt.code)}
-                    className="h-3 w-3 rounded border-slate-300 text-brand-navy focus:ring-brand-navy/30"
-                  />
-                  {opt.label}
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
 
         <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
           <p className="font-semibold text-slate-700">Commercial Invoice</p>
@@ -4139,8 +4163,8 @@ export default function ShipmentCreatePage() {
         ) : insuranceCap ? (
           <p className="mt-2 text-xs text-slate-400">
             วงเงินคุ้มครองสูงสุดของประกันบุคคลที่สาม (UPSC) ที่ {insuranceCap.country_name}: UPS{" "}
-            {insuranceCap.ups_max_declared != null ? Number(insuranceCap.ups_max_declared).toLocaleString() : "-"} THB / DHL{" "}
-            {insuranceCap.dhl_max_declared != null ? Number(insuranceCap.dhl_max_declared).toLocaleString() : "-"} THB
+            {insuranceCap.ups_max_value != null ? Number(insuranceCap.ups_max_value).toLocaleString() : "-"} THB / DHL{" "}
+            {insuranceCap.dhl_max_value != null ? Number(insuranceCap.dhl_max_value).toLocaleString() : "-"} THB ต่อกล่อง
             (ตาม Insurance UPSC — มูลค่าที่เกินจะถูกจำกัดอัตโนมัติเมื่อคิดค่าประกัน UPSC เท่านั้น ไม่กระทบ ICDV/DHL API)
           </p>
         ) : null}

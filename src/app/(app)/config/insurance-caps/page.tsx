@@ -88,7 +88,7 @@ function CapForm({
       </div>
       <div className="grid grid-cols-2 gap-3">
         <label className="flex flex-col gap-1">
-          <span className={labelClass}>UPS Max Value (THB)</span>
+          <span className={labelClass}>UPS Max Value (THB/กล่อง)</span>
           <input
             type="number"
             min={0}
@@ -98,7 +98,7 @@ function CapForm({
           />
         </label>
         <label className="flex flex-col gap-1">
-          <span className={labelClass}>DHL Max Value (THB)</span>
+          <span className={labelClass}>DHL Max Value (THB/กล่อง)</span>
           <input
             type="number"
             min={0}
@@ -110,7 +110,7 @@ function CapForm({
       </div>
       <div className="grid grid-cols-2 gap-3">
         <label className="flex flex-col gap-1">
-          <span className={labelClass}>UPS Max Declared (THB)</span>
+          <span className={labelClass}>UPS Max Declared (USD/กล่อง)</span>
           <input
             type="number"
             min={0}
@@ -120,7 +120,7 @@ function CapForm({
           />
         </label>
         <label className="flex flex-col gap-1">
-          <span className={labelClass}>DHL Max Declared (THB)</span>
+          <span className={labelClass}>DHL Max Declared (USD/กล่อง)</span>
           <input
             type="number"
             min={0}
@@ -316,10 +316,10 @@ export default function InsuranceCountryCapsPage() {
                 <tr>
                   <th className="px-5 py-2.5 font-medium">Country</th>
                   <th className="px-5 py-2.5 font-medium">Code</th>
-                  <th className="px-5 py-2.5 font-medium text-right">UPS Max Value</th>
-                  <th className="px-5 py-2.5 font-medium text-right">DHL Max Value</th>
-                  <th className="px-5 py-2.5 font-medium text-right">UPS Max Declared</th>
-                  <th className="px-5 py-2.5 font-medium text-right">DHL Max Declared</th>
+                  <th className="px-5 py-2.5 font-medium text-right">UPS Max Value (THB)</th>
+                  <th className="px-5 py-2.5 font-medium text-right">DHL Max Value (THB)</th>
+                  <th className="px-5 py-2.5 font-medium text-right">UPS Max Declared (USD)</th>
+                  <th className="px-5 py-2.5 font-medium text-right">DHL Max Declared (USD)</th>
                   <th className="px-5 py-2.5 font-medium">Note</th>
                   <th className="px-5 py-2.5 font-medium text-right">Actions</th>
                 </tr>
