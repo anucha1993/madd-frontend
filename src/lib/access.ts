@@ -52,6 +52,7 @@ const ROUTE_PERMISSIONS: { pattern: RegExp; permission: string | string[] }[] = 
   { pattern: /^\/manifest(\/|$)/, permission: "report.manifest" },
   { pattern: /^\/reports\/summary(\/|$)/, permission: "report.summary" },
   { pattern: /^\/reports\/finance(\/|$)/, permission: "report.finance" },
+  { pattern: /^\/reports\/rate-book(\/|$)/, permission: "report.rate_book" },
   { pattern: /^\/branch(\/|$)/, permission: "branch.view" },
   { pattern: /^\/customer(\/|$)/, permission: "customer.view" },
   { pattern: /^\/config\/markup(\/|$)/, permission: "config.markup" },
