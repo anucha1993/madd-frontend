@@ -50,6 +50,8 @@ export type RateBookRun = {
   error: string | null;
   started_at: string | null;
   finished_at: string | null;
+  // Last progress write — a running run that stops moving here has died (the server closes it after 10 min).
+  updated_at: string | null;
   requester?: { id: number; name: string } | null;
 };
 
@@ -62,6 +64,9 @@ export const updateRateBookSettings = (settings: RateBookSettings) =>
 export const requestRateBookSync = () => apiClient.post<{ message: string }>("/rate-book/sync", {});
 
 export const listRateBookRuns = () => apiClient.get<RateBookRun[]>("/rate-book/runs");
+
+// Stops a running sync (a live one within seconds; one whose process already died at once).
+export const cancelRateBookRun = (runId: number) => apiClient.post<{ message: string }>(`/rate-book/runs/${runId}/cancel`, {});
 
 // One workbook per carrier, laid out like the business's own UPS/DHL rate files.
 export async function downloadRateBook(run: RateBookRun, carrier: RateBookCarrier) {

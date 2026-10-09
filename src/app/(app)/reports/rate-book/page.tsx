@@ -7,6 +7,7 @@ import PageHeader from "@/components/layout/PageHeader";
 import PageLoading from "@/components/ui/PageLoading";
 import RateBookTable from "@/components/reports/RateBookTable";
 import {
+  cancelRateBookRun,
   downloadRateBook,
   getRateBookSettings,
   listRateBookRuns,
@@ -117,6 +118,18 @@ export default function RateBookPage() {
     }
   }
 
+  async function handleCancel(run: RateBookRun) {
+    if (!confirm(`ยกเลิก Sync รอบ #${run.id}? ข้อมูลที่ดึงมาแล้วในรอบนี้จะไม่ถูกใช้`)) return;
+    setError("");
+    try {
+      const res = await cancelRateBookRun(run.id);
+      setMessage(res.message);
+      await loadRuns();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "ยกเลิกไม่สำเร็จ");
+    }
+  }
+
   async function handleSync() {
     setError("");
     try {
@@ -222,6 +235,20 @@ export default function RateBookPage() {
                     <td className="px-5 py-2 text-slate-600">
                       {run.done_points.toLocaleString()} / {run.total_points.toLocaleString()}
                       {run.error_points > 0 && <span className="ml-1 text-xs text-amber-600">(error {run.error_points})</span>}
+                      {run.status === "running" && run.updated_at && (
+                        <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-400">
+                          อัปเดตล่าสุด {new Date(run.updated_at).toLocaleTimeString()}
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={() => handleCancel(run)}
+                              className="rounded border border-red-300 px-1.5 py-0.5 font-medium text-red-600 hover:bg-red-50"
+                            >
+                              ยกเลิก
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td className="px-5 py-2 text-slate-500">{run.trigger === "schedule" ? "ตั้งเวลา" : run.requester?.name ?? "Manual"}</td>
                     <td className="px-5 py-2 text-right">
