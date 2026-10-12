@@ -51,6 +51,10 @@ const DHL_DOCUMENT_FIXED_COVERAGE_THB = 17000;
 function formatMarkupBasis(line: RateChargeLine): string | null {
   if (line.markupUnit === "FORMULA") return line.markupFormula ?? null;
   if (!line.markupUnit || line.markupValue == null) return null;
+  if (line.markupUnit === "PER_KG") {
+    const kg = line.markupBase != null ? ` × ${line.markupBase.toLocaleString(undefined, { maximumFractionDigits: 2 })} kg` : "";
+    return `${line.markupValue.toLocaleString(undefined, { maximumFractionDigits: 2 })} ฿/kg${kg}${line.markupNote ? ` (${line.markupNote})` : ""}`;
+  }
   if (line.markupUnit === "PERCENTAGE") {
     return line.markupBase != null
       ? `${line.markupValue}% × ${line.markupBase.toLocaleString(undefined, { maximumFractionDigits: 2 })}`

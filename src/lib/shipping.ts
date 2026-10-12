@@ -60,7 +60,8 @@ export type RateChargeLine = {
   isCustomCharge?: boolean;
   // Present whenever a MarkupRule affected this line — lets the UI show exactly what amount
   // the markup was computed from, e.g. "7% × 1,200.00" instead of just the final total.
-  markupUnit?: "PERCENTAGE" | "BAHT" | "FORMULA" | null;
+  // PER_KG = Weight Markup (/config/weight-markups): markupValue THB × markupBase kg.
+  markupUnit?: "PERCENTAGE" | "BAHT" | "FORMULA" | "PER_KG" | null;
   markupValue?: number | null;
   // The base the markupUnit/markupValue was applied to — for an existing carrier line this is
   // that line's own (possibly fixed-override) amount; for a custom line with PERCENTAGE unit
@@ -69,6 +70,8 @@ export type RateChargeLine = {
   // Only set when markupUnit === "FORMULA" — the raw "({BASE} + {FF}) * 7%" expression, shown
   // as-is since there's no single "base" to summarize like PERCENTAGE/BAHT have.
   markupFormula?: string | null;
+  // Weight Markup only — which band / override set the rate, e.g. "0.10-5.00 kg · Zone 5".
+  markupNote?: string | null;
 };
 
 export type RateQuote = {
