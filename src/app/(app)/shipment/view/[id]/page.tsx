@@ -1,5 +1,6 @@
 "use client";
 
+import RawJsonViewer from "@/components/ui/RawJsonViewer";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAccess } from "@/components/auth/AccessProvider";
@@ -747,9 +748,9 @@ export default function ShipmentViewPage() {
             </button>
           </div>
           {showRawRequest && (
-            <pre className="mt-3 max-h-96 overflow-auto rounded-lg bg-slate-900 p-3 text-[11px] leading-5 text-slate-100">
-              {JSON.stringify(s.raw_request, null, 2)}
-            </pre>
+            <div className="mt-3">
+              <RawJsonViewer data={s.raw_request} className="max-h-96 p-3 text-[11px] leading-5" />
+            </div>
           )}
         </Section>
       )}
@@ -775,9 +776,9 @@ export default function ShipmentViewPage() {
             </button>
           </div>
           {showRawResponse && (
-            <pre className="mt-3 max-h-96 overflow-auto rounded-lg bg-slate-900 p-3 text-[11px] leading-5 text-slate-100">
-              {JSON.stringify(s.raw_response, null, 2)}
-            </pre>
+            <div className="mt-3">
+              <RawJsonViewer data={s.raw_response} className="max-h-96 p-3 text-[11px] leading-5" />
+            </div>
           )}
         </Section>
       )}

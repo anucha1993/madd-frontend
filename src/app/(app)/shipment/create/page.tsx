@@ -1,9 +1,20 @@
 "use client";
 
+import {
+  CUSTOMER_DISPLAY_PATH,
+  DEFAULT_CUSTOMER_DISPLAY_SETTINGS,
+  getCustomerDisplaySettings,
+  openDisplayChannel,
+  type CustomerDisplaySettings,
+  type DisplayMessage,
+  type DisplayQuote,
+  type DisplayState,
+} from "@/lib/customerDisplay";
+import RawJsonViewer from "@/components/ui/RawJsonViewer";
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { listBranches, branchLabel } from "@/lib/branches";
-import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Code, Copy, ExternalLink, FileText, ListChecks, Loader2, Lock, MinusCircle, Package, Plus, Printer, Receipt, Search, ShieldCheck, Sparkles, Tag, Trash2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Code, Coins, Copy, Monitor, ExternalLink, FileText, ListChecks, Loader2, Lock, MinusCircle, Package, Plus, Printer, Receipt, Search, ShieldCheck, Sparkles, Tag, Trash2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import { useAccess } from "@/components/auth/AccessProvider";
 import Modal from "@/components/ui/Modal";
@@ -338,6 +349,8 @@ export default function ShipmentCreatePage() {
   // derives on its own (insurance markup %, green "marked up" highlighting, the cost caption).
   const canSeeMarkup = canSeeField("rate", "markup");
   const canSeeRateCost = canSeeField("rate", "cost");
+  // The Cost button (cost vs sell + profit) — its own permission, and only with the cost itself visible.
+  const canSeeRateProfit = canSeeRateCost && canSeeField("rate", "profit");
   // Display-only groups — when hidden the API omits them (breakdown keeps just the carrier
   // insurance lines the pricing math below needs), so only the listing itself is gated here.
   const canSeeBreakdown = canSeeField("rate", "breakdown");
@@ -700,6 +713,8 @@ export default function ShipmentCreatePage() {
   const [copiedTracking, setCopiedTracking] = useState<string | null>(null);
   const [viewBookedRaw, setViewBookedRaw] = useState(false);
   const [viewRawQuote, setViewRawQuote] = useState<RateQuote | null>(null);
+  // Cost vs sell of one quote (carrier cost from the rate API — nothing is booked).
+  const [viewCostQuote, setViewCostQuote] = useState<RateQuote | null>(null);
   // Which carrier(s) to check — lets staff narrow to just UPS or just DHL so the insurance
   // picker (which needs a known carrier) can be driven right after Check Rate, without waiting
   // to manually pick a quote card out of a mixed UPS+DHL results list.
@@ -2077,6 +2092,130 @@ export default function ShipmentCreatePage() {
     .filter((section) => section.category === activeAddonCategoryName);
   const orderTotal = freightAmount + addonTotal;
 
+  // ---- Customer Display (2nd screen facing the customer — see lib/customerDisplay.ts) ----
+  // Only sell-side data is put in DisplayState: never cost, markup, formulas, accounts or raw data.
+  const canOpenCustomerDisplay = can("shipment.customer_display");
+  const [displaySettings, setDisplaySettings] = useState<CustomerDisplaySettings | null>(null);
+  useEffect(() => {
+    if (!canOpenCustomerDisplay) return;
+    getCustomerDisplaySettings()
+      .then(setDisplaySettings)
+      .catch(() => setDisplaySettings(DEFAULT_CUSTOMER_DISPLAY_SETTINGS));
+  }, [canOpenCustomerDisplay]);
+
+  const displayState: DisplayState | null = (() => {
+    if (!displaySettings) return null;
+    const sec = displaySettings.sections;
+    const isSelected = (r: RateQuote) =>
+      selectedQuote != null && selectedQuote.carrier === r.carrier && selectedQuote.accountId === r.accountId && selectedQuote.serviceCode === r.serviceCode;
+    const toQuote = (r: RateQuote): DisplayQuote => ({
+      carrier: r.carrier,
+      carrierLogo: agents.find((a) => a.agent_code === r.carrier)?.logo_url ?? null,
+      service: r.serviceLabel,
+      price: getSellFreightAmount(r).sellAmount,
+      currency: r.currency ?? "THB",
+      transitDays: sec.transit ? (r.transitDays ?? null) : null,
+      selected: isSelected(r),
+    });
+
+    let quotes = okResults.map(toQuote);
+    if (displaySettings.quotes_mode === "selected") quotes = quotes.filter((q) => q.selected);
+    if (displaySettings.quotes_mode === "cheapest_per_carrier") {
+      quotes = Array.from(new Set(quotes.map((q) => q.carrier))).map(
+        (carrier) => quotes.filter((q) => q.carrier === carrier).sort((a, b) => a.price - b.price)[0],
+      );
+    }
+    quotes.sort((a, b) =>
+      displaySettings.quotes_sort === "transit" ? (a.transitDays ?? 99) - (b.transitDays ?? 99) || a.price - b.price : a.price - b.price,
+    );
+
+    const countryName = countries.find((c) => c.iso2 === destinationCountry)?.name ?? destinationCountry;
+    const hasRecipient = !!(destinationContactName || destinationCompany || destinationAddress || destinationCountry);
+    const filledPackages = packages.filter((p) => Number(p.weight) > 0);
+    const selectedLines = selectedQuote
+      ? (selectedQuote.chargeBreakdown ?? [])
+          .filter((l) => !getSellFreightAmount(selectedQuote).costOnlyCodes.includes(l.code ?? ""))
+          .map((l) => ({ name: chargeName(selectedQuote.carrier, l.code, l.description, selectedQuote.chargeBreakdown), amount: Math.ceil(l.amount) }))
+      : [];
+
+    return {
+      stage: bookedShipment ? "booked" : selectedQuote ? "selected" : okResults.length ? "quotes" : hasRecipient || filledPackages.length ? "shipping" : "idle",
+      settings: displaySettings,
+      recipient:
+        sec.recipient && hasRecipient
+          ? {
+              name: destinationContactName,
+              company: destinationCompany,
+              lines: [
+                [destinationAddress, destinationAddress2, destinationAddress3].filter(Boolean).join(" "),
+                [destinationCity, destinationState, destinationPostcode].filter(Boolean).join(" "),
+              ].filter(Boolean),
+              country: countryName,
+              countryCode: destinationCountry,
+            }
+          : undefined,
+      contact: sec.recipient && sec.contact ? { phone: destinationPhone, email: destinationEmail } : undefined,
+      packages: sec.packages
+        ? filledPackages.map((p) => ({
+            kind: p.is_document ? ("document" as const) : ("box" as const),
+            dims: p.is_document ? null : `${p.length} × ${p.width} × ${p.height} cm`,
+            weight: Number(p.weight),
+            quantity: Number(p.quantity) || 1,
+          }))
+        : undefined,
+      weight:
+        sec.packages && filledPackages.length
+          ? {
+              pieces: filledPackages.reduce((sum, p) => sum + (Number(p.quantity) || 1), 0),
+              total: Math.round(totalRealBookingWeight * 100) / 100,
+              billed: sec.billed_weight && selectedQuote?.billedWeight != null ? Number(selectedQuote.billedWeight) : null,
+              unit: "kg",
+            }
+          : undefined,
+      quotes: sec.quotes && quotes.length ? quotes : undefined,
+      selected: selectedQuote ? { ...toQuote(selectedQuote), lines: sec.breakdown ? selectedLines : undefined } : undefined,
+      addons:
+        sec.addons && selectedQuote
+          ? addonLines.filter((l) => l.amount !== 0).map((l) => ({ name: l.row.name, quantity: l.row.quantity, amount: l.amount }))
+          : undefined,
+      total: sec.total && selectedQuote ? { amount: orderTotal, currency: selectedQuote.currency ?? "THB" } : undefined,
+      booked: bookedShipment ? { carrier: bookedShipment.carrier, tracking: sec.tracking ? bookedShipment.tracking_number : null } : undefined,
+    };
+  })();
+
+  // Post every change to the display window; answer its "hello" with the current state.
+  const displayJson = displayState ? JSON.stringify(displayState) : null;
+  const displayChannelRef = useRef<BroadcastChannel | null>(null);
+  const lastDisplayJsonRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!canOpenCustomerDisplay) return;
+    const channel = openDisplayChannel();
+    if (!channel) return;
+    displayChannelRef.current = channel;
+    channel.onmessage = (e: MessageEvent<DisplayMessage>) => {
+      if (e.data?.type === "hello" && lastDisplayJsonRef.current) {
+        channel.postMessage({ type: "state", state: JSON.parse(lastDisplayJsonRef.current) } satisfies DisplayMessage);
+      }
+    };
+    return () => {
+      // Leaving Create Shipment puts the display back on its idle screen.
+      if (lastDisplayJsonRef.current) {
+        const idle: DisplayState = { stage: "idle", settings: (JSON.parse(lastDisplayJsonRef.current) as DisplayState).settings };
+        channel.postMessage({ type: "state", state: idle } satisfies DisplayMessage);
+      }
+      channel.close();
+      displayChannelRef.current = null;
+    };
+  }, [canOpenCustomerDisplay]);
+  useEffect(() => {
+    lastDisplayJsonRef.current = displayJson;
+    if (displayJson) displayChannelRef.current?.postMessage({ type: "state", state: JSON.parse(displayJson) } satisfies DisplayMessage);
+  }, [displayJson]);
+
+  function openCustomerDisplay() {
+    window.open(CUSTOMER_DISPLAY_PATH, "madd-customer-display", "popup,width=1280,height=800");
+  }
+
   // Shared between the Payment Info and Add On steps so the running total stays visible on both.
   const orderSummaryPanel = (
     <div className="sticky top-4 flex flex-col gap-4">
@@ -2454,6 +2593,16 @@ export default function ShipmentCreatePage() {
     <div>
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <PageHeader title="Create Shipment / Check Rate" description="Origin: Thailand — Destination: international only" />
+        {canOpenCustomerDisplay && (
+          <button
+            type="button"
+            onClick={openCustomerDisplay}
+            title="เปิดหน้าต่างจอลูกค้า แล้วลากไปจอที่ 2 กด &quot;เต็มจอ&quot; — ลูกค้าเห็นที่อยู่ พัสดุ และราคาขายตามที่กรอก (ไม่มีต้นทุน)"
+            className="ml-auto flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            <Monitor className="h-4 w-4" /> เปิดจอลูกค้า
+          </button>
+        )}
         {can("shipment.draft") && (
           <div className="flex flex-col items-end gap-1">
             <div className="flex items-center gap-2">
@@ -3746,8 +3895,21 @@ export default function ShipmentCreatePage() {
                             })}
                           </div>
                         )}
-                        {r.raw != null && (
-                          <div className="mt-2 flex justify-end border-t border-slate-100 pt-2">
+                        {(r.raw != null || (canSeeRateProfit && r.costBreakdown)) && (
+                          <div className="mt-2 flex justify-end gap-1 border-t border-slate-100 pt-2">
+                            {canSeeRateProfit && r.costBreakdown && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setViewCostQuote(r);
+                                }}
+                                className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                              >
+                                <Coins className="h-3 w-3" /> Cost
+                              </button>
+                            )}
+                            {r.raw != null && (
                             <button
                               type="button"
                               onClick={(e) => {
@@ -3758,6 +3920,7 @@ export default function ShipmentCreatePage() {
                             >
                               <Code className="h-3 w-3" /> Raw
                             </button>
+                            )}
                           </div>
                         )}
                       </div>
@@ -4591,11 +4754,98 @@ export default function ShipmentCreatePage() {
         </Modal>
       )}
 
+      {viewCostQuote && (() => {
+        const q = viewCostQuote;
+        const { sellAmount, costOnlyCodes } = getSellFreightAmount(q);
+        const keyOf = (l: RateChargeLine) => String(l.code ?? l.description ?? "");
+        const sellLines = (q.chargeBreakdown ?? []).filter((l) => !costOnlyCodes.includes(l.code ?? ""));
+        const costLines = (q.costBreakdown ?? []).filter((l) => !costOnlyCodes.includes(l.code ?? ""));
+        const insuranceCost = (q.costBreakdown ?? [])
+          .filter((l) => costOnlyCodes.includes(l.code ?? ""))
+          .reduce((sum, l) => sum + Number(l.amount || 0), 0);
+        const cost = costLines.reduce((sum, l) => sum + Number(l.amount || 0), 0);
+        const profit = sellAmount - cost;
+        const margin = sellAmount > 0 ? (profit / sellAmount) * 100 : 0;
+        // One row per charge code, carrier cost beside our sell price.
+        const codes = Array.from(new Set([...costLines, ...sellLines].map(keyOf)));
+        const amountOf = (lines: RateChargeLine[], code: string) => {
+          const hit = lines.filter((l) => keyOf(l) === code);
+          return hit.length ? hit.reduce((sum, l) => sum + Number(l.amount || 0), 0) : null;
+        };
+        const fmt = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        return (
+          <Modal title={`ต้นทุน vs ราคาขาย — ${q.carrier} ${q.serviceLabel}`} onClose={() => setViewCostQuote(null)} maxWidthClassName="max-w-2xl">
+            <p className="mb-3 text-xs text-slate-500">
+              {q.username}
+              {q.zone && ` · Zone ${q.zone}`}
+              {q.billedWeight != null && ` · Billed ${q.billedWeight} ${weightUnitLabel(q.billedWeightUnit)}`} · ต้นทุนจาก Rate API ของ {q.carrier} (ยังไม่ได้สร้าง Shipment)
+            </p>
+            <div className="mb-4 grid grid-cols-3 gap-2">
+              <div className="rounded-lg bg-slate-50 p-3">
+                <p className="text-xs text-slate-500">ต้นทุน</p>
+                <p className="text-lg font-bold text-slate-700">{fmt(cost)}</p>
+              </div>
+              <div className="rounded-lg bg-slate-50 p-3">
+                <p className="text-xs text-slate-500">ราคาขาย</p>
+                <p className="text-lg font-bold text-brand-navy-dark">{fmt(sellAmount)}</p>
+              </div>
+              <div className={`rounded-lg p-3 ${profit < 0 ? "bg-red-50" : "bg-emerald-50"}`}>
+                <p className="text-xs text-slate-500">{profit < 0 ? "ขาดทุน" : "กำไร"}</p>
+                <p className={`text-lg font-bold ${profit < 0 ? "text-red-600" : "text-emerald-600"}`}>
+                  {fmt(profit)} <span className="text-xs font-medium">({margin.toFixed(1)}%)</span>
+                </p>
+              </div>
+            </div>
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-xs text-slate-500">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">รายการ</th>
+                  <th className="px-3 py-2 text-right font-medium">ต้นทุน</th>
+                  <th className="px-3 py-2 text-right font-medium">ราคาขาย</th>
+                  <th className="px-3 py-2 text-right font-medium">ส่วนต่าง</th>
+                </tr>
+              </thead>
+              <tbody>
+                {codes.map((code) => {
+                  const c = amountOf(costLines, code);
+                  const s = amountOf(sellLines, code);
+                  const diff = (s ?? 0) - (c ?? 0);
+                  const line = [...sellLines, ...costLines].find((l) => keyOf(l) === code);
+                  return (
+                    <tr key={code} className="border-t border-slate-100">
+                      <td className="px-3 py-1.5 text-slate-600">
+                        {chargeName(q.carrier, line?.code, line?.description ?? code, q.chargeBreakdown)}
+                        {line?.code && <span className="text-slate-300"> ({line.code})</span>}
+                      </td>
+                      <td className="px-3 py-1.5 text-right text-slate-600">{c == null ? "-" : fmt(c)}</td>
+                      <td className="px-3 py-1.5 text-right text-slate-700">{s == null ? "-" : fmt(s)}</td>
+                      <td className={`px-3 py-1.5 text-right ${diff < 0 ? "text-red-600" : diff > 0 ? "text-emerald-600" : "text-slate-400"}`}>
+                        {Math.abs(diff) < 0.005 ? "-" : `${diff > 0 ? "+" : ""}${fmt(diff)}`}
+                      </td>
+                    </tr>
+                  );
+                })}
+                <tr className="border-t-2 border-slate-200 font-semibold">
+                  <td className="px-3 py-2 text-slate-700">รวม</td>
+                  <td className="px-3 py-2 text-right text-slate-700">{fmt(cost)}</td>
+                  <td className="px-3 py-2 text-right text-slate-700">{fmt(sellAmount)}</td>
+                  <td className={`px-3 py-2 text-right ${profit < 0 ? "text-red-600" : "text-emerald-600"}`}>
+                    {`${profit > 0 ? "+" : ""}${fmt(profit)}`}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <p className="mt-3 text-[11px] text-slate-400">
+              ราคาขายปัดขึ้นเป็นบาทเต็ม (เศษรวมอยู่ในบรรทัดรวม)
+              {insuranceCost > 0 && ` · ไม่รวมประกันของ carrier ${fmt(insuranceCost)} บาท (ขายแยกเป็น Insurance Add-on)`}
+            </p>
+          </Modal>
+        );
+      })()}
+
       {viewRawQuote && (
         <Modal title={`Raw API Response — ${viewRawQuote.carrier} ${viewRawQuote.serviceLabel}`} onClose={() => setViewRawQuote(null)} maxWidthClassName="max-w-3xl">
-          <pre className="max-h-[65vh] overflow-auto rounded-lg bg-slate-900 p-4 text-xs text-slate-100">
-            {JSON.stringify(viewRawQuote.raw, null, 2)}
-          </pre>
+          <RawJsonViewer data={viewRawQuote.raw} />
         </Modal>
       )}
 
@@ -4606,9 +4856,7 @@ export default function ShipmentCreatePage() {
           maxWidthClassName="max-w-3xl"
           zIndexClassName="z-[60]"
         >
-          <pre className="max-h-[65vh] overflow-auto rounded-lg bg-slate-900 p-4 text-xs text-slate-100">
-            {JSON.stringify(bookedShipment.raw_response, null, 2)}
-          </pre>
+          <RawJsonViewer data={bookedShipment.raw_response} />
         </Modal>
       )}
 

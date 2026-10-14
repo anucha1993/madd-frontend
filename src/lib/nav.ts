@@ -80,6 +80,7 @@ export const NAV_SECTIONS: NavItem[] = [
       { label: "Mark-up Settings", href: "/config/markup" },
       { label: "Weight Markup", href: "/config/weight-markups" },
       { label: "Heavy Weight Rate", href: "/config/heavy-rates" },
+      { label: "Customer Display", href: "/config/customer-display" },
       { label: "Charge Display Names", href: "/config/charge-names" },
       { label: "Add-on Settings", href: "/config/addon" },
       { label: "Insurance UPSC", href: "/config/insurance-caps" },
