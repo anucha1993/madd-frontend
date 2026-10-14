@@ -38,7 +38,7 @@ import { bookShipment, describeShipmentPieces, downloadDhlOriginalWaybill, openS
 import { getShipmentDraft, createShipmentDraft, updateShipmentDraft, deleteShipmentDraft } from "@/lib/shipmentDrafts";
 import { getUser } from "@/lib/auth";
 import { useChargeDisplayNames } from "@/hooks/useChargeDisplayNames";
-import { getShipmentFieldRules, missingRequiredFields, type ShipmentFieldRules } from "@/lib/shipmentFields";
+import { formLabel, getShipmentFieldRules, missingRequiredFields, type ShipmentFieldRules } from "@/lib/shipmentFields";
 import {
   listCustomers,
   createCustomer,
@@ -2547,6 +2547,8 @@ export default function ShipmentCreatePage() {
   // Required fields for the picked carrier that are still blank, shown on each step and in
   // Payment Info (with a jump to the step) — booking stays disabled until they're filled.
   const missingFields = selectedQuote ? missingRequiredFields(buildBookingPayload(), fieldRules, selectedQuote.carrier) : [];
+  // A field's label on this form — staff can rename it at /config/shipment-fields.
+  const L = (key: string, fallback: string) => formLabel(fieldRules, key, fallback);
   // Red * on a required field's label. Once a rate is picked it follows that carrier; before
   // that, a field only some carriers require shows which ones (e.g. "* UPS").
   const req = (key: string) => {
@@ -2728,7 +2730,7 @@ export default function ShipmentCreatePage() {
           <div className="mt-2.5 flex flex-col gap-2.5">
             <div className="grid grid-cols-2 gap-2.5">
               <label className="flex flex-col gap-1">
-                <span className={labelClass}>Contact Name{req("origin.contact_name")}</span>
+                <span className={labelClass}>{L("origin.contact_name", "Contact Name")}{req("origin.contact_name")}</span>
                 <div className="relative">
                   <input
                     type="text"
@@ -2744,7 +2746,7 @@ export default function ShipmentCreatePage() {
                 </div>
               </label>
               <label className="flex flex-col gap-1">
-                <span className={labelClass}>Company{req("origin.company")}</span>
+                <span className={labelClass}>{L("origin.company", "Company")}{req("origin.company")}</span>
                 <div className="relative">
                   <input type="text" value={originCompany} onChange={(e) => setOriginCompany(e.target.value)} placeholder="Company name (optional)" className={`${inputClass} ${originCompany ? "pr-8" : ""}`} />
                   {originCompany && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
@@ -2752,14 +2754,14 @@ export default function ShipmentCreatePage() {
               </label>
             </div>
             <label className="flex flex-col gap-1">
-              <span className={labelClass}>Tax ID No.{req("origin.tax_id")}</span>
+              <span className={labelClass}>{L("origin.tax_id", "Tax ID No.")}{req("origin.tax_id")}</span>
               <div className="relative">
                 <input type="text" value={originTaxId} onChange={(e) => setOriginTaxId(e.target.value)} placeholder="Tax ID / เลขประจำตัวผู้เสียภาษี (optional)" className={`${inputClass} ${originTaxId ? "pr-8" : ""}`} />
                 {originTaxId && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
               </div>
             </label>
             <label className="flex flex-col gap-1">
-              <span className={labelClass}>Subdistrict / District / Province / Postcode</span>
+              <span className={labelClass}>{L("origin.postcode", "Subdistrict / District / Province / Postcode")}</span>
               <ThaiAddressSearch
                 value={originSearchValue}
                 onSelect={(row) => {
@@ -2775,7 +2777,7 @@ export default function ShipmentCreatePage() {
             </label>
             {originLookup.status === "found" && <p className="text-xs text-emerald-600">Matched: {originLookup.label}</p>}
             <label className="flex flex-col gap-1">
-              <span className={labelClass}>Address 1</span>
+              <span className={labelClass}>{L("origin.address", "Address 1")}</span>
               <div className="relative">
                 <input type="text" value={originAddress} onChange={(e) => setOriginAddress(e.target.value)} placeholder="House no., street" className={`${inputClass} ${originAddress ? "pr-8" : ""}`} />
                 {originAddress && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
@@ -2783,14 +2785,14 @@ export default function ShipmentCreatePage() {
             </label>
             <div className="grid grid-cols-2 gap-2.5">
               <label className="flex flex-col gap-1">
-                <span className={labelClass}>Address 2</span>
+                <span className={labelClass}>{L("origin.address2", "Address 2")}</span>
                 <div className="relative">
                   <input type="text" value={originAddress2} onChange={(e) => setOriginAddress2(e.target.value)} placeholder="Building, floor, room (optional)" className={`${inputClass} ${originAddress2 ? "pr-8" : ""}`} />
                   {originAddress2 && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
                 </div>
               </label>
               <label className="flex flex-col gap-1">
-                <span className={labelClass}>Address 3</span>
+                <span className={labelClass}>{L("origin.address3", "Address 3")}</span>
                 <div className="relative">
                   <input type="text" value={originAddress3} onChange={(e) => setOriginAddress3(e.target.value)} placeholder="Additional info (optional)" className={`${inputClass} ${originAddress3 ? "pr-8" : ""}`} />
                   {originAddress3 && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
@@ -2798,14 +2800,14 @@ export default function ShipmentCreatePage() {
               </label>
             </div>
             <label className="flex flex-col gap-1">
-              <span className={labelClass}>Telephone{req("origin.phone")}</span>
+              <span className={labelClass}>{L("origin.phone", "Telephone")}{req("origin.phone")}</span>
               <div className="relative">
                 <input type="text" value={originPhone} onChange={(e) => setOriginPhone(e.target.value)} placeholder="e.g. 0812345678" className={`${inputClass} ${originPhone ? "pr-8" : ""}`} />
                 {originPhone && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
               </div>
             </label>
             <label className="flex flex-col gap-1">
-              <span className={labelClass}>Notes</span>
+              <span className={labelClass}>{L("origin.notes", "Notes")}</span>
               <textarea
                 value={originNotes}
                 onChange={(e) => setOriginNotes(e.target.value)}
@@ -2834,7 +2836,7 @@ export default function ShipmentCreatePage() {
           <div className="mt-2.5 flex flex-col gap-2.5">
             <div className="grid grid-cols-2 gap-2.5">
               <label className="flex flex-col gap-1">
-                <span className={labelClass}>Contact Name{req("destination.contact_name")}</span>
+                <span className={labelClass}>{L("destination.contact_name", "Contact Name")}{req("destination.contact_name")}</span>
                 <div className="relative">
                   <input
                     type="text"
@@ -2852,7 +2854,7 @@ export default function ShipmentCreatePage() {
                 </div>
               </label>
               <label className="flex flex-col gap-1">
-                <span className={labelClass}>Company{req("destination.company")}</span>
+                <span className={labelClass}>{L("destination.company", "Company")}{req("destination.company")}</span>
                 <div className="relative">
                   <input
                     type="text"
@@ -2868,7 +2870,7 @@ export default function ShipmentCreatePage() {
               </label>
             </div>
             <label className="flex flex-col gap-1">
-              <span className={labelClass}>Tax ID No.{req("destination.tax_id")}</span>
+              <span className={labelClass}>{L("destination.tax_id", "Tax ID No.")}{req("destination.tax_id")}</span>
               <div className="relative">
                 <input
                   type="text"
@@ -2883,12 +2885,12 @@ export default function ShipmentCreatePage() {
               </div>
             </label>
             <label className="flex flex-col gap-1">
-              <span className={labelClass}>Country</span>
+              <span className={labelClass}>{L("destination.country", "Country")}</span>
               <CountrySelect value={destinationCountry} onChange={setDestinationCountry} invalid={addressValidationErrorFields.has("country")} />
             </label>
             <div className="grid grid-cols-2 gap-2.5">
               <label className="flex flex-col gap-1">
-                <span className={labelClass}>City</span>
+                <span className={labelClass}>{L("destination.city", "City")}</span>
                 <div className="relative">
                   <input type="text" value={destinationCity} onChange={(e) => setDestinationCity(e.target.value)} placeholder="e.g. Singapore" className={`${inputClass} ${errorInputClass("city")} ${destinationCity ? "pr-8" : ""}`} />
                   {destinationCity && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
@@ -2896,7 +2898,7 @@ export default function ShipmentCreatePage() {
               </label>
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>
-                  State / Province{(destinationCountry === "US" || destinationCountry === "CA") ? <span className="text-red-500"> *</span> : req("destination.state")}
+                  {L("destination.state", "State / Province")}{(destinationCountry === "US" || destinationCountry === "CA") ? <span className="text-red-500"> *</span> : req("destination.state")}
                 </span>
                 <div className="relative">
                   <input
@@ -2914,7 +2916,7 @@ export default function ShipmentCreatePage() {
               </label>
             </div>
             <label className="flex flex-col gap-1">
-              <span className={labelClass}>Postal Code{req("destination.postcode")}</span>
+              <span className={labelClass}>{L("destination.postcode", "Postal Code")}{req("destination.postcode")}</span>
               <div className="relative">
                 <input
                   type="text"
@@ -2929,7 +2931,7 @@ export default function ShipmentCreatePage() {
               </div>
             </label>
             <label className="flex flex-col gap-1">
-              <span className={labelClass}>Address 1{req("destination.address")}</span>
+              <span className={labelClass}>{L("destination.address", "Address 1")}{req("destination.address")}</span>
               <div className="relative">
                 <input
                   type="text"
@@ -2945,7 +2947,7 @@ export default function ShipmentCreatePage() {
             </label>
             <div className="grid grid-cols-2 gap-2.5">
               <label className="flex flex-col gap-1">
-                <span className={labelClass}>Address 2</span>
+                <span className={labelClass}>{L("destination.address2", "Address 2")}</span>
                 <div className="relative">
                   <input
                     type="text"
@@ -2960,7 +2962,7 @@ export default function ShipmentCreatePage() {
                 </div>
               </label>
               <label className="flex flex-col gap-1">
-                <span className={labelClass}>Address 3</span>
+                <span className={labelClass}>{L("destination.address3", "Address 3")}</span>
                 <div className="relative">
                   <input
                     type="text"
@@ -2978,7 +2980,7 @@ export default function ShipmentCreatePage() {
 
             <div className="grid grid-cols-2 gap-2.5">
               <label className="flex flex-col gap-1">
-                <span className={labelClass}>Telephone{req("destination.phone")}</span>
+                <span className={labelClass}>{L("destination.phone", "Telephone")}{req("destination.phone")}</span>
                 <div className="relative">
                   <input
                     type="text"
@@ -2993,7 +2995,7 @@ export default function ShipmentCreatePage() {
                 </div>
               </label>
               <label className="flex flex-col gap-1">
-                <span className={labelClass}>Email{req("destination.email")}</span>
+                <span className={labelClass}>{L("destination.email", "Email")}{req("destination.email")}</span>
                 <div className="relative">
                   <input
                     type="email"
@@ -3009,7 +3011,7 @@ export default function ShipmentCreatePage() {
               </label>
             </div>
             <label className="flex flex-col gap-1">
-              <span className={labelClass}>Notes</span>
+              <span className={labelClass}>{L("destination.notes", "Notes")}</span>
               <textarea
                 value={destinationNotes}
                 onChange={(e) => setDestinationNotes(e.target.value)}
@@ -3708,7 +3710,7 @@ export default function ShipmentCreatePage() {
                       checkbox above already decides/auto-selects it, no picker needed. */}
                   {pkg.insured && !pkg.is_document && renderInsurancePicker(pkg)}
                   <label className="flex flex-col gap-1">
-                    <span className={labelClass}>Description of Goods{req("packages.*.description")}</span>
+                    <span className={labelClass}>{L("packages.*.description", "Description of Goods")}{req("packages.*.description")}</span>
                     <input
                       type="text"
                       value={pkg.description ?? ""}
@@ -4012,9 +4014,9 @@ export default function ShipmentCreatePage() {
                     <th className="whitespace-nowrap px-2 py-1 font-medium">Description</th>
                     <th className="w-16 whitespace-nowrap px-2 py-1 font-medium text-right">Qty</th>
                     <th className="w-32 whitespace-nowrap px-2 py-1 font-medium text-right">Unit Value (THB)</th>
-                    <th className="w-24 whitespace-nowrap px-2 py-1 font-medium text-right">Weight (kg){req("invoice_lines.*.weight")}</th>
+                    <th className="w-24 whitespace-nowrap px-2 py-1 font-medium text-right">{L("invoice_lines.*.weight", "Weight (kg)")}{req("invoice_lines.*.weight")}</th>
                     <th className="w-36 whitespace-nowrap px-2 py-1 font-medium">Country of Origin</th>
-                    <th className="w-28 whitespace-nowrap px-2 py-1 font-medium">HS Code{req("invoice_lines.*.hs_code")}</th>
+                    <th className="w-28 whitespace-nowrap px-2 py-1 font-medium">{L("invoice_lines.*.hs_code", "HS Code")}{req("invoice_lines.*.hs_code")}</th>
                     <th className="w-24 whitespace-nowrap px-2 py-1 font-medium text-right">Amount</th>
                     <th className="w-8 px-1 py-1"></th>
                   </tr>
@@ -4127,7 +4129,7 @@ export default function ShipmentCreatePage() {
           <div className="mt-4 flex flex-col gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/50 p-3">
             <label className="flex flex-col gap-1.5">
               <span className="text-xs font-semibold text-slate-700">
-                ไฟล์ Commercial Invoice (เสริม — PDF/JPG/PNG){req("commercial_invoice_upload_key")}
+                {L("commercial_invoice_upload_key", "ไฟล์ Commercial Invoice (เสริม — PDF/JPG/PNG)")}{req("commercial_invoice_upload_key")}
               </span>
               <span className="text-[11px] text-slate-500">
                 ถ้าคุณมีไฟล์ Invoice ของบริษัทเอง แนบที่นี่ได้ — ไม่แทนที่ข้อมูลรายการสินค้าด้านบน
@@ -4185,7 +4187,7 @@ export default function ShipmentCreatePage() {
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Payment Method</h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="flex flex-col gap-1">
-            <span className={labelClass}>Payment Method{req("payment_method")}</span>
+            <span className={labelClass}>{L("payment_method", "Payment Method")}{req("payment_method")}</span>
             <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={inputClass}>
               {paymentOptions.map((opt) => (
                 <option key={opt.id} value={opt.code}>
@@ -4301,7 +4303,7 @@ export default function ShipmentCreatePage() {
             </>
           )}
           <label className="flex flex-col gap-1">
-            <span className={labelClass}>Ref. Invoice No.{req("ref_invoice_no")}</span>
+            <span className={labelClass}>{L("ref_invoice_no", "Ref. Invoice No.")}{req("ref_invoice_no")}</span>
             <input
               type="text"
               value={refInvoiceNo}
@@ -4312,7 +4314,7 @@ export default function ShipmentCreatePage() {
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className={labelClass}>Ref. Insurance No.{req("ref_insurance_no")}</span>
+            <span className={labelClass}>{L("ref_insurance_no", "Ref. Insurance No.")}{req("ref_insurance_no")}</span>
             <input
               type="text"
               value={refInsuranceNo}
@@ -4323,7 +4325,7 @@ export default function ShipmentCreatePage() {
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className={labelClass}>Ref. Purchase No.{req("ref_purchase_no")}</span>
+            <span className={labelClass}>{L("ref_purchase_no", "Ref. Purchase No.")}{req("ref_purchase_no")}</span>
             <input
               type="text"
               value={refPurchaseNo}

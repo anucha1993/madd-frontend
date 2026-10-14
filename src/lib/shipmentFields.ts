@@ -7,6 +7,12 @@ export type ShipmentFieldDef = {
   label: string;
   group: string;
   step: 1 | 2 | 3 | 4 | 5;
+  // false = label-only entry (always required, or never) — no per-carrier switch.
+  requirable: boolean;
+  always: boolean;
+  // The label shown on /shipment/create (staff's own, else the default).
+  form_label: string;
+  default_form_label: string;
 };
 
 export type ShipmentFieldRules = {
@@ -18,8 +24,13 @@ export type ShipmentFieldRules = {
 
 export const getShipmentFieldRules = () => apiClient.get<ShipmentFieldRules>("/shipment-field-rules");
 
-export const saveShipmentFieldRules = (rules: Record<string, string[]>) =>
-  apiClient.put<ShipmentFieldRules>("/shipment-field-rules", { rules });
+export const saveShipmentFieldRules = (rules: Record<string, string[]>, labels?: Record<string, string>) =>
+  apiClient.put<ShipmentFieldRules>("/shipment-field-rules", { rules, ...(labels ? { labels } : {}) });
+
+/** The form label of a field on /shipment/create — staff's own (from /config/shipment-fields), else `fallback`. */
+export function formLabel(config: ShipmentFieldRules | null, key: string, fallback: string): string {
+  return config?.fields.find((f) => f.key === key)?.form_label || fallback;
+}
 
 function isBlank(v: unknown): boolean {
   return v === undefined || v === null || (typeof v === "string" && v.trim() === "") || (Array.isArray(v) && v.length === 0);

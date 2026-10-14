@@ -14,9 +14,13 @@ const STEP_LABEL: Record<number, string> = {
   5: "Payment Info",
 };
 
+// Field key → the label the form shows now (the default unless renamed); emptying a box = back to the default.
+const labelsOf = (config: ShipmentFieldRules) => Object.fromEntries(config.fields.map((f) => [f.key, f.form_label]));
+
 export default function ShipmentFieldsPage() {
   const [config, setConfig] = useState<ShipmentFieldRules | null>(null);
   const [rules, setRules] = useState<Record<string, string[]>>({});
+  const [labels, setLabels] = useState<Record<string, string>>({});
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
@@ -28,6 +32,7 @@ export default function ShipmentFieldsPage() {
         if (cancelled) return;
         setConfig(res);
         setRules(res.rules);
+        setLabels(labelsOf(res));
       })
       .catch((err) => !cancelled && setLoadError(err instanceof Error ? err.message : "โหลดการตั้งค่าไม่สำเร็จ"));
     return () => {
@@ -42,7 +47,8 @@ export default function ShipmentFieldsPage() {
       .filter((g) => g.fields.length);
   }, [config]);
 
-  const dirty = !!config && JSON.stringify(config.rules) !== JSON.stringify(rules);
+  const dirty =
+    !!config && (JSON.stringify(config.rules) !== JSON.stringify(rules) || JSON.stringify(labelsOf(config)) !== JSON.stringify(labels));
 
   function toggle(carrier: string, key: string) {
     setMessage(null);
@@ -64,9 +70,10 @@ export default function ShipmentFieldsPage() {
     setSaving(true);
     setMessage(null);
     try {
-      const res = await saveShipmentFieldRules(rules);
+      const res = await saveShipmentFieldRules(rules, labels);
       setConfig(res);
       setRules(res.rules);
+      setLabels(labelsOf(res));
       setMessage({ ok: true, text: "บันทึกแล้ว — มีผลกับการจองครั้งถัดไปทันที" });
     } catch (err) {
       setMessage({ ok: false, text: err instanceof Error ? err.message : "บันทึกไม่สำเร็จ" });
@@ -82,7 +89,7 @@ export default function ShipmentFieldsPage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Shipment Required Fields"
-        description="กำหนดช่องที่ต้องกรอกก่อนจอง Shipment แยกตาม Carrier — ระบบเช็คทั้งบนหน้าจอและตอนส่งจองจริง"
+        description="กำหนดช่องที่ต้องกรอกก่อนจอง Shipment แยกตาม Carrier และแก้ข้อความ (Label) ที่แสดงบนฟอร์ม /shipment/create"
       />
 
       <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -91,6 +98,7 @@ export default function ShipmentFieldsPage() {
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                 <th className="px-4 py-3">ช่องข้อมูล</th>
+                <th className="px-4 py-3">ข้อความบนฟอร์ม (Label)</th>
                 <th className="px-4 py-3">อยู่ในขั้นตอน</th>
                 {config.carriers.map((c) => (
                   <th key={c} className="w-28 px-4 py-3 text-center">
@@ -102,17 +110,18 @@ export default function ShipmentFieldsPage() {
             </thead>
             <tbody>
               {groups.map((g) => {
-                const keys = g.fields.map((f) => f.key);
                 return [
                   <tr key={`g-${g.key}`} className="border-b border-slate-100 bg-slate-50/60">
-                    <td colSpan={2} className="px-4 py-2 text-xs font-semibold text-slate-700">
+                    <td colSpan={3} className="px-4 py-2 text-xs font-semibold text-slate-700">
                       {g.label}
                     </td>
                     {config.carriers.map((c) => {
-                      const all = keys.every((k) => (rules[c] ?? []).includes(k));
+                      const requirable = g.fields.filter((f) => f.requirable).map((f) => f.key);
+                      const all = requirable.length > 0 && requirable.every((k) => (rules[c] ?? []).includes(k));
+                      if (!requirable.length) return <td key={c} />;
                       return (
                         <td key={c} className="px-4 py-2 text-center">
-                          <button type="button" onClick={() => toggleGroup(c, keys, !all)} className="text-[11px] font-medium text-brand-navy hover:underline">
+                          <button type="button" onClick={() => toggleGroup(c, requirable, !all)} className="text-[11px] font-medium text-brand-navy hover:underline">
                             {all ? "ไม่บังคับทั้งหมด" : "บังคับทั้งหมด"}
                           </button>
                         </td>
@@ -122,18 +131,49 @@ export default function ShipmentFieldsPage() {
                   ...g.fields.map((f) => (
                     <tr key={f.key} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
                       <td className="px-4 py-2.5 text-slate-800">{f.label}</td>
-                      <td className="px-4 py-2.5 text-xs text-slate-500">
+                      <td className="px-4 py-1.5">
+                        <input
+                          type="text"
+                          value={labels[f.key] ?? ""}
+                          placeholder={f.default_form_label}
+                          maxLength={100}
+                          onChange={(e) => {
+                            setMessage(null);
+                            setLabels((prev) => ({ ...prev, [f.key]: e.target.value }));
+                          }}
+                          aria-label={`Label: ${f.label}`}
+                          className={`w-full min-w-[12rem] rounded-lg border px-2.5 py-1.5 text-sm text-slate-800 outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15 ${
+                            (labels[f.key] ?? "").trim() && labels[f.key].trim() !== f.default_form_label
+                              ? "border-amber-300 bg-amber-50/50"
+                              : "border-slate-200 bg-white"
+                          }`}
+                        />
+                        {(labels[f.key] ?? "").trim() && labels[f.key].trim() !== f.default_form_label && (
+                          <button
+                            type="button"
+                            onClick={() => setLabels((prev) => ({ ...prev, [f.key]: f.default_form_label }))}
+                            className="mt-0.5 text-[11px] text-slate-400 hover:text-brand-navy hover:underline"
+                          >
+                            คืนค่าเดิม: {f.default_form_label}
+                          </button>
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-2.5 text-xs text-slate-500">
                         {f.step}. {STEP_LABEL[f.step]}
                       </td>
                       {config.carriers.map((c) => (
                         <td key={c} className="px-4 py-2.5 text-center">
-                          <input
-                            type="checkbox"
-                            aria-label={`${c}: ${f.label}`}
-                            checked={(rules[c] ?? []).includes(f.key)}
-                            onChange={() => toggle(c, f.key)}
-                            className="h-4 w-4 cursor-pointer accent-brand-amber"
-                          />
+                          {f.requirable ? (
+                            <input
+                              type="checkbox"
+                              aria-label={`${c}: ${f.label}`}
+                              checked={(rules[c] ?? []).includes(f.key)}
+                              onChange={() => toggle(c, f.key)}
+                              className="h-4 w-4 cursor-pointer accent-brand-amber"
+                            />
+                          ) : (
+                            <span className="text-[11px] text-slate-400">{f.always ? "บังคับเสมอ" : "-"}</span>
+                          )}
                         </td>
                       ))}
                     </tr>
@@ -145,7 +185,7 @@ export default function ShipmentFieldsPage() {
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-3">
           <p className="text-xs text-slate-500">
-            ช่องที่ Carrier บังคับอยู่แล้ว (ที่อยู่ผู้ส่ง, ประเทศ / เมืองผู้รับ, น้ำหนัก ฯลฯ) ไม่อยู่ในรายการนี้ — ระบบบังคับให้เสมอ
+            Label สีเหลือง = แก้จากค่าเดิมแล้ว (ลบให้ว่างหรือกด &quot;คืนค่าเดิม&quot; = กลับไปใช้ค่าเดิม) · ช่องที่ขึ้น &quot;บังคับเสมอ&quot; Carrier บังคับอยู่แล้ว แก้ได้เฉพาะ Label
           </p>
           <div className="flex items-center gap-3">
             {message && <span className={`text-sm ${message.ok ? "text-emerald-600" : "text-red-600"}`}>{message.text}</span>}
