@@ -49,7 +49,8 @@ const DHL_DOCUMENT_FIXED_COVERAGE_THB = 17000;
 // Describes exactly what a markup was computed from, e.g. "7% × 1,200.00" or "+50.00 flat" —
 // so staff can see which amount a Markup Rule (config/markup) used as its base.
 function formatMarkupBasis(line: RateChargeLine): string | null {
-  if (line.markupUnit === "FORMULA") return line.markupFormula ?? null;
+  // Formula text (e.g. IF(BOX_OVER(30) > 0, …)) is configuration, not something to read on a quote.
+  if (line.markupUnit === "FORMULA") return null;
   if (!line.markupUnit || line.markupValue == null) return null;
   if (line.markupUnit === "PER_KG") {
     const kg = line.markupBase != null ? ` × ${line.markupBase.toLocaleString(undefined, { maximumFractionDigits: 2 })} kg` : "";
