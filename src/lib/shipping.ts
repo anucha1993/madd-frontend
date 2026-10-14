@@ -42,7 +42,7 @@ export type CheckRateInput = {
   // Which carrier(s) to check — omit/empty to check both UPS and DHL (default).
   carriers?: ("UPS" | "DHL")[];
   // DHL Optional Services (live-verified serviceCodes) — applied to both the rate check and the
-  // real booking so quoted/charged amounts stay consistent. Defaults to ["SF"] (Direct Signature)
+  // real booking so quoted/charged amounts stay consistent. Defaults to ["SX"] (No Signature Required)
   // server-side if omitted.
   dhl_optional_services?: string[];
   // UPS Optional Services (SATURDAY, DCIS1/2/3 signature options, ADDRESSEE_ONLY, DIRECT_ONLY) —
@@ -121,3 +121,13 @@ export type CheckRateResult = {
 };
 
 export const checkRate = (data: CheckRateInput) => apiClient.post<CheckRateResult>("/shipping/check-rate", data);
+
+// Weights are always kilograms — older DHL quotes stored "metric" (DHL's unit system) instead, shown as KGS like UPS.
+export const weightUnitLabel = (unit: string | null | undefined) => (!unit || unit.toLowerCase() === "metric" ? "KGS" : unit);
+
+// Document weight ceiling per carrier, over every document piece (weight × qty) — over it the
+// carrier isn't quoted and can't be booked. Mirrors the backend's App\Support\DocumentWeightLimit.
+export const DOCUMENT_MAX_KG = { UPS: 5, DHL: 2 } as const;
+
+export const documentWeightKg = (packages: { weight: number; quantity?: number; is_document?: boolean }[]) =>
+  Math.round(packages.filter((p) => p.is_document).reduce((sum, p) => sum + (Number(p.weight) || 0) * Math.max(1, Number(p.quantity) || 1), 0) * 1000) / 1000;

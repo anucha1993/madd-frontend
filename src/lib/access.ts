@@ -57,6 +57,7 @@ const ROUTE_PERMISSIONS: { pattern: RegExp; permission: string | string[] }[] = 
   { pattern: /^\/customer(\/|$)/, permission: "customer.view" },
   { pattern: /^\/config\/markup(\/|$)/, permission: "config.markup" },
   { pattern: /^\/config\/weight-markups(\/|$)/, permission: "config.weight_markups" },
+  { pattern: /^\/config\/heavy-rates(\/|$)/, permission: "config.heavy_rates" },
   { pattern: /^\/config\/charge-names(\/|$)/, permission: "config.charge_names" },
   { pattern: /^\/config\/addon(\/|$)/, permission: "config.addon" },
   { pattern: /^\/config\/insurance-caps(\/|$)/, permission: "config.insurance" },

@@ -21,6 +21,8 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
   const [status, setStatus] = useState(initial?.status ?? true);
   const [mode, setMode] = useState<"test" | "production">(initial?.mode ?? "production");
   const [isApiEnabled, setIsApiEnabled] = useState(initial?.is_api_enabled ?? true);
+  const [rateMinWeight, setRateMinWeight] = useState(initial?.rate_min_weight != null ? String(initial.rate_min_weight) : "");
+  const [rateMaxWeight, setRateMaxWeight] = useState(initial?.rate_max_weight != null ? String(initial.rate_max_weight) : "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -30,6 +32,10 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
 
     if (!agentId || !usernameAcc.trim()) {
       setError("กรุณาเลือก Agent และกรอกชื่อบัญชี");
+      return;
+    }
+    if (rateMinWeight !== "" && rateMaxWeight !== "" && Number(rateMaxWeight) <= Number(rateMinWeight)) {
+      setError("ช่วงน้ำหนัก Check Rate: น้ำหนักสูงสุดต้องมากกว่าน้ำหนักต่ำสุด");
       return;
     }
 
@@ -46,6 +52,8 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
         status,
         mode,
         is_api_enabled: isApiEnabled,
+        rate_min_weight: rateMinWeight === "" ? null : Number(rateMinWeight),
+        rate_max_weight: rateMaxWeight === "" ? null : Number(rateMaxWeight),
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
@@ -161,6 +169,36 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
           บัญชีนี้จะไม่แสดงให้เลือกตอนเช็คราคา/สร้าง Shipment แต่จะยังแสดงให้เลือกเป็นชื่อขนส่งตอนออกใบเสร็จได้
         </span>
       </label>
+
+      {isApiEnabled && (
+        <div className="flex flex-col gap-1.5">
+          <span className={labelClass}>ช่วงน้ำหนักที่ใช้ Check Rate (kg)</span>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={rateMinWeight}
+              onChange={(e) => setRateMinWeight(e.target.value)}
+              placeholder="ตั้งแต่ (ว่าง = 0)"
+              className={inputClass}
+            />
+            <span className="text-slate-400">–</span>
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={rateMaxWeight}
+              onChange={(e) => setRateMaxWeight(e.target.value)}
+              placeholder="ถึง (ว่าง = ไม่จำกัด)"
+              className={inputClass}
+            />
+          </div>
+          <p className="text-xs text-slate-400">
+            เช่น 0 – 10 = ดึงราคาจากบัญชีนี้เฉพาะ Shipment ที่น้ำหนักคิดเงิน (รวมน้ำหนักตามขนาด) ไม่เกิน 10 kg · ว่างทั้งสองช่อง = ทุกน้ำหนัก
+          </p>
+        </div>
+      )}
 
       {error && (
         <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600" role="alert">

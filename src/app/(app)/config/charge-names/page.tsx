@@ -23,7 +23,7 @@ const CARRIERS: Carrier[] = ["UPS", "DHL"];
 
 // Formula-only variables (see SpecialFormulaChargeCodeSeeder) — never a real charge line, so
 // there's nothing to rename.
-const FORMULA_ONLY_CODES = ["BILLED_WEIGHT", "TOTAL", "W", "BOX"];
+const FORMULA_ONLY_CODES = ["BILLED_WEIGHT", "TOTAL", "COST", "W", "BOX"];
 
 const EMPTY_RULE: ChargeDisplayRule = { code: "", op: ">", value: 0, name: "" };
 

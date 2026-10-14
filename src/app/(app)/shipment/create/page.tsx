@@ -19,7 +19,7 @@ import { useAiEnabled } from "@/hooks/useAiEnabled";
 import { listProductWeightBands, matchProductWeightBand, pickForcedWeightBand, type ProductWeightBand } from "@/lib/productWeightBands";
 import { listManifestOptions, type ManifestOption } from "@/lib/manifestOptions";
 import { getThaiSubdistrictsByZipCode } from "@/lib/thaiSubdistricts";
-import { checkRate, type CheckRateInput, type RateChargeLine, type RateQuote, type ShipmentPackageInput } from "@/lib/shipping";
+import { checkRate, DOCUMENT_MAX_KG, documentWeightKg, weightUnitLabel, type CheckRateInput, type RateChargeLine, type RateQuote, type ShipmentPackageInput } from "@/lib/shipping";
 import { lookupInsuranceCountryCap, type InsuranceCountryCap } from "@/lib/insuranceCountryCaps";
 import { validateAddress, type AddressValidationResult } from "@/lib/addressValidation";
 import { ApiError } from "@/lib/apiClient";
@@ -704,9 +704,8 @@ export default function ShipmentCreatePage() {
   // to manually pick a quote card out of a mixed UPS+DHL results list.
   const [selectedCarriers, setSelectedCarriers] = useState<("UPS" | "DHL")[]>(["UPS", "DHL"]);
 
-  // DHL Optional Services — SF (Direct Signature) is the default, matching this account's
-  // long-standing default behavior before this selector existed.
-  const [dhlSignatureOption, setDhlSignatureOption] = useState<string>("SF");
+  // DHL Optional Services — SX (No Signature Required) is the default (DhlRateService::DEFAULT_OPTIONAL_SERVICE_CODES).
+  const [dhlSignatureOption, setDhlSignatureOption] = useState<string>("SX");
   const [dhlOptionalServices, setDhlOptionalServices] = useState<Set<string>>(new Set());
   const dhlOptionalServiceCodes = [dhlSignatureOption, ...Array.from(dhlOptionalServices)].filter(Boolean);
 
@@ -719,7 +718,7 @@ export default function ShipmentCreatePage() {
     });
   }
 
-  // UPS Optional Services — no default signature option (unlike DHL's "SF"), matching this
+  // UPS Optional Services — no default signature option (unlike DHL's "SX"), matching this
   // account's actual prior behavior before this selector existed (no code was ever sent to UPS).
   const [upsSignatureOption, setUpsSignatureOption] = useState<string>("");
   const [upsOptionalServices, setUpsOptionalServices] = useState<Set<string>>(new Set());
@@ -1563,6 +1562,10 @@ export default function ShipmentCreatePage() {
   // packages — a shipment must be all-Document or all-Box for UPS. DHL has no such
   // restriction (a mixed shipment quotes fine). Split into two separate shipments for UPS.
   const hasMixedPackageTypes = packages.some((p) => p.is_document) && packages.some((p) => !p.is_document);
+  // Document weight limit (UPS 5 kg, DHL 2 kg over all document pieces) — the carriers over it
+  // among the selected ones; Check Rate won't quote them.
+  const totalDocumentKg = documentWeightKg(packages);
+  const documentOverLimitCarriers = selectedCarriers.filter((c) => totalDocumentKg > DOCUMENT_MAX_KG[c]);
   // A CPM-forced Weight Range (e.g. CPM10/CPM25) only overrides the weight-based match when the
   // shipment is truly a single box (total quantity across every row is 1) — a CPM box's fixed
   // weight only means "bill this one box as if it weighs 10/20kg", not "this whole multi-box
@@ -2168,14 +2171,14 @@ export default function ShipmentCreatePage() {
                   const insuranceMarkupPct = isCarrierInsuranceLine ? getCarrierOwnInsuranceMarkupPercent(selectedQuote.carrier) : 0;
                   const displayAmount = insuranceMarkupPct !== 0 ? line.amount * (1 + insuranceMarkupPct / 100) : line.amount;
                   return (
-                    <div key={li} className="flex items-center justify-between text-xs">
-                      <span className={canSeeMarkup && line.isCustomCharge ? "text-emerald-600" : "text-slate-500"}>
+                    <div key={li} className="flex items-start justify-between gap-3 text-xs">
+                      <span className={`min-w-0 ${canSeeMarkup && line.isCustomCharge ? "text-emerald-600" : "text-slate-500"}`}>
                         {chargeName(selectedQuote.carrier, line.code, line.description, selectedQuote.chargeBreakdown)}
                         {line.code ? <span className="text-slate-300"> ({line.code})</span> : null}
-                        {markupBasis && <span className="ml-1 text-emerald-600">({markupBasis})</span>}
+                        {markupBasis && <span className="block text-[11px] text-emerald-600">{markupBasis}</span>}
                         {canSeeMarkup && insuranceMarkupPct !== 0 && <span className="ml-1 text-emerald-600">(+{insuranceMarkupPct}%)</span>}
                       </span>
-                      <span className={`font-medium ${canSeeMarkup && (line.isCustomCharge || insuranceMarkupPct !== 0) ? "text-emerald-600" : "text-slate-600"}`}>
+                      <span className={`shrink-0 whitespace-nowrap font-medium ${canSeeMarkup && (line.isCustomCharge || insuranceMarkupPct !== 0) ? "text-emerald-600" : "text-slate-600"}`}>
                         {Math.ceil(displayAmount).toLocaleString(undefined, { maximumFractionDigits: 0 })} {line.currency}
                       </span>
                     </div>
@@ -3372,7 +3375,7 @@ export default function ShipmentCreatePage() {
                           : undefined
                       }
                       onChange={(e) => updatePackage(pkg.key, { weight: Number(e.target.value) })}
-                      className={`w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15 disabled:bg-slate-100 ${
+                      className={`w-full rounded-lg border ${pkg.is_document && documentOverLimitCarriers.length ? "border-red-400" : "border-slate-300"} bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15 disabled:bg-slate-100 ${
                         !isActive ? "pointer-events-none" : ""
                       }`}
                     />
@@ -3442,6 +3445,13 @@ export default function ShipmentCreatePage() {
                     <Trash2 className="h-4 w-4" />
                   </button>
                   </div>
+                  {pkg.is_document && documentOverLimitCarriers.length > 0 && (
+                    <p className="text-xs text-red-600">
+                      Document รวม {totalDocumentKg} กก. เกินที่{" "}
+                      {documentOverLimitCarriers.map((c) => `${c} รับได้ (สูงสุด ${DOCUMENT_MAX_KG[c]} กก.)`).join(", ")} — จะไม่แสดงราคา{" "}
+                      {documentOverLimitCarriers.join(" / ")}
+                    </p>
+                  )}
                   <div className="flex items-end gap-3">
                   <div className="flex w-24 flex-col gap-1">
                     {/* <span className={labelClass}>Insurance</span> */}
@@ -3701,9 +3711,9 @@ export default function ShipmentCreatePage() {
                         </div>
                         {r.billedWeight != null && (
                           <p className="mt-0.5 text-xs text-slate-400">
-                            Billed Weight: <span className="font-medium text-slate-500">{r.billedWeight} {r.billedWeightUnit}</span>
+                            Billed Weight: <span className="font-medium text-slate-500">{r.billedWeight} {weightUnitLabel(r.billedWeightUnit)}</span>
                             {r.volumetricWeight != null && (
-                              <span> · Volumetric: <span className="font-medium text-slate-500">{r.volumetricWeight} {r.billedWeightUnit}</span></span>
+                              <span> · Volumetric: <span className="font-medium text-slate-500">{r.volumetricWeight} {weightUnitLabel(r.billedWeightUnit)}</span></span>
                             )}
                             {hasCpmPackage && totalRealBookingWeight !== totalShipmentWeight && (
                               <span className="text-amber-600"> · Book จริง: {totalRealBookingWeight.toLocaleString()} kg (CPM)</span>
@@ -3720,14 +3730,14 @@ export default function ShipmentCreatePage() {
                               const insuranceMarkupPct = isCarrierInsuranceLine ? getCarrierOwnInsuranceMarkupPercent(r.carrier) : 0;
                               const displayAmount = insuranceMarkupPct !== 0 ? line.amount * (1 + insuranceMarkupPct / 100) : line.amount;
                               return (
-                              <div key={li} className="flex items-center justify-between text-xs">
-                                <span className={canSeeMarkup && line.isCustomCharge ? "text-emerald-600" : "text-slate-500"}>
+                              <div key={li} className="flex items-start justify-between gap-3 text-xs">
+                                <span className={`min-w-0 ${canSeeMarkup && line.isCustomCharge ? "text-emerald-600" : "text-slate-500"}`}>
                                   {chargeName(r.carrier, line.code, line.description, r.chargeBreakdown)}
                                   {line.code ? <span className="text-slate-300"> ({line.code})</span> : null}
-                                  {markupBasis && <span className="ml-1 text-emerald-600">({markupBasis})</span>}
+                                  {markupBasis && <span className="block text-[11px] text-emerald-600">{markupBasis}</span>}
                                   {canSeeMarkup && insuranceMarkupPct !== 0 && <span className="ml-1 text-emerald-600">(+{insuranceMarkupPct}%)</span>}
                                 </span>
-                                <span className={`font-medium ${canSeeMarkup && (line.isCustomCharge || insuranceMarkupPct !== 0) ? "text-emerald-600" : "text-slate-600"}`}>
+                                <span className={`shrink-0 whitespace-nowrap font-medium ${canSeeMarkup && (line.isCustomCharge || insuranceMarkupPct !== 0) ? "text-emerald-600" : "text-slate-600"}`}>
                                   {Math.ceil(displayAmount).toLocaleString(undefined, { maximumFractionDigits: 0 })} {line.currency}
                                 </span>
                               </div>

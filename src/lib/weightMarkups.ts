@@ -3,8 +3,10 @@ import { apiClient } from "./apiClient";
 export type WeightMarkupCarrier = "UPS" | "DHL";
 export type WeightMarkupPackageType = "document" | "box";
 
-// rates: THB per kg by column — "all" (the band's default), "zone:5", "country:US".
-export type WeightMarkupBand = { min_weight: number; max_weight: number | null; rates: Record<string, number | null> };
+// rates by column — "all" (the band's default), "zone:5", "country:US". A cell is THB per kg (a
+// number) or a formula string like "{BASE}*5%" whose result is THB for the whole shipment.
+export type WeightMarkupCell = number | string | null;
+export type WeightMarkupBand = { min_weight: number; max_weight: number | null; rates: Record<string, WeightMarkupCell> };
 
 export type WeightMarkupMatrix = { bands: WeightMarkupBand[]; account_sets: number[] };
 

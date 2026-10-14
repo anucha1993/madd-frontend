@@ -23,6 +23,7 @@ import {
   deleteAgentAccount,
   listAgentAccounts,
   listAgents,
+  rateWeightRangeLabel,
   testAgentAccount,
   updateAgent,
   updateAgentAccount,
@@ -696,6 +697,14 @@ export default function AgentAccountsPage() {
                             >
                               {account.is_api_enabled ? "API" : "ไม่มี API"}
                             </span>
+                            {account.is_api_enabled && rateWeightRangeLabel(account) && (
+                              <span
+                                title="Check Rate ดึงราคาจากบัญชีนี้เฉพาะน้ำหนักคิดเงินในช่วงนี้"
+                                className="ml-1 whitespace-nowrap rounded-full bg-violet-50 px-2.5 py-0.5 text-xs font-medium text-violet-700"
+                              >
+                                {rateWeightRangeLabel(account)}
+                              </span>
+                            )}
                           </td>
                           <td className="px-5 py-3">
                             <span
@@ -1182,7 +1191,7 @@ export default function AgentAccountsPage() {
                     ) : (
                       <div className="flex flex-col gap-1.5">
                         <span className="text-xs font-medium text-slate-600">
-                          Formula — คลิก Charge Code ด้านล่างเพื่อแทรก เช่น Excel (รองรับตัวแปรพิเศษ {"{BILLED_WEIGHT}"} / {"{W}"}, {"{TOTAL}"}, {"{BOX}"}, {"{ZONE_PRICE}"} และ IF ด้วย)
+                          Formula — คลิก Charge Code ด้านล่างเพื่อแทรก เช่น Excel (รองรับตัวแปรพิเศษ {"{BILLED_WEIGHT}"} / {"{W}"}, {"{TOTAL}"} / {"{COST}"} = ยอดรวมของ carrier (สูตรนี้คิดก่อนราคาขาย), {"{BOX}"}, {"{ZONE_PRICE}"} และ IF ด้วย)
                         </span>
                         <textarea
                           ref={formulaInputRef}

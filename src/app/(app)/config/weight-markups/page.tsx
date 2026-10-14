@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Plus, Save, Trash2, X } from "lucide-react";
+import { Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { useAccess } from "@/components/auth/AccessProvider";
 import PageHeader from "@/components/layout/PageHeader";
 import PageLoading from "@/components/ui/PageLoading";
@@ -16,10 +16,12 @@ import {
   type WeightMarkupPackageType,
 } from "@/lib/weightMarkups";
 
-const inputClass =
-  "w-full rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-sm text-slate-800 outline-none transition focus:border-brand-navy focus:bg-white focus:ring-2 focus:ring-brand-navy/15";
+const fieldClass =
+  "rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-sm text-slate-800 outline-none transition focus:border-brand-navy focus:bg-white focus:ring-2 focus:ring-brand-navy/15";
 
 const CARRIERS: WeightMarkupCarrier[] = ["UPS", "DHL"];
+
+const isNumber = (v: string) => v.trim() !== "" && !Number.isNaN(Number(v));
 const TYPES: { key: WeightMarkupPackageType; label: string }[] = [
   { key: "box", label: "Non-document" },
   { key: "document", label: "Document" },
@@ -51,8 +53,9 @@ export default function WeightMarkupsPage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [newScopeType, setNewScopeType] = useState<"zone" | "country">("zone");
-  const [newScopeValue, setNewScopeValue] = useState("");
+  const [newCountry, setNewCountry] = useState("");
+  // Which price list is being edited: "all" (default for every zone), "zone:5" or "country:US".
+  const [editing, setEditing] = useState("all");
 
   const countryName = useCallback((iso2: string) => countries.find((c) => c.iso2 === iso2)?.name ?? iso2, [countries]);
   const carrierAccounts = accounts.filter((a) => a.agent?.agent_code === carrier);
@@ -107,27 +110,44 @@ export default function WeightMarkupsPage() {
 
   if (loading) return <PageLoading label="Loading Weight Markup..." />;
 
-  const orderedScopes = sortScopes(scopes, countryName);
+  const zoneKeys = zones.map((z) => `zone:${z}`);
+  const countryKeys = sortScopes(
+    scopes.filter((k) => k.startsWith("country:")),
+    countryName,
+  );
+  const scopeKeys = ["all", ...zoneKeys, ...countryKeys];
+  const current = scopeKeys.includes(editing) ? editing : "all";
+  // A zone / country has its own prices when any band has a value for it.
+  const hasValues = (key: string) => bands.some((b) => b.rates[key] != null && String(b.rates[key]).trim() !== "");
   const scopeLabel = (key: string) => {
     const [type, value] = key.split(":");
     return type === "zone" ? `Zone ${value}` : `${value} ${countryName(value)}`;
   };
 
   function setRate(i: number, key: string, value: string) {
-    setBands((prev) => prev.map((b, j) => (j === i ? { ...b, rates: { ...b.rates, [key]: value === "" ? null : Number(value) } } : b)));
+    setBands((prev) => prev.map((b, j) => (j === i ? { ...b, rates: { ...b.rates, [key]: value === "" ? null : value } } : b)));
   }
 
-  function addScope() {
-    const value = newScopeValue.trim().toUpperCase();
-    if (!value) return;
-    const key = `${newScopeType}:${value}`;
+  function addCountry(iso2: string) {
+    if (!iso2) return;
+    const key = `country:${iso2.toUpperCase()}`;
     if (!scopes.includes(key)) setScopes((prev) => [...prev, key]);
-    setNewScopeValue("");
+    setNewCountry("");
+    setEditing(key);
   }
 
-  function removeScope(key: string) {
-    setScopes((prev) => prev.filter((k) => k !== key));
+  // Copies the default prices into the zone / country being edited, as a starting point.
+  function copyDefault() {
+    setBands((prev) => prev.map((b) => ({ ...b, rates: { ...b.rates, [current]: b.rates.all ?? null } })));
+  }
+
+  // Clears this zone / country's own prices (back to the default); a country also loses its button.
+  function clearScope(key: string) {
     setBands((prev) => prev.map((b) => ({ ...b, rates: Object.fromEntries(Object.entries(b.rates).filter(([k]) => k !== key)) })));
+    if (key.startsWith("country:")) {
+      setScopes((prev) => prev.filter((k) => k !== key));
+      setEditing("all");
+    }
   }
 
   async function handleSave() {
@@ -137,7 +157,14 @@ export default function WeightMarkupsPage() {
     try {
       const payload = bands.map((b) => ({
         ...b,
-        rates: Object.fromEntries(Object.entries(b.rates).filter(([k]) => k === "all" || scopes.includes(k))),
+        rates: Object.fromEntries(
+          Object.entries(b.rates)
+            .filter(([k]) => scopeKeys.includes(k))
+            .map(([k, v]) => {
+              const text = v == null ? "" : String(v).trim();
+              return [k, text === "" ? null : isNumber(text) ? Number(text) : text];
+            }),
+        ),
       }));
       const res = await saveWeightMarkups({ carrier, package_type: packageType, agent_account_id: accountId }, payload);
       setAccountSets(res.account_sets);
@@ -171,7 +198,7 @@ export default function WeightMarkupsPage() {
     <div>
       <PageHeader
         title="Weight Markup"
-        description="บวกราคาขายเป็นบาท/kg ตามช่วงน้ำหนัก — คิดต่อจาก Fixed Charges + Mark-up ทั้งหมด แสดงเป็นบรรทัด Weight Markup ในใบเสนอราคา"
+        description="บวกราคาขายตามช่วงน้ำหนัก (บาท/kg หรือสูตร เช่น {BASE}*5%) — คิดต่อจาก Fixed Charges + Mark-up ทั้งหมด แสดงเป็นบรรทัด Weight Markup ในใบเสนอราคา"
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -199,7 +226,7 @@ export default function WeightMarkupsPage() {
           <select
             value={accountId ?? ""}
             onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : null)}
-            className={`${inputClass} w-64`}
+            className={`${fieldClass} w-64`}
           >
             <option value="">ทุกบัญชีของ {carrier} (ชุดกลาง)</option>
             {carrierAccounts.map((a) => (
@@ -223,39 +250,93 @@ export default function WeightMarkupsPage() {
         )}
 
         <fieldset disabled={!canEdit} className="min-w-0">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-xs text-slate-500">
-              <tr>
-                <th className="px-3 py-2 text-left font-medium">ตั้งแต่ (kg)</th>
-                <th className="px-3 py-2 text-left font-medium">ถึง (kg) — ว่าง = ขึ้นไป</th>
-                <th className="px-3 py-2 text-left font-medium">ทุกประเทศ (บาท/kg)</th>
-                {orderedScopes.map((key) => (
-                  <th key={key} className="px-3 py-2 text-left font-medium">
-                    <span className="inline-flex items-center gap-1">
-                      {scopeLabel(key)}
-                      <button type="button" onClick={() => removeScope(key)} className="rounded p-0.5 text-slate-400 hover:bg-slate-200 hover:text-red-500" aria-label="ลบคอลัมน์">
-                        <X className="h-3 w-3" />
-                      </button>
-                    </span>
-                  </th>
-                ))}
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {bands.map((band, i) => (
+        {/* 1) pick what to price */}
+        <div className="mb-4">
+          <p className="mb-2 text-sm font-semibold text-slate-700">1. เลือกราคาที่จะแก้</p>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {scopeKeys.map((key) => {
+              const active = current === key;
+              const label = key === "all" ? "ค่าปกติ (ทุก Zone)" : scopeLabel(key);
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setEditing(key)}
+                  className={`relative rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                    active
+                      ? "bg-brand-navy-dark text-white"
+                      : key.startsWith("country:")
+                        ? "border border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                        : "border border-slate-300 text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  {label}
+                  {key !== "all" && hasValues(key) && (
+                    <span className={`ml-1.5 inline-block h-2 w-2 rounded-full ${active ? "bg-brand-amber" : "bg-emerald-500"}`} title="มีราคาของตัวเอง" />
+                  )}
+                </button>
+              );
+            })}
+            <select value={newCountry} onChange={(e) => addCountry(e.target.value)} className={`${fieldClass} ml-2 w-64`}>
+              <option value="">+ ราคาพิเศษรายประเทศ…</option>
+              {countries.map((c) => (
+                <option key={c.iso2} value={c.iso2} disabled={scopes.includes(`country:${c.iso2}`)}>
+                  {c.iso2} — {c.name}
+                  {c[zoneColumn] ? ` (Zone ${c[zoneColumn]})` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="mt-1.5 text-xs text-slate-400">
+            ● = Zone / ประเทศที่ตั้งราคาของตัวเองไว้ · ที่เหลือใช้ค่าปกติ · ลำดับ: รายประเทศ &gt; ราย Zone &gt; ค่าปกติ
+          </p>
+        </div>
+
+        {/* 2) the bands for that choice */}
+        <div className="mb-2 flex flex-wrap items-center gap-3">
+          <p className="text-sm font-semibold text-slate-700">
+            2. ราคา{current === "all" ? "ค่าปกติ (ใช้กับทุก Zone ที่ไม่ได้ตั้งเอง)" : ` ${scopeLabel(current)}`}
+          </p>
+          {current !== "all" && (
+            <>
+              <button type="button" onClick={copyDefault} className="text-xs font-medium text-brand-navy hover:underline">
+                คัดลอกจากค่าปกติ
+              </button>
+              {hasValues(current) || current.startsWith("country:") ? (
+                <button type="button" onClick={() => clearScope(current)} className="text-xs font-medium text-red-600 hover:underline">
+                  {current.startsWith("country:") ? "ลบราคาพิเศษของประเทศนี้" : "ล้างราคา Zone นี้ (กลับไปใช้ค่าปกติ)"}
+                </button>
+              ) : null}
+            </>
+          )}
+        </div>
+        <table className="w-full table-fixed text-sm">
+          <thead className="bg-slate-50 text-xs text-slate-500">
+            <tr>
+              <th className="w-[18%] px-3 py-2 text-left font-medium">ตั้งแต่ (kg)</th>
+              <th className="w-[18%] px-3 py-2 text-left font-medium">ถึง (kg) — ว่าง = ขึ้นไป</th>
+              <th className="px-3 py-2 text-left font-medium">{current === "all" ? "ค่าปกติ" : scopeLabel(current)} — บาท/kg หรือสูตร</th>
+              <th className="w-14" />
+            </tr>
+          </thead>
+          <tbody>
+            {bands.map((band, i) => {
+              const cell = band.rates[current];
+              const text = cell == null ? "" : String(cell);
+              const formula = text.trim() !== "" && !isNumber(text);
+              const fallback = band.rates.all == null || String(band.rates.all).trim() === "" ? "ไม่บวก" : String(band.rates.all);
+              return (
                 <tr key={i} className="border-t border-slate-100">
-                  <td className="px-3 py-1.5">
+                  <td className="px-3 py-1.5 align-top">
                     <input
                       type="number"
                       step="0.01"
                       value={band.min_weight}
                       onChange={(e) => setBands((prev) => prev.map((b, j) => (j === i ? { ...b, min_weight: Number(e.target.value) } : b)))}
-                      className={`${inputClass} w-24`}
+                      className={`${fieldClass} w-full`}
                     />
                   </td>
-                  <td className="px-3 py-1.5">
+                  <td className="px-3 py-1.5 align-top">
                     <input
                       type="number"
                       step="0.01"
@@ -263,39 +344,38 @@ export default function WeightMarkupsPage() {
                       onChange={(e) =>
                         setBands((prev) => prev.map((b, j) => (j === i ? { ...b, max_weight: e.target.value === "" ? null : Number(e.target.value) } : b)))
                       }
-                      className={`${inputClass} w-24`}
+                      className={`${fieldClass} w-full`}
                     />
                   </td>
-                  {["all", ...orderedScopes].map((key) => (
-                    <td key={key} className="px-3 py-1.5">
-                      <input
-                        type="number"
-                        step="0.01"
-                        min={0}
-                        value={band.rates[key] ?? ""}
-                        placeholder={key === "all" ? "0" : "ใช้ค่าปกติ"}
-                        onChange={(e) => setRate(i, key, e.target.value)}
-                        className={`${inputClass} w-28`}
-                      />
-                    </td>
-                  ))}
-                  <td className="px-3 py-1.5 text-right">
+                  <td className="px-3 py-1.5 align-top">
+                    <input
+                      type="text"
+                      value={text}
+                      title={text}
+                      placeholder={current === "all" ? "บาท/kg หรือสูตร" : `ใช้ค่าปกติ: ${fallback}`}
+                      onChange={(e) => setRate(i, current, e.target.value)}
+                      className={`${fieldClass} w-full ${formula ? "font-mono text-violet-700" : ""}`}
+                    />
+                    <div className="mt-0.5 text-[10px] text-slate-400">{formula ? "สูตร = บาท/Shipment" : text !== "" ? "บาท/kg" : ""}</div>
+                  </td>
+                  <td className="px-3 py-1.5 text-right align-top">
                     <button
                       type="button"
                       onClick={() => setBands((prev) => prev.filter((_, j) => j !== i))}
                       className="rounded-lg p-1.5 text-red-500 hover:bg-red-50"
                       aria-label="ลบช่วง"
+                      title="ลบช่วงน้ำหนักนี้ (ทุก Zone)"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              );
+            })}
+          </tbody>
+        </table>
 
-        <div className="mt-3 flex flex-wrap items-center gap-3">
+        <div className="mt-3">
           <button
             type="button"
             onClick={() => {
@@ -307,36 +387,31 @@ export default function WeightMarkupsPage() {
           >
             <Plus className="h-4 w-4" /> เพิ่มช่วงน้ำหนัก
           </button>
-          <span className="mx-1 h-6 w-px bg-slate-200" />
-          <span className="text-sm text-slate-600">เพิ่มคอลัมน์ราคาพิเศษ:</span>
-          <select value={newScopeType} onChange={(e) => { setNewScopeType(e.target.value as "zone" | "country"); setNewScopeValue(""); }} className={`${inputClass} w-28`}>
-            <option value="zone">ราย Zone</option>
-            <option value="country">รายประเทศ</option>
-          </select>
-          <select value={newScopeValue} onChange={(e) => setNewScopeValue(e.target.value)} className={`${inputClass} w-56`}>
-            <option value="">— เลือก —</option>
-            {newScopeType === "zone"
-              ? zones.map((z) => (
-                  <option key={z} value={z}>
-                    Zone {z}
-                  </option>
-                ))
-              : countries.map((c) => (
-                  <option key={c.iso2} value={c.iso2}>
-                    {c.iso2} — {c.name}
-                    {c[zoneColumn] ? ` (Zone ${c[zoneColumn]})` : ""}
-                  </option>
-                ))}
-          </select>
-          <button type="button" onClick={addScope} disabled={!newScopeValue} className="flex items-center gap-1 text-sm font-medium text-brand-navy hover:underline disabled:opacity-40">
-            <Plus className="h-4 w-4" /> เพิ่ม
-          </button>
+          <p className="mt-1 text-xs text-slate-400">ช่วงน้ำหนักใช้ร่วมกันทุก Zone — แก้ / เพิ่ม / ลบช่วง มีผลกับทุก Zone ในชุดนี้</p>
         </div>
 
         </fieldset>
 
-        <p className="mt-4 text-xs text-slate-400">
-          คิดเงิน = บาท/kg × น้ำหนักที่ carrier คิดเงิน · ลำดับการใช้: รายประเทศ &gt; ราย Zone &gt; ทุกประเทศ · ช่องว่างในคอลัมน์ราคาพิเศษ = ใช้ค่าปกติ ·
+        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+          <p className="mb-1 font-semibold text-slate-700">ใส่ได้ 2 แบบในแต่ละช่อง</p>
+          <p>
+            <strong>ตัวเลข</strong> = บาท/kg × น้ำหนักที่ carrier คิดเงิน เช่น <code className="font-mono">15</code> (10 kg → 150 บาท)
+          </p>
+          <p className="mt-0.5">
+            <strong>สูตร</strong> = ยอดบาทของทั้ง Shipment เช่น <code className="font-mono">{"{BASE}*5%"}</code>,{" "}
+            <code className="font-mono">{"{W}*20"}</code>, <code className="font-mono">{"IF({W} > 10, {W}*15, 100)"}</code>,{" "}
+            <code className="font-mono">{"{TOTAL}*3%"}</code>
+          </p>
+          <p className="mt-1 text-slate-500">
+            ตัวแปร: <code className="font-mono">{"{BASE}"}</code> ค่าขนส่งของ carrier, <code className="font-mono">{"{375}"}</code> /{" "}
+            <code className="font-mono">{"{FF}"}</code> ฯลฯ = ค่าตาม Charge Code (ต้นทุน carrier),{" "}
+            <code className="font-mono">{"{TOTAL}"}</code> ยอดสุดท้ายของทุกบรรทัด (หลัง Fixed Charges + Mark-up ทั้งหมด), <code className="font-mono">{"{COST}"}</code> ต้นทุนรวมของ carrier, <code className="font-mono">{"{W}"}</code> น้ำหนักที่คิดเงิน,{" "}
+            <code className="font-mono">{"{BOX}"}</code> จำนวนกล่อง, <code className="font-mono">{"{ZONE}"}</code> · ฟังก์ชันเดียวกับสูตร Fixed Charges (IF, MIN, MAX, ROUNDUP, BOX_OVER …)
+          </p>
+        </div>
+
+        <p className="mt-3 text-xs text-slate-400">
+          ช่องว่างของ Zone / ประเทศ = ใช้ค่าปกติ · ใส่ 0 = ไม่บวกสำหรับ Zone / ประเทศนั้น ·
           ค่าปกติว่างหรือ 0 = ไม่บวก · ช่วงน้ำหนักชุดนี้ใช้เฉพาะ Weight Markup (ไม่เกี่ยวกับ Rate Book)
         </p>
 

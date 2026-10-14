@@ -23,6 +23,7 @@ import {
 import { listBranches, branchLabel } from "@/lib/branches";
 import { getUser } from "@/lib/auth";
 import { useChargeDisplayNames } from "@/hooks/useChargeDisplayNames";
+import { weightUnitLabel } from "@/lib/shipping";
 
 /* ---------------------------------------------------------------------------
    Layout
@@ -432,7 +433,7 @@ export default function ShipmentViewPage() {
               label="Billed Weight"
               value={
                 rateQuote?.billedWeight != null
-                  ? `${rateQuote.billedWeight} ${rateQuote.billedWeightUnit ?? ""}`.trim()
+                  ? `${rateQuote.billedWeight} ${weightUnitLabel(rateQuote.billedWeightUnit)}`.trim()
                   : undefined
               }
             />

@@ -88,7 +88,7 @@ export type BookShipmentInput = {
   invoice_lines?: BookShipmentInvoiceLine[];
   commercial_invoice_upload_key?: string | null;
   // DHL Optional Services (live-verified serviceCodes) — same list sent at Check Rate, kept
-  // consistent through to the real booking. Defaults to ["SF"] (Direct Signature) server-side.
+  // consistent through to the real booking. Defaults to ["SX"] (No Signature Required) server-side.
   dhl_optional_services?: string[];
   // UPS Optional Services (SATURDAY, DCIS1/2/3 signature options, ADDRESSEE_ONLY, DIRECT_ONLY) —
   // same pattern as dhl_optional_services; defaults to none if omitted.
