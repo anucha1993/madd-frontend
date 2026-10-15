@@ -1,26 +1,30 @@
 "use client";
 
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import { Check, Clock, FileText, Maximize2, Package, Plane, Scale, Sparkles } from "lucide-react";
+import { Check, FileText, Maximize2, Package, Plane, ReceiptText } from "lucide-react";
 import {
   DEFAULT_CUSTOMER_DISPLAY_SETTINGS,
   DEFAULT_DISPLAY_LOGO,
   openDisplayChannel,
   type DisplayMessage,
-  type DisplayQuote,
   type DisplayState,
+  mediaUrl,
+  withDefaults,
 } from "@/lib/customerDisplay";
 
 /**
- * The customer-facing 2nd screen. Opened from Create Shipment ("เปิดจอลูกค้า"), dragged to the
- * screen facing the customer, then full-screened. It only shows what Create Shipment sends over the
- * BroadcastChannel — no login, no API calls, no cost data ever reaches it.
+ * The customer-facing 2nd screen, laid out like a POS customer display: the itemised bill on the
+ * left; the amount due, the shipment's details and one ad banner on the right. Opened from Create
+ * Shipment ("เปิดจอลูกค้า"); it only shows what Create Shipment sends over the BroadcastChannel —
+ * no login, no API calls, no cost data, and never an estimated delivery time.
+ *
+ * Everything is sized in em off a root size that follows the screen height, so the same layout
+ * fills a 1080p counter screen or a small tablet without scrolling.
  */
 
-const STEPS = ["ผู้รับ", "พัสดุ", "เลือกบริการ", "ชำระเงิน", "เสร็จสิ้น"];
-
-const money = (n: number) => n.toLocaleString("th-TH", { maximumFractionDigits: 0 });
-const flagUrl = (iso2: string) => `https://flagcdn.com/w80/${iso2.toLowerCase()}.png`;
+const money = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const currencyLabel = (c?: string) => c || "THB";
+const flagUrl = (iso2: string) => `https://flagcdn.com/w40/${iso2.toLowerCase()}.png`;
 
 export default function CustomerDisplayPage() {
   const [state, setState] = useState<DisplayState>({ stage: "idle", settings: DEFAULT_CUSTOMER_DISPLAY_SETTINGS });
@@ -33,7 +37,7 @@ export default function CustomerDisplayPage() {
     const channel = openDisplayChannel();
     if (!channel) return;
     channel.onmessage = (e: MessageEvent<DisplayMessage>) => {
-      if (e.data?.type === "state") setState(e.data.state);
+      if (e.data?.type === "state") setState({ ...e.data.state, settings: withDefaults(e.data.state.settings) });
     };
     // Ask Create Shipment for what's on screen right now.
     channel.postMessage({ type: "hello" } satisfies DisplayMessage);
@@ -75,379 +79,372 @@ export default function CustomerDisplayPage() {
   const primary = settings.brand.primary_color || "#333B42";
   const accent = settings.brand.accent_color || "#F5A623";
   const logo = settings.idle.logo_url || DEFAULT_DISPLAY_LOGO;
-  const theme = { "--primary": primary, "--accent": accent } as CSSProperties;
-  const large = settings.brand.font_size === "large";
+  const banner = mediaUrl(settings.banner?.image_url);
+  const style = {
+    "--primary": primary,
+    "--accent": accent,
+    // Root size follows the screen height (≈17px on 1080p); "large" for a screen further away.
+    fontSize: settings.brand.font_size === "large" ? "clamp(15px, 1.85vh, 30px)" : "clamp(13px, 1.55vh, 26px)",
+  } as CSSProperties;
 
   const fullscreenButton = !fullscreen && (
     <button
       type="button"
       onClick={() => document.documentElement.requestFullscreen?.().catch(() => undefined)}
-      className="fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-full bg-black/60 px-4 py-2 text-sm text-white backdrop-blur hover:bg-black/75"
+      className="fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-full bg-black/55 px-4 py-2 text-sm text-white backdrop-blur hover:bg-black/70"
     >
-      <Maximize2 className="h-4 w-4" /> เต็มจอ
+      <Maximize2 className="h-4 w-4" /> Full screen
     </button>
   );
 
   if (stage === "idle") {
     return (
-      <div style={theme} className={large ? "text-[1.25rem]" : "text-base"}>
+      <div style={style}>
         <IdleScreen state={state} slide={slide} images={images} logo={logo} now={now} />
         {fullscreenButton}
       </div>
     );
   }
 
-  const step = stage === "booked" ? 5 : stage === "selected" ? 3 : stage === "quotes" ? 2 : state.packages?.length ? 1 : 0;
-
   return (
-    <div style={theme} className={`flex min-h-screen flex-col bg-[#f4f5f7] text-[#1f2429] ${large ? "text-[1.25rem]" : "text-base"}`}>
-      {/* Header: logo · progress · clock */}
-      <header className="relative flex items-center gap-8 bg-white px-10 py-5 shadow-[0_1px_0_rgba(0,0,0,0.06)]">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={logo} alt={settings.brand.shop_name ?? ""} className="h-11 w-auto" />
-        <ol className="flex flex-1 items-center justify-center gap-2">
-          {STEPS.map((label, i) => {
-            const done = i < step;
-            const current = i === step;
-            return (
-              <li key={label} className="flex items-center gap-2">
-                <span
-                  className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold transition-colors ${
-                    done ? "text-white" : current ? "text-[var(--primary)] ring-2 ring-[var(--accent)]" : "bg-slate-100 text-slate-400"
-                  }`}
-                  style={done ? { background: accent } : current ? { background: "white" } : undefined}
-                >
-                  {done ? <Check className="h-4 w-4" strokeWidth={3} /> : i + 1}
-                </span>
-                <span className={`text-sm ${current ? "font-semibold text-[var(--primary)]" : done ? "text-slate-600" : "text-slate-400"}`}>{label}</span>
-                {i < STEPS.length - 1 && <span className={`mx-1 h-0.5 w-10 rounded ${done ? "bg-[var(--accent)]" : "bg-slate-200"}`} />}
-              </li>
-            );
-          })}
-        </ol>
-        <ClockBadge now={now} />
-        <span className="absolute inset-x-0 bottom-0 h-1" style={{ background: `linear-gradient(90deg, ${accent}, ${accent}00)` }} />
-      </header>
-
-      {stage === "booked" ? (
-        <ThankYou state={state} />
-      ) : (
-        <main className="grid flex-1 grid-cols-12 gap-6 p-8">
-          <div className="col-span-12 flex flex-col gap-6 xl:col-span-7">
-            {state.recipient ? <RouteCard state={state} /> : <Placeholder text="กำลังกรอกข้อมูลผู้รับ…" />}
-            {state.packages && state.packages.length > 0 && <PackagesCard state={state} />}
+    <div style={style} className="grid h-screen grid-cols-[1.08fr_1fr] gap-[1.4em] bg-[#eceef1] p-[1.4em] text-[#262b30]">
+      <BillPane state={state} logo={logo} now={now} />
+      <div className="flex min-h-0 flex-col gap-[1.4em]">
+        <AmountCard state={state} stage={stage} />
+        <div className="min-h-0 flex-1 overflow-hidden rounded-[1.25em] bg-white shadow-[0_1px_3px_rgba(16,24,40,0.06)]">
+          {stage === "booked" ? <BookedPanel state={state} /> : <CustomerPanel state={state} />}
+        </div>
+        {banner && (
+          <div className="overflow-hidden rounded-[1.25em] bg-white shadow-[0_1px_3px_rgba(16,24,40,0.06)]">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={banner} alt="" className="block aspect-[16/3] w-full object-cover" />
           </div>
-
-          <div className="col-span-12 flex flex-col gap-6 xl:col-span-5">
-            {state.selected ? (
-              <Panel title="บริการที่เลือก">
-                <QuoteRow quote={{ ...state.selected, selected: true }} showTransit={settings.sections.transit} />
-                {state.selected.lines && state.selected.lines.length > 0 && (
-                  <div className="mt-4 flex flex-col gap-2 border-t border-dashed border-slate-200 pt-4 text-[0.95em] text-slate-600">
-                    {state.selected.lines.map((l, i) => (
-                      <div key={i} className="flex justify-between">
-                        <span>{l.name}</span>
-                        <span className="tabular-nums">{money(l.amount)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </Panel>
-            ) : state.quotes && state.quotes.length > 0 ? (
-              <Panel title="ตัวเลือกการจัดส่ง" aside={`${state.quotes.length} บริการ`}>
-                <div className="flex flex-col gap-3">
-                  {state.quotes.map((q, i) => (
-                    <QuoteRow key={i} quote={q} showTransit={settings.sections.transit} cheapest={i === 0 && settings.quotes_sort === "price"} />
-                  ))}
-                </div>
-              </Panel>
-            ) : (
-              <Placeholder text="กำลังเช็คราคาให้คุณ…" icon={<Sparkles className="h-6 w-6" />} />
-            )}
-
-            {state.addons && state.addons.length > 0 && (
-              <Panel title="บริการเพิ่มเติม">
-                <div className="flex flex-col gap-2.5">
-                  {state.addons.map((a, i) => (
-                    <div key={i} className="flex items-center justify-between">
-                      <span className="text-slate-700">
-                        {a.name}
-                        {a.quantity > 1 && <span className="ml-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-[0.8em] text-slate-500">× {a.quantity}</span>}
-                      </span>
-                      <span className="tabular-nums font-medium">{money(a.amount)}</span>
-                    </div>
-                  ))}
-                </div>
-              </Panel>
-            )}
-
-            {state.total && (
-              <div className="relative overflow-hidden rounded-3xl p-7 text-white shadow-lg" style={{ background: primary }}>
-                <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full opacity-20" style={{ background: accent }} />
-                <p className="relative text-[0.95em] font-light tracking-wide text-white/75">ยอดชำระทั้งหมด</p>
-                <p className="relative mt-1 flex items-baseline gap-2">
-                  <span className="text-[3.2em] font-semibold leading-none tabular-nums">{money(state.total.amount)}</span>
-                  <span className="text-[1.1em] font-medium" style={{ color: accent }}>
-                    {state.total.currency === "THB" ? "บาท" : state.total.currency}
-                  </span>
-                </p>
-              </div>
-            )}
-          </div>
-        </main>
-      )}
+        )}
+      </div>
       {fullscreenButton}
     </div>
   );
 }
 
-function ClockBadge({ now, light }: { now: Date | null; light?: boolean }) {
-  if (!now) return <span className="w-36" />;
+/* ---------------- left: the itemised bill ---------------- */
+
+function BillPane({ state, logo, now }: { state: DisplayState; logo: string; now: Date | null }) {
+  const { settings, selected, quotes, addons, total } = state;
+  const addonTotal = (addons ?? []).reduce((sum, a) => sum + a.amount, 0);
+  const lineCount = selected ? 1 + (addons?.length ?? 0) : 0;
+
   return (
-    <div className={`w-36 text-right leading-tight ${light ? "text-white" : ""}`}>
-      <p className="text-[1.6em] font-semibold tabular-nums">{now.toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}</p>
-      <p className={`text-xs ${light ? "text-white/70" : "text-slate-400"}`}>
-        {now.toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short" })}
+    <section className="flex min-h-0 flex-col rounded-[1.25em] bg-white px-[2em] pb-[1.6em] pt-[1.5em] shadow-[0_1px_3px_rgba(16,24,40,0.06)]">
+      <header className="flex items-center justify-between">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={logo} alt={settings.brand.shop_name ?? ""} className="h-[3.6em] w-auto" />
+        {now && (
+          <div className="text-right leading-tight">
+            <p className="text-[1.15em] font-semibold tabular-nums">{now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</p>
+            <p className="text-[0.78em] text-slate-400">{now.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p>
+          </div>
+        )}
+      </header>
+
+      <div className="mt-[1.4em] flex items-end justify-between border-b-2 border-[#262b30] pb-[0.6em]">
+        <h2 className="flex items-center gap-[0.5em] text-[1.25em] font-semibold">
+          <ReceiptText className="h-[1.1em] w-[1.1em]" style={{ color: "var(--accent)" }} />
+          Order Summary
+        </h2>
+        <span className="text-[0.78em] font-medium uppercase tracking-wider text-slate-400">
+          {selected ? `${lineCount} item${lineCount > 1 ? "s" : ""} · THB` : "THB"}
+        </span>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {selected ? (
+          <>
+            <BillRow
+              title={`Shipping · ${selected.carrier}`}
+              sub={[selected.service, state.weight?.billed != null ? `Billable weight ${state.weight.billed} ${state.weight.unit}` : null].filter(Boolean).join("  ·  ")}
+              amount={selected.price}
+              logo={selected.carrierLogo}
+            />
+            {selected.lines?.map((l, i) => (
+              <div key={i} className="flex justify-between py-[0.3em] pl-[3.2em] text-[0.85em] text-slate-500">
+                <span>{l.name}</span>
+                <span className="tabular-nums">{money(l.amount)}</span>
+              </div>
+            ))}
+            {addons?.map((a, i) => (
+              <BillRow key={i} title={a.name} qty={a.quantity} amount={a.amount} />
+            ))}
+          </>
+        ) : quotes && quotes.length > 0 ? (
+          <>
+            <p className="pt-[1em] text-[0.85em] text-slate-400">Shipping options</p>
+            {quotes.map((q, i) => (
+              <BillRow key={i} title={`${q.carrier} ${q.service}`} amount={q.price} logo={q.carrierLogo} carrier={q.carrier} />
+            ))}
+          </>
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center gap-[0.6em] text-slate-300">
+            <ReceiptText className="h-[2.6em] w-[2.6em]" strokeWidth={1.4} />
+            <p className="text-[1.05em]">Preparing your order…</p>
+          </div>
+        )}
+      </div>
+
+      {selected && settings.sections.total && (
+        <div className="mt-[1em] rounded-[1em] bg-[#f5f6f8] px-[1.3em] py-[1em]">
+          <SummaryRow label="Shipping" value={money(selected.price)} />
+          {addonTotal > 0 && <SummaryRow label="Additional services" value={money(addonTotal)} />}
+          {total && (
+            <div className="mt-[0.6em] flex items-baseline justify-between border-t border-dashed border-slate-300 pt-[0.7em]" style={{ color: "var(--primary)" }}>
+              <span className="flex items-center gap-[0.5em] text-[1.25em] font-semibold">
+                <span className="h-[1em] w-[0.3em] rounded-full" style={{ background: "var(--accent)" }} />
+                Total
+              </span>
+              <span className="text-[1.9em] font-bold tabular-nums leading-none">{money(total.amount)}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function BillRow({ title, sub, qty, amount, logo, carrier }: { title: string; sub?: string; qty?: number; amount: number; logo?: string | null; carrier?: string }) {
+  return (
+    <div className="flex items-center gap-[1em] border-b border-slate-100 py-[0.95em]">
+      <span className="flex h-[2.4em] w-[2.4em] shrink-0 items-center justify-center rounded-[0.7em] bg-[#f5f6f8]">
+        {logo ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={logo} alt={carrier ?? ""} className="max-h-[1.5em] max-w-[1.8em] object-contain" />
+        ) : (
+          <Package className="h-[1.2em] w-[1.2em] text-slate-400" />
+        )}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[1.05em] font-medium">{title}</p>
+        {sub && <p className="mt-[0.1em] truncate text-[0.82em] text-slate-400">{sub}</p>}
+      </div>
+      {qty != null && qty > 1 && <span className="rounded-full bg-[#f5f6f8] px-[0.7em] py-[0.15em] text-[0.85em] font-medium text-slate-500">× {qty}</span>}
+      <p className="w-[7em] shrink-0 text-right text-[1.05em] font-semibold tabular-nums">{money(amount)}</p>
+    </div>
+  );
+}
+
+function SummaryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between py-[0.2em] text-[0.95em] text-slate-500">
+      <span>{label}</span>
+      <span className="tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+/* ---------------- right: the amount due ---------------- */
+
+function AmountCard({ state, stage }: { state: DisplayState; stage: string }) {
+  const amount = state.total?.amount ?? state.selected?.price ?? null;
+  const showAmount = amount != null && state.settings.sections.total;
+  const caption = stage === "booked" ? "Paid" : showAmount ? "Amount due" : stage === "quotes" ? "Please choose a shipping service" : "Preparing your order";
+  return (
+    <div className="relative overflow-hidden rounded-[1.25em] px-[2em] py-[1.6em] text-white shadow-[0_8px_24px_rgba(16,24,40,0.18)]" style={{ background: "var(--primary)" }}>
+      <div className="pointer-events-none absolute -bottom-[4em] -left-[3em] h-[9em] w-[9em] rounded-full opacity-10" style={{ background: "var(--accent)" }} />
+      <div className="relative flex items-center justify-between">
+        <p className="flex items-center gap-[0.5em] text-[1em] font-medium" style={{ color: "var(--accent)" }}>
+          {stage === "booked" && <Check className="h-[1.1em] w-[1.1em]" strokeWidth={3} />}
+          {caption}
+        </p>
+        {state.selected && (
+          <span className="rounded-full bg-white/10 px-[0.9em] py-[0.25em] text-[0.82em] text-white/80">
+            {state.selected.carrier} · {state.selected.service}
+          </span>
+        )}
+      </div>
+      {showAmount ? (
+        <p className="relative mt-[0.5em] text-right leading-none">
+          <span className="text-[4.2em] font-bold tabular-nums tracking-tight">{money(amount)}</span>
+          <span className="ml-[0.4em] text-[1.3em] font-medium" style={{ color: "var(--accent)" }}>
+            {currencyLabel(state.total?.currency ?? state.selected?.currency)}
+          </span>
+        </p>
+      ) : (
+        <p className="relative mt-[0.8em] text-right text-[2.2em] font-semibold text-white/90">{state.settings.brand.shop_name}</p>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- right: the customer's shipment ---------------- */
+
+function CustomerPanel({ state }: { state: DisplayState }) {
+  const { sender, recipient, contact, packages, weight } = state;
+  if (!sender && !recipient && !packages?.length) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-[0.6em] text-slate-300">
+        <Plane className="h-[2.4em] w-[2.4em]" strokeWidth={1.4} />
+        <p>Shipment details will appear here</p>
+      </div>
+    );
+  }
+  return (
+    <div className="flex h-full flex-col overflow-y-auto px-[1.8em] py-[1.4em]">
+      {(sender || recipient) && (
+        <div className="grid grid-cols-2 gap-[1.6em]">
+          <Party label="Sender" party={sender} />
+          <Party
+            label="Recipient"
+            party={recipient}
+            extra={
+              recipient && (
+                <>
+                  {recipient.country && (
+                    <p className="mt-[0.35em] flex items-center gap-[0.45em] font-semibold">
+                      {recipient.countryCode && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={flagUrl(recipient.countryCode)} alt="" className="h-[0.95em] w-[1.4em] rounded-[0.15em] object-cover ring-1 ring-black/10" />
+                      )}
+                      {recipient.country}
+                    </p>
+                  )}
+                  {contact && (contact.phone || contact.email) && (
+                    <p className="mt-[0.2em] text-[0.85em] text-slate-500">{[contact.phone, contact.email].filter(Boolean).join(" · ")}</p>
+                  )}
+                </>
+              )
+            }
+          />
+        </div>
+      )}
+
+      {packages && packages.length > 0 && (
+        <div className="mt-[1.3em] border-t border-slate-100 pt-[1.1em]">
+          <SectionLabel>Packages</SectionLabel>
+          <div className="flex flex-wrap gap-[0.5em]">
+            {packages.map((p, i) => (
+              <span key={i} className="flex items-center gap-[0.45em] rounded-[0.6em] bg-[#f5f6f8] px-[0.75em] py-[0.35em] text-[0.88em] text-slate-600">
+                {p.kind === "document" ? <FileText className="h-[1.05em] w-[1.05em] text-slate-400" /> : <Package className="h-[1.05em] w-[1.05em] text-slate-400" />}
+                {p.kind === "document" ? "Document" : p.dims} · {p.weight} kg
+                {p.quantity > 1 && <span className="font-semibold text-slate-700">× {p.quantity}</span>}
+              </span>
+            ))}
+          </div>
+          {weight && (
+            <div className="mt-[0.9em] grid grid-cols-3 gap-[0.6em]">
+              <Stat label="Pieces" value={`${weight.pieces}`} unit="pcs" />
+              <Stat label="Total weight" value={`${weight.total}`} unit={weight.unit} />
+              {weight.billed != null && <Stat label="Billable weight" value={`${weight.billed}`} unit={weight.unit} strong />}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Party({ label, party, extra }: { label: string; party?: { name: string; company: string; lines: string[] }; extra?: ReactNode }) {
+  if (!party) return <div />;
+  return (
+    <div className="min-w-0">
+      <SectionLabel>{label}</SectionLabel>
+      <p className="truncate text-[1.1em] font-semibold">{party.name || "-"}</p>
+      {party.company && <p className="truncate text-slate-600">{party.company}</p>}
+      {party.lines.map((l, i) => (
+        <p key={i} className="text-[0.85em] leading-snug text-slate-500">
+          {l}
+        </p>
+      ))}
+      {extra}
+    </div>
+  );
+}
+
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <p className="mb-[0.4em] flex items-center gap-[0.45em] text-[0.75em] font-semibold uppercase tracking-[0.12em] text-slate-400">
+      <span className="h-[0.5em] w-[0.5em] rounded-full" style={{ background: "var(--accent)" }} />
+      {children}
+    </p>
+  );
+}
+
+function Stat({ label, value, unit, strong }: { label: string; value: string; unit: string; strong?: boolean }) {
+  return (
+    <div className={`rounded-[0.8em] px-[0.9em] py-[0.6em] ${strong ? "text-white" : "bg-[#f5f6f8]"}`} style={strong ? { background: "var(--primary)" } : undefined}>
+      <p className={`text-[0.75em] ${strong ? "" : "text-slate-400"}`} style={strong ? { color: "var(--accent)" } : undefined}>
+        {label}
+      </p>
+      <p className="text-[1.35em] font-semibold tabular-nums leading-tight">
+        {value} <span className="text-[0.6em] font-normal opacity-70">{unit}</span>
       </p>
     </div>
   );
 }
 
+function BookedPanel({ state }: { state: DisplayState }) {
+  const { settings, booked } = state;
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-[1em] px-[2em] text-center">
+      <span className="flex h-[4.2em] w-[4.2em] items-center justify-center rounded-full text-white shadow-lg" style={{ background: "var(--accent)" }}>
+        <Check className="h-[2.2em] w-[2.2em]" strokeWidth={3} />
+      </span>
+      <p className="text-[1.9em] font-semibold" style={{ color: "var(--primary)" }}>
+        {settings.thank_you.message}
+      </p>
+      {settings.sections.tracking && booked?.tracking && (
+        <div className="rounded-[1em] bg-[#f5f6f8] px-[1.8em] py-[0.9em]">
+          <p className="text-[0.8em] text-slate-400">Tracking number · {booked.carrier}</p>
+          <p className="mt-[0.2em] text-[1.8em] font-semibold tabular-nums tracking-[0.08em]">{booked.tracking}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- idle ---------------- */
+
 function IdleScreen({ state, slide, images, logo, now }: { state: DisplayState; slide: number; images: string[]; logo: string; now: Date | null }) {
   const { idle, brand } = state.settings;
   const primary = brand.primary_color || "#333B42";
   const accent = brand.accent_color || "#F5A623";
+  const clock = now && (
+    <div className="text-right leading-tight text-white">
+      <p className="text-[2em] font-semibold tabular-nums">{now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</p>
+      <p className="text-[0.85em] text-white/70">{now.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}</p>
+    </div>
+  );
 
   if (images.length > 0) {
     return (
       <main className="relative flex h-screen items-center justify-center overflow-hidden bg-black">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img key={slide % images.length} src={images[slide % images.length]} alt="" className="h-full w-full animate-[fadeIn_0.8s_ease] object-cover" />
-        <div className="absolute left-8 top-8 rounded-2xl bg-white/95 px-5 py-3 shadow-lg">
+        <div className="absolute left-[2em] top-[2em] rounded-[1em] bg-white/95 px-[1.2em] py-[0.8em] shadow-lg">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={logo} alt="" className="h-10 w-auto" />
+          <img src={logo} alt="" className="h-[2.4em] w-auto" />
         </div>
         {(idle.title || idle.subtitle) && (
-          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-12 pb-12 pt-32 text-white">
+          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-[3em] pb-[2.5em] pt-[7em] text-white">
             {idle.title && <p className="text-[2.6em] font-semibold">{idle.title}</p>}
-            {idle.subtitle && <p className="mt-1 text-[1.2em] font-light text-white/85">{idle.subtitle}</p>}
+            {idle.subtitle && <p className="mt-[0.2em] text-[1.2em] font-light text-white/85">{idle.subtitle}</p>}
           </div>
         )}
-        <div className="absolute bottom-6 left-1/2 flex -translate-x-1/2 gap-2">
-          {images.map((_, i) => (
-            <span key={i} className="h-1.5 rounded-full transition-all" style={{ width: i === slide % images.length ? 28 : 8, background: i === slide % images.length ? accent : "rgba(255,255,255,0.5)" }} />
-          ))}
-        </div>
       </main>
     );
   }
 
   return (
     <main className="relative flex h-screen flex-col items-center justify-center overflow-hidden text-white" style={{ background: `radial-gradient(circle at 30% 20%, ${primary}cc, ${primary} 60%)` }}>
-      {/* soft brand shapes */}
-      <div className="pointer-events-none absolute -left-32 -top-32 h-[28rem] w-[28rem] rounded-full opacity-10" style={{ background: accent }} />
-      <div className="pointer-events-none absolute -bottom-40 -right-24 h-[34rem] w-[34rem] rounded-full border-[3rem] opacity-10" style={{ borderColor: accent }} />
-      <div className="absolute right-10 top-8">
-        <ClockBadge now={now} light />
-      </div>
-
+      <div className="pointer-events-none absolute -left-[8em] -top-[8em] h-[26em] w-[26em] rounded-full opacity-10" style={{ background: accent }} />
+      <div className="pointer-events-none absolute -bottom-[10em] -right-[6em] h-[32em] w-[32em] rounded-full border-[3em] opacity-10" style={{ borderColor: accent }} />
+      <div className="absolute right-[2.5em] top-[2em]">{clock}</div>
       <div className="relative flex flex-col items-center text-center">
-        <div className="rounded-[2rem] bg-white px-14 py-10 shadow-2xl">
+        <div className="rounded-[2em] bg-white px-[3.5em] py-[2.4em] shadow-2xl">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={logo} alt={brand.shop_name ?? ""} className="h-28 w-auto" />
+          <img src={logo} alt={brand.shop_name ?? ""} className="h-[7.5em] w-auto" />
         </div>
-        <span className="mt-10 h-1 w-20 rounded-full" style={{ background: accent }} />
-        {idle.title && <p className="mt-8 text-[3.4em] font-semibold tracking-tight">{idle.title}</p>}
-        {idle.subtitle && <p className="mt-2 text-[1.4em] font-light text-white/80">{idle.subtitle}</p>}
+        <span className="mt-[2.4em] h-[0.25em] w-[4.5em] rounded-full" style={{ background: accent }} />
+        {idle.title && <p className="mt-[1.6em] text-[3.2em] font-semibold tracking-tight">{idle.title}</p>}
+        {idle.subtitle && <p className="mt-[0.4em] text-[1.35em] font-light text-white/80">{idle.subtitle}</p>}
       </div>
-    </main>
-  );
-}
-
-function RouteCard({ state }: { state: DisplayState }) {
-  const r = state.recipient!;
-  return (
-    <section className="overflow-hidden rounded-3xl bg-white shadow-sm">
-      <div className="flex items-center gap-6 px-8 pb-6 pt-7">
-        <Place code="TH" name="Thailand" caption="ต้นทาง" />
-        <div className="relative flex flex-1 items-center">
-          <span className="h-0.5 flex-1 border-t-2 border-dashed border-slate-200" />
-          <span className="mx-3 flex h-12 w-12 items-center justify-center rounded-full text-white shadow-md" style={{ background: "var(--accent)" }}>
-            <Plane className="h-6 w-6" />
-          </span>
-          <span className="h-0.5 flex-1 border-t-2 border-dashed border-slate-200" />
-        </div>
-        <Place code={r.countryCode} name={r.country} caption="ปลายทาง" />
-      </div>
-      <div className="border-t border-slate-100 bg-slate-50/70 px-8 py-6">
-        <p className="text-[0.8em] font-medium uppercase tracking-wider text-slate-400">ผู้รับ</p>
-        <p className="mt-1 text-[1.6em] font-semibold">{r.name || "-"}</p>
-        {r.company && <p className="text-[1.05em] text-slate-600">{r.company}</p>}
-        <div className="mt-2 space-y-0.5 text-slate-500">
-          {r.lines.map((l, i) => (
-            <p key={i}>{l}</p>
-          ))}
-        </div>
-        {state.contact && (state.contact.phone || state.contact.email) && (
-          <p className="mt-2 text-slate-500">{[state.contact.phone, state.contact.email].filter(Boolean).join(" · ")}</p>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function Place({ code, name, caption }: { code: string; name: string; caption: string }) {
-  return (
-    <div className="flex min-w-0 items-center gap-3">
-      {code ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={flagUrl(code)} alt={code} className="h-10 w-14 rounded-md object-cover shadow-sm ring-1 ring-black/5" />
-      ) : null}
-      <div className="min-w-0">
-        <p className="text-[0.75em] uppercase tracking-wider text-slate-400">{caption}</p>
-        <p className="truncate text-[1.35em] font-semibold">{name || "-"}</p>
-      </div>
-    </div>
-  );
-}
-
-function PackagesCard({ state }: { state: DisplayState }) {
-  const w = state.weight;
-  return (
-    <section className="rounded-3xl bg-white p-7 shadow-sm">
-      {w && (
-        <div className="mb-6 grid grid-cols-3 gap-4">
-          <Stat icon={<Package className="h-5 w-5" />} label="จำนวน" value={`${w.pieces}`} unit="ชิ้น" />
-          <Stat icon={<Scale className="h-5 w-5" />} label="น้ำหนักรวม" value={`${w.total}`} unit={w.unit} />
-          {w.billed != null ? (
-            <Stat icon={<Scale className="h-5 w-5" />} label="น้ำหนักที่คิดเงิน" value={`${w.billed}`} unit={w.unit} highlight />
-          ) : (
-            <span />
-          )}
-        </div>
-      )}
-      <div className="flex flex-col divide-y divide-slate-100">
-        {state.packages!.map((p, i) => (
-          <div key={i} className="flex items-center gap-4 py-3">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
-              {p.kind === "document" ? <FileText className="h-5 w-5" /> : <Package className="h-5 w-5" />}
-            </span>
-            <div className="flex-1">
-              <p className="font-medium">{p.kind === "document" ? "เอกสาร" : "กล่อง"}</p>
-              {p.dims && <p className="text-[0.85em] text-slate-400">{p.dims}</p>}
-            </div>
-            <p className="tabular-nums font-medium">{p.weight} kg</p>
-            <span className="w-14 rounded-full bg-slate-100 py-1 text-center text-[0.85em] font-medium text-slate-600">× {p.quantity}</span>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function Stat({ icon, label, value, unit, highlight }: { icon: ReactNode; label: string; value: string; unit: string; highlight?: boolean }) {
-  return (
-    <div className={`rounded-2xl p-4 ${highlight ? "text-white" : "bg-slate-50"}`} style={highlight ? { background: "var(--primary)" } : undefined}>
-      <p className={`flex items-center gap-1.5 text-[0.8em] ${highlight ? "text-white/70" : "text-slate-400"}`}>
-        <span style={highlight ? { color: "var(--accent)" } : undefined}>{icon}</span>
-        {label}
-      </p>
-      <p className="mt-1 text-[1.7em] font-semibold tabular-nums leading-tight">
-        {value} <span className="text-[0.55em] font-normal opacity-70">{unit}</span>
-      </p>
-    </div>
-  );
-}
-
-function Panel({ title, aside, children }: { title: string; aside?: string; children: ReactNode }) {
-  return (
-    <section className="rounded-3xl bg-white p-7 shadow-sm">
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-[0.8em] font-medium uppercase tracking-wider text-slate-400">{title}</h2>
-        {aside && <span className="text-[0.8em] text-slate-400">{aside}</span>}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function Placeholder({ text, icon }: { text: string; icon?: ReactNode }) {
-  return (
-    <section className="flex items-center gap-4 rounded-3xl border-2 border-dashed border-slate-200 p-8 text-slate-400">
-      <span className="animate-pulse">{icon ?? <Clock className="h-6 w-6" />}</span>
-      {text}
-    </section>
-  );
-}
-
-function QuoteRow({ quote, showTransit, cheapest }: { quote: DisplayQuote; showTransit: boolean; cheapest?: boolean }) {
-  return (
-    <div
-      className={`relative flex items-center gap-4 rounded-2xl border-2 px-5 py-4 transition ${quote.selected ? "bg-[#fffaf0]" : "border-slate-100 bg-white"}`}
-      style={quote.selected ? { borderColor: "var(--accent)" } : undefined}
-    >
-      <span className="flex h-12 w-16 shrink-0 items-center justify-center rounded-xl bg-white ring-1 ring-slate-100">
-        {quote.carrierLogo ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={quote.carrierLogo} alt={quote.carrier} className="max-h-8 max-w-12 object-contain" />
-        ) : (
-          <span className="text-sm font-bold text-slate-500">{quote.carrier}</span>
-        )}
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-semibold">
-          {quote.carrier} <span className="font-normal text-slate-500">{quote.service}</span>
-        </p>
-        <div className="mt-1 flex items-center gap-2">
-          {showTransit && quote.transitDays != null && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-[0.8em] text-slate-600">
-              <Clock className="h-3.5 w-3.5" /> ประมาณ {quote.transitDays} วันทำการ
-            </span>
-          )}
-          {cheapest && !quote.selected && (
-            <span className="rounded-full px-2.5 py-0.5 text-[0.8em] font-medium text-white" style={{ background: "var(--accent)" }}>
-              ราคาดีที่สุด
-            </span>
-          )}
-        </div>
-      </div>
-      <p className="text-right">
-        <span className="text-[1.7em] font-semibold tabular-nums">{money(quote.price)}</span>
-        <span className="ml-1 text-[0.8em] text-slate-400">{quote.currency === "THB" ? "บาท" : quote.currency}</span>
-      </p>
-      {quote.selected && (
-        <span className="absolute -right-2 -top-2 flex h-7 w-7 items-center justify-center rounded-full text-white shadow" style={{ background: "var(--accent)" }}>
-          <Check className="h-4 w-4" strokeWidth={3} />
-        </span>
-      )}
-    </div>
-  );
-}
-
-function ThankYou({ state }: { state: DisplayState }) {
-  const { settings } = state;
-  return (
-    <main className="flex flex-1 flex-col items-center justify-center gap-8 p-10 text-center">
-      <span className="relative flex h-28 w-28 items-center justify-center">
-        <span className="absolute inset-0 animate-ping rounded-full opacity-30" style={{ background: "var(--accent)" }} />
-        <span className="relative flex h-28 w-28 items-center justify-center rounded-full text-white shadow-xl" style={{ background: "var(--accent)" }}>
-          <Check className="h-14 w-14" strokeWidth={3} />
-        </span>
-      </span>
-      <p className="text-[2.8em] font-semibold" style={{ color: "var(--primary)" }}>
-        {settings.thank_you.message}
-      </p>
-      {settings.sections.tracking && state.booked?.tracking && (
-        <div className="rounded-3xl bg-white px-12 py-7 shadow-sm">
-          <p className="text-[0.9em] text-slate-400">เลข Tracking · {state.booked.carrier}</p>
-          <p className="mt-1 font-mono text-[2.4em] font-semibold tracking-[0.15em]">{state.booked.tracking}</p>
-        </div>
-      )}
-      {state.total && settings.sections.total && (
-        <p className="text-[1.3em] text-slate-500">
-          ยอดชำระ <span className="font-semibold text-slate-800">{money(state.total.amount)} บาท</span>
-        </p>
-      )}
     </main>
   );
 }

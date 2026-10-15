@@ -1,20 +1,32 @@
 "use client";
 
+import FormLayoutGrid from "@/components/shipment/FormLayoutGrid";
+import {
+  DEFAULT_FORM_LAYOUT,
+  getShipmentFormLayout,
+  resolveFormLayout,
+  saveShipmentFormLayout,
+  type ShipmentFormLayout,
+} from "@/lib/shipmentFormLayout";
+import ChargeLineOrderEditor from "@/components/config/ChargeLineOrderEditor";
+import { listChargeCodes, type ChargeCode } from "@/lib/chargeCodes";
+import { useChargeLineOrder } from "@/hooks/useChargeLineOrder";
 import {
   CUSTOMER_DISPLAY_PATH,
   DEFAULT_CUSTOMER_DISPLAY_SETTINGS,
   getCustomerDisplaySettings,
   openDisplayChannel,
+  withDefaults,
   type CustomerDisplaySettings,
   type DisplayMessage,
   type DisplayQuote,
   type DisplayState,
 } from "@/lib/customerDisplay";
 import RawJsonViewer from "@/components/ui/RawJsonViewer";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { listBranches, branchLabel } from "@/lib/branches";
-import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Code, Coins, Copy, Monitor, ExternalLink, FileText, ListChecks, Loader2, Lock, MinusCircle, Package, Plus, Printer, Receipt, Search, ShieldCheck, Sparkles, Tag, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowUpDown, CheckCircle2, LayoutGrid, ChevronLeft, ChevronRight, Code, Coins, Copy, Monitor, ExternalLink, FileText, ListChecks, Loader2, Lock, MinusCircle, Package, Plus, Printer, Receipt, Search, ShieldCheck, Sparkles, Tag, Trash2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import { useAccess } from "@/components/auth/AccessProvider";
 import Modal from "@/components/ui/Modal";
@@ -38,7 +50,7 @@ import { bookShipment, describeShipmentPieces, downloadDhlOriginalWaybill, openS
 import { getShipmentDraft, createShipmentDraft, updateShipmentDraft, deleteShipmentDraft } from "@/lib/shipmentDrafts";
 import { getUser } from "@/lib/auth";
 import { useChargeDisplayNames } from "@/hooks/useChargeDisplayNames";
-import { formLabel, getShipmentFieldRules, missingRequiredFields, type ShipmentFieldRules } from "@/lib/shipmentFields";
+import { formLabel, getShipmentFieldRules, missingRequiredFields, saveShipmentFieldRules, type ShipmentFieldRules } from "@/lib/shipmentFields";
 import {
   listCustomers,
   createCustomer,
@@ -342,6 +354,60 @@ export default function ShipmentCreatePage() {
   // non-default value for them anyway, so the inputs are locked to their defaults here.
   const { can, canEditField, canSeeField } = useAccess();
   const chargeName = useChargeDisplayNames();
+  // Charge lines in the order set at /config/charge-names.
+  const sortLines = useChargeLineOrder();
+  // Ship From / Ship To field order + width (one layout for everyone; admins arrange it here).
+  const canArrangeLayout = can("config.shipment_layout");
+  const [formLayout, setFormLayout] = useState<ShipmentFormLayout>({ origin: [], destination: [] });
+  const [layoutDraft, setLayoutDraft] = useState<ShipmentFormLayout | null>(null); // set = arranging
+  const [layoutSaving, setLayoutSaving] = useState(false);
+  // Field labels renamed on the tiles while arranging (needs the /config/shipment-fields permission).
+  const canRenameFields = can("config.shipment_fields");
+  const [labelDraft, setLabelDraft] = useState<Record<string, string> | null>(null);
+  const currentLabels = () => Object.fromEntries((fieldRules?.fields ?? []).map((f) => [f.key, f.form_label]));
+  const defaultLabels = () => Object.fromEntries((fieldRules?.fields ?? []).map((f) => [f.key, f.default_form_label]));
+  const startArranging = (layout: ShipmentFormLayout) => {
+    setLayoutDraft(layout);
+    // Only once the labels have loaded — an empty draft saved would reset every renamed label.
+    setLabelDraft(canRenameFields && fieldRules ? currentLabels() : null);
+  };
+  const stopArranging = () => {
+    setLayoutDraft(null);
+    setLabelDraft(null);
+  };
+  useEffect(() => {
+    getShipmentFormLayout()
+      .then(setFormLayout)
+      .catch(() => undefined); // default layout
+  }, []);
+  const layoutEditing = layoutDraft !== null;
+  const originLayout = resolveFormLayout("origin", (layoutDraft ?? formLayout).origin);
+  const destinationLayout = resolveFormLayout("destination", (layoutDraft ?? formLayout).destination);
+  async function saveFormLayout() {
+    if (!layoutDraft) return;
+    setLayoutSaving(true);
+    try {
+      await saveShipmentFormLayout("origin", resolveFormLayout("origin", layoutDraft.origin));
+      setFormLayout(await saveShipmentFormLayout("destination", resolveFormLayout("destination", layoutDraft.destination)));
+      if (labelDraft && fieldRules && JSON.stringify(labelDraft) !== JSON.stringify(currentLabels())) {
+        // Blank / same as the default = back to the default (server side).
+        setFieldRules(await saveShipmentFieldRules(fieldRules.rules, labelDraft));
+      }
+      stopArranging();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "บันทึกตำแหน่งไม่สำเร็จ");
+    } finally {
+      setLayoutSaving(false);
+    }
+  }
+  // "จัดลำดับ" on Rate Quotes — the same editor as /config/charge-names, in a modal (needs that permission).
+  const canOrderLines = can("config.charge_names");
+  const [lineOrderCarrier, setLineOrderCarrier] = useState<"UPS" | "DHL" | null>(null);
+  const [lineOrderCodes, setLineOrderCodes] = useState<ChargeCode[]>([]);
+  function openLineOrder() {
+    setLineOrderCarrier(selectedQuote?.carrier === "DHL" ? "DHL" : selectedCarriers.includes("UPS") ? "UPS" : "DHL");
+    if (!lineOrderCodes.length) listChargeCodes().then(setLineOrderCodes).catch(() => undefined);
+  }
   const canEditBilling = canEditField("shipment", "billing");
   const canEditRefs = canEditField("shipment", "references");
   // Rate-quote field groups (config/permissions.php `rate`) — the API already strips cost /
@@ -2095,13 +2161,19 @@ export default function ShipmentCreatePage() {
   // ---- Customer Display (2nd screen facing the customer — see lib/customerDisplay.ts) ----
   // Only sell-side data is put in DisplayState: never cost, markup, formulas, accounts or raw data.
   const canOpenCustomerDisplay = can("shipment.customer_display");
-  const [displaySettings, setDisplaySettings] = useState<CustomerDisplaySettings | null>(null);
-  useEffect(() => {
-    if (!canOpenCustomerDisplay) return;
+  const [loadedDisplaySettings, setDisplaySettings] = useState<CustomerDisplaySettings | null>(null);
+  // Fresh settings — on load, and again whenever the display window opens / reloads (its "hello"),
+  // so a change saved at /config/customer-display reaches an already-open Create Shipment.
+  const reloadDisplaySettings = useCallback(() => {
     getCustomerDisplaySettings()
       .then(setDisplaySettings)
-      .catch(() => setDisplaySettings(DEFAULT_CUSTOMER_DISPLAY_SETTINGS));
-  }, [canOpenCustomerDisplay]);
+      .catch(() => setDisplaySettings((s) => s ?? DEFAULT_CUSTOMER_DISPLAY_SETTINGS));
+  }, []);
+  useEffect(() => {
+    if (canOpenCustomerDisplay) reloadDisplaySettings();
+  }, [canOpenCustomerDisplay, reloadDisplaySettings]);
+  // Always over the defaults — a section added later is never missing.
+  const displaySettings = loadedDisplaySettings ? withDefaults(loadedDisplaySettings) : null;
 
   const displayState: DisplayState | null = (() => {
     if (!displaySettings) return null;
@@ -2114,7 +2186,6 @@ export default function ShipmentCreatePage() {
       service: r.serviceLabel,
       price: getSellFreightAmount(r).sellAmount,
       currency: r.currency ?? "THB",
-      transitDays: sec.transit ? (r.transitDays ?? null) : null,
       selected: isSelected(r),
     });
 
@@ -2125,15 +2196,13 @@ export default function ShipmentCreatePage() {
         (carrier) => quotes.filter((q) => q.carrier === carrier).sort((a, b) => a.price - b.price)[0],
       );
     }
-    quotes.sort((a, b) =>
-      displaySettings.quotes_sort === "transit" ? (a.transitDays ?? 99) - (b.transitDays ?? 99) || a.price - b.price : a.price - b.price,
-    );
+    quotes.sort((a, b) => a.price - b.price);
 
     const countryName = countries.find((c) => c.iso2 === destinationCountry)?.name ?? destinationCountry;
     const hasRecipient = !!(destinationContactName || destinationCompany || destinationAddress || destinationCountry);
     const filledPackages = packages.filter((p) => Number(p.weight) > 0);
     const selectedLines = selectedQuote
-      ? (selectedQuote.chargeBreakdown ?? [])
+      ? sortLines(selectedQuote.carrier, selectedQuote.chargeBreakdown ?? [])
           .filter((l) => !getSellFreightAmount(selectedQuote).costOnlyCodes.includes(l.code ?? ""))
           .map((l) => ({ name: chargeName(selectedQuote.carrier, l.code, l.description, selectedQuote.chargeBreakdown), amount: Math.ceil(l.amount) }))
       : [];
@@ -2141,6 +2210,18 @@ export default function ShipmentCreatePage() {
     return {
       stage: bookedShipment ? "booked" : selectedQuote ? "selected" : okResults.length ? "quotes" : hasRecipient || filledPackages.length ? "shipping" : "idle",
       settings: displaySettings,
+      sender:
+        sec.sender && (originContactName || originCompany || originAddress)
+          ? {
+              name: originContactName,
+              company: originCompany,
+              lines: [
+                [originAddress, originAddress2, originAddress3].filter(Boolean).join(" "),
+                [originCity, originPostcode].filter(Boolean).join(" "),
+              ].filter(Boolean),
+              phone: sec.contact ? originPhone : "",
+            }
+          : undefined,
       recipient:
         sec.recipient && hasRecipient
           ? {
@@ -2193,9 +2274,12 @@ export default function ShipmentCreatePage() {
     if (!channel) return;
     displayChannelRef.current = channel;
     channel.onmessage = (e: MessageEvent<DisplayMessage>) => {
-      if (e.data?.type === "hello" && lastDisplayJsonRef.current) {
+      if (e.data?.type !== "hello") return;
+      if (lastDisplayJsonRef.current) {
         channel.postMessage({ type: "state", state: JSON.parse(lastDisplayJsonRef.current) } satisfies DisplayMessage);
       }
+      reloadDisplaySettings(); // the new settings follow as a normal state update
+
     };
     return () => {
       // Leaving Create Shipment puts the display back on its idle screen.
@@ -2206,7 +2290,7 @@ export default function ShipmentCreatePage() {
       channel.close();
       displayChannelRef.current = null;
     };
-  }, [canOpenCustomerDisplay]);
+  }, [canOpenCustomerDisplay, reloadDisplaySettings]);
   useEffect(() => {
     lastDisplayJsonRef.current = displayJson;
     if (displayJson) displayChannelRef.current?.postMessage({ type: "state", state: JSON.parse(displayJson) } satisfies DisplayMessage);
@@ -2214,6 +2298,7 @@ export default function ShipmentCreatePage() {
 
   function openCustomerDisplay() {
     window.open(CUSTOMER_DISPLAY_PATH, "madd-customer-display", "popup,width=1280,height=800");
+    reloadDisplaySettings();
   }
 
   // Shared between the Payment Info and Add On steps so the running total stays visible on both.
@@ -2303,7 +2388,7 @@ export default function ShipmentCreatePage() {
                     {carrierCostOnlyCodes.join(", ")} ออกแล้ว เพราะประกันคิดแยกเป็น Insurance Add-on ต่างหาก ไม่คิดซ้ำในค่า Freight
                   </p>
                 )}
-                {selectedQuote.chargeBreakdown
+                {sortLines(selectedQuote.carrier, selectedQuote.chargeBreakdown)
                   .filter((line) => sellingCarrierOwnInsurance || !carrierCostOnlyCodes.includes(line.code ?? ""))
                   .map((line, li) => {
                   const isCarrierInsuranceLine = carrierCostOnlyCodes.includes(line.code ?? "");
@@ -2548,7 +2633,7 @@ export default function ShipmentCreatePage() {
   // Payment Info (with a jump to the step) — booking stays disabled until they're filled.
   const missingFields = selectedQuote ? missingRequiredFields(buildBookingPayload(), fieldRules, selectedQuote.carrier) : [];
   // A field's label on this form — staff can rename it at /config/shipment-fields.
-  const L = (key: string, fallback: string) => formLabel(fieldRules, key, fallback);
+  const L = (key: string, fallback: string) => labelDraft?.[key]?.trim() || formLabel(fieldRules, key, fallback);
   // Red * on a required field's label. Once a rate is picked it follows that carrier; before
   // that, a field only some carriers require shows which ones (e.g. "* UPS").
   const req = (key: string) => {
@@ -2703,6 +2788,47 @@ export default function ShipmentCreatePage() {
         </div>
       </div>
 
+      {canArrangeLayout && (
+        <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+          {layoutEditing ? (
+            <>
+              <p className="mr-auto rounded-lg bg-amber-50 px-3 py-1.5 text-xs text-amber-800">
+                โหมดจัดตำแหน่ง — ลากช่องเพื่อสลับ · แก้ชื่อช่องในกล่องด้านบนของแต่ละช่อง · ปุ่ม เต็มแถว / ครึ่งแถว ปรับความกว้าง · มีผลกับทุกบัญชีเมื่อบันทึก
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setLayoutDraft({ origin: DEFAULT_FORM_LAYOUT.origin, destination: DEFAULT_FORM_LAYOUT.destination });
+                  if (labelDraft) setLabelDraft(defaultLabels());
+                }}
+                className="rounded-lg px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-100"
+              >
+                คืนค่าเริ่มต้น
+              </button>
+              <button type="button" onClick={stopArranging} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={saveFormLayout}
+                disabled={layoutSaving}
+                className="flex items-center gap-1.5 rounded-lg bg-brand-amber px-4 py-1.5 text-sm font-semibold text-brand-navy-dark hover:bg-brand-amber/90 disabled:opacity-60"
+              >
+                {layoutSaving && <Loader2 className="h-4 w-4 animate-spin" />} บันทึกตำแหน่ง
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => startArranging({ origin: originLayout, destination: destinationLayout })}
+              className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              title="ลากสลับตำแหน่ง / ปรับความกว้างช่อง Ship From / Ship To (มีผลทุกบัญชี)"
+            >
+              <LayoutGrid className="h-3.5 w-3.5" /> จัดตำแหน่ง
+            </button>
+          )}
+        </div>
+      )}
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
@@ -2727,8 +2853,16 @@ export default function ShipmentCreatePage() {
             </div>
           </div>
           <CustomerAddressPicker type="ship_from" onSelect={(addr) => applyCustomerAddress("from", addr)} />
-          <div className="mt-2.5 flex flex-col gap-2.5">
-            <div className="grid grid-cols-2 gap-2.5">
+          <div className="mt-2.5">
+            <FormLayoutGrid
+              items={originLayout}
+              editing={layoutEditing}
+              onChange={(items) => setLayoutDraft((d) => (d ? { ...d, origin: items } : d))}
+              labels={labelDraft ?? undefined}
+              defaultLabels={defaultLabels()}
+              onLabelChange={(key, label) => setLabelDraft((d) => (d ? { ...d, [key]: label } : d))}
+              blocks={{
+              "origin.contact_name": (
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>{L("origin.contact_name", "Contact Name")}{req("origin.contact_name")}</span>
                 <div className="relative">
@@ -2745,6 +2879,8 @@ export default function ShipmentCreatePage() {
                   {originContactName && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
                 </div>
               </label>
+              ),
+              "origin.company": (
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>{L("origin.company", "Company")}{req("origin.company")}</span>
                 <div className="relative">
@@ -2752,7 +2888,8 @@ export default function ShipmentCreatePage() {
                   {originCompany && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
                 </div>
               </label>
-            </div>
+              ),
+              "origin.tax_id": (
             <label className="flex flex-col gap-1">
               <span className={labelClass}>{L("origin.tax_id", "Tax ID No.")}{req("origin.tax_id")}</span>
               <div className="relative">
@@ -2760,6 +2897,9 @@ export default function ShipmentCreatePage() {
                 {originTaxId && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
               </div>
             </label>
+              ),
+              "origin.postcode": (
+<>
             <label className="flex flex-col gap-1">
               <span className={labelClass}>{L("origin.postcode", "Subdistrict / District / Province / Postcode")}</span>
               <ThaiAddressSearch
@@ -2776,6 +2916,9 @@ export default function ShipmentCreatePage() {
               />
             </label>
             {originLookup.status === "found" && <p className="text-xs text-emerald-600">Matched: {originLookup.label}</p>}
+</>
+              ),
+              "origin.address": (
             <label className="flex flex-col gap-1">
               <span className={labelClass}>{L("origin.address", "Address 1")}</span>
               <div className="relative">
@@ -2783,7 +2926,8 @@ export default function ShipmentCreatePage() {
                 {originAddress && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
               </div>
             </label>
-            <div className="grid grid-cols-2 gap-2.5">
+              ),
+              "origin.address2": (
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>{L("origin.address2", "Address 2")}</span>
                 <div className="relative">
@@ -2791,6 +2935,8 @@ export default function ShipmentCreatePage() {
                   {originAddress2 && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
                 </div>
               </label>
+              ),
+              "origin.address3": (
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>{L("origin.address3", "Address 3")}</span>
                 <div className="relative">
@@ -2798,7 +2944,8 @@ export default function ShipmentCreatePage() {
                   {originAddress3 && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
                 </div>
               </label>
-            </div>
+              ),
+              "origin.phone": (
             <label className="flex flex-col gap-1">
               <span className={labelClass}>{L("origin.phone", "Telephone")}{req("origin.phone")}</span>
               <div className="relative">
@@ -2806,6 +2953,8 @@ export default function ShipmentCreatePage() {
                 {originPhone && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
               </div>
             </label>
+              ),
+              "origin.notes": (
             <label className="flex flex-col gap-1">
               <span className={labelClass}>{L("origin.notes", "Notes")}</span>
               <textarea
@@ -2816,6 +2965,9 @@ export default function ShipmentCreatePage() {
                 className={`${inputClass} resize-y`}
               />
             </label>
+              ),
+              }}
+            />
           </div>
         </div>
 
@@ -2833,8 +2985,16 @@ export default function ShipmentCreatePage() {
             )}
           </div>
           <CustomerAddressPicker type="ship_to" onSelect={(addr) => applyCustomerAddress("to", addr)} />
-          <div className="mt-2.5 flex flex-col gap-2.5">
-            <div className="grid grid-cols-2 gap-2.5">
+          <div className="mt-2.5">
+            <FormLayoutGrid
+              items={destinationLayout}
+              editing={layoutEditing}
+              onChange={(items) => setLayoutDraft((d) => (d ? { ...d, destination: items } : d))}
+              labels={labelDraft ?? undefined}
+              defaultLabels={defaultLabels()}
+              onLabelChange={(key, label) => setLabelDraft((d) => (d ? { ...d, [key]: label } : d))}
+              blocks={{
+              "destination.contact_name": (
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>{L("destination.contact_name", "Contact Name")}{req("destination.contact_name")}</span>
                 <div className="relative">
@@ -2853,6 +3013,8 @@ export default function ShipmentCreatePage() {
                   )}
                 </div>
               </label>
+              ),
+              "destination.company": (
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>{L("destination.company", "Company")}{req("destination.company")}</span>
                 <div className="relative">
@@ -2868,7 +3030,8 @@ export default function ShipmentCreatePage() {
                   )}
                 </div>
               </label>
-            </div>
+              ),
+              "destination.tax_id": (
             <label className="flex flex-col gap-1">
               <span className={labelClass}>{L("destination.tax_id", "Tax ID No.")}{req("destination.tax_id")}</span>
               <div className="relative">
@@ -2884,11 +3047,14 @@ export default function ShipmentCreatePage() {
                 )}
               </div>
             </label>
+              ),
+              "destination.country": (
             <label className="flex flex-col gap-1">
               <span className={labelClass}>{L("destination.country", "Country")}</span>
               <CountrySelect value={destinationCountry} onChange={setDestinationCountry} invalid={addressValidationErrorFields.has("country")} />
             </label>
-            <div className="grid grid-cols-2 gap-2.5">
+              ),
+              "destination.city": (
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>{L("destination.city", "City")}</span>
                 <div className="relative">
@@ -2896,6 +3062,8 @@ export default function ShipmentCreatePage() {
                   {destinationCity && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />}
                 </div>
               </label>
+              ),
+              "destination.state": (
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>
                   {L("destination.state", "State / Province")}{(destinationCountry === "US" || destinationCountry === "CA") ? <span className="text-red-500"> *</span> : req("destination.state")}
@@ -2914,7 +3082,8 @@ export default function ShipmentCreatePage() {
                   )}
                 </div>
               </label>
-            </div>
+              ),
+              "destination.postcode": (
             <label className="flex flex-col gap-1">
               <span className={labelClass}>{L("destination.postcode", "Postal Code")}{req("destination.postcode")}</span>
               <div className="relative">
@@ -2930,6 +3099,8 @@ export default function ShipmentCreatePage() {
                 )}
               </div>
             </label>
+              ),
+              "destination.address": (
             <label className="flex flex-col gap-1">
               <span className={labelClass}>{L("destination.address", "Address 1")}{req("destination.address")}</span>
               <div className="relative">
@@ -2945,7 +3116,8 @@ export default function ShipmentCreatePage() {
                 )}
               </div>
             </label>
-            <div className="grid grid-cols-2 gap-2.5">
+              ),
+              "destination.address2": (
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>{L("destination.address2", "Address 2")}</span>
                 <div className="relative">
@@ -2961,6 +3133,8 @@ export default function ShipmentCreatePage() {
                   )}
                 </div>
               </label>
+              ),
+              "destination.address3": (
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>{L("destination.address3", "Address 3")}</span>
                 <div className="relative">
@@ -2976,9 +3150,8 @@ export default function ShipmentCreatePage() {
                   )}
                 </div>
               </label>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2.5">
+              ),
+              "destination.phone": (
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>{L("destination.phone", "Telephone")}{req("destination.phone")}</span>
                 <div className="relative">
@@ -2994,6 +3167,8 @@ export default function ShipmentCreatePage() {
                   )}
                 </div>
               </label>
+              ),
+              "destination.email": (
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>{L("destination.email", "Email")}{req("destination.email")}</span>
                 <div className="relative">
@@ -3009,7 +3184,8 @@ export default function ShipmentCreatePage() {
                   )}
                 </div>
               </label>
-            </div>
+              ),
+              "destination.notes": (
             <label className="flex flex-col gap-1">
               <span className={labelClass}>{L("destination.notes", "Notes")}</span>
               <textarea
@@ -3020,6 +3196,9 @@ export default function ShipmentCreatePage() {
                 className={`${inputClass} resize-y`}
               />
             </label>
+              ),
+              }}
+            />
           </div>
         </div>
       </div>
@@ -3794,7 +3973,19 @@ export default function ShipmentCreatePage() {
         <div className="lg:col-span-1">
           <div className="sticky top-4 flex flex-col gap-4">
             <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
-            <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500">Rate Quotes</h2>
+            <div className="mb-1 flex items-center justify-between">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Rate Quotes</h2>
+              {canOrderLines && (
+                <button
+                  type="button"
+                  onClick={openLineOrder}
+                  title="จัดลำดับบรรทัดค่าใช้จ่ายในการ์ดราคา (ลากขึ้นลง / ปักบนสุด-ล่างสุด)"
+                  className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                >
+                  <ArrowUpDown className="h-3.5 w-3.5" /> จัดลำดับ
+                </button>
+              )}
+            </div>
             <div className="mb-3 flex items-center gap-4 text-sm">
               {(["UPS", "DHL"] as const).map((carrier) => (
                 <label key={carrier} className="flex cursor-pointer items-center gap-1.5 text-slate-600">
@@ -3874,7 +4065,7 @@ export default function ShipmentCreatePage() {
                         )}
                         {canSeeBreakdown && r.chargeBreakdown && r.chargeBreakdown.length > 0 && (
                           <div className="mt-2 flex flex-col gap-0.5 border-t border-slate-100 pt-2">
-                            {r.chargeBreakdown
+                            {sortLines(r.carrier, r.chargeBreakdown)
                               .filter((line) => sellingCarrierOwnInsurance || !rCostOnlyCodes.includes(line.code ?? ""))
                               .map((line, li) => {
                               const markupBasis = formatMarkupBasis(line);
@@ -4756,6 +4947,28 @@ export default function ShipmentCreatePage() {
         </Modal>
       )}
 
+      {lineOrderCarrier && (
+        <Modal title="จัดลำดับบรรทัดในการ์ดราคา" onClose={() => setLineOrderCarrier(null)} maxWidthClassName="max-w-2xl">
+          <div className="mb-3 flex gap-2">
+            {(["UPS", "DHL"] as const).map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setLineOrderCarrier(c)}
+                className={`rounded-lg px-4 py-1.5 text-sm font-semibold ${
+                  lineOrderCarrier === c ? "bg-brand-navy-dark text-white" : "border border-slate-300 text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+          <div className="max-h-[65vh] overflow-y-auto">
+            <ChargeLineOrderEditor key={lineOrderCarrier} provider={lineOrderCarrier} codes={lineOrderCodes} />
+          </div>
+        </Modal>
+      )}
+
       {viewCostQuote && (() => {
         const q = viewCostQuote;
         const { sellAmount, costOnlyCodes } = getSellFreightAmount(q);
@@ -4769,7 +4982,7 @@ export default function ShipmentCreatePage() {
         const profit = sellAmount - cost;
         const margin = sellAmount > 0 ? (profit / sellAmount) * 100 : 0;
         // One row per charge code, carrier cost beside our sell price.
-        const codes = Array.from(new Set([...costLines, ...sellLines].map(keyOf)));
+        const codes = Array.from(new Set(sortLines(q.carrier, [...sellLines, ...costLines]).map(keyOf)));
         const amountOf = (lines: RateChargeLine[], code: string) => {
           const hit = lines.filter((l) => keyOf(l) === code);
           return hit.length ? hit.reduce((sum, l) => sum + Number(l.amount || 0), 0) : null;

@@ -1,4 +1,5 @@
 import { apiClient } from "./apiClient";
+import { API_URL } from "./apiUrl";
 
 /**
  * Customer Display — a 2nd screen facing the customer, on the same computer as Create Shipment.
@@ -7,13 +8,14 @@ import { apiClient } from "./apiClient";
  * and posts it on every change; the display page only renders what it receives.
  */
 
+// No transit time — estimated delivery days are never shown to the customer.
 export type CustomerDisplaySection =
+  | "sender"
   | "recipient"
   | "contact"
   | "packages"
   | "billed_weight"
   | "quotes"
-  | "transit"
   | "breakdown"
   | "addons"
   | "total"
@@ -22,21 +24,23 @@ export type CustomerDisplaySection =
 export type CustomerDisplaySettings = {
   sections: Record<CustomerDisplaySection, boolean>;
   quotes_mode: "all" | "selected" | "cheapest_per_carrier";
-  quotes_sort: "price" | "transit";
+  quotes_sort: "price";
   idle: { title: string | null; subtitle: string | null; logo_url: string | null; images: string[]; image_seconds: number };
   brand: { shop_name: string | null; primary_color: string; accent_color: string; font_size: "normal" | "large" };
+  // One ad banner on the transaction screen (1600 × 300) — an uploaded image or a link; "" = none.
+  banner: { image_url: string | null };
   thank_you: { message: string | null; return_seconds: number };
 };
 
 // Same as the backend's CustomerDisplaySettings::defaults() — used until the real ones load.
 export const DEFAULT_CUSTOMER_DISPLAY_SETTINGS: CustomerDisplaySettings = {
   sections: {
+    sender: true,
     recipient: true,
     contact: false,
     packages: true,
     billed_weight: true,
     quotes: true,
-    transit: true,
     breakdown: false,
     addons: true,
     total: true,
@@ -44,25 +48,52 @@ export const DEFAULT_CUSTOMER_DISPLAY_SETTINGS: CustomerDisplaySettings = {
   },
   quotes_mode: "all",
   quotes_sort: "price",
-  idle: { title: "ยินดีต้อนรับ", subtitle: "บริการส่งพัสดุด่วนทั่วโลก UPS · DHL", logo_url: "", images: [], image_seconds: 8 },
+  idle: { title: "Welcome", subtitle: "Worldwide express delivery · UPS · DHL", logo_url: "", images: [], image_seconds: 8 },
   brand: { shop_name: "MADD", primary_color: "#333B42", accent_color: "#F5A623", font_size: "normal" },
-  thank_you: { message: "ขอบคุณที่ใช้บริการ", return_seconds: 30 },
+  banner: { image_url: "" },
+  thank_you: { message: "Thank you for shipping with us", return_seconds: 30 },
 };
 
 export const SECTION_LABELS: Record<CustomerDisplaySection, { label: string; hint?: string }> = {
+  sender: { label: "ข้อมูลผู้ส่ง (ลูกค้า)", hint: "ชื่อ บริษัท ที่อยู่ผู้ส่ง" },
   recipient: { label: "ที่อยู่ผู้รับ", hint: "ชื่อ บริษัท ที่อยู่ ประเทศ — ให้ลูกค้าตรวจความถูกต้อง" },
-  contact: { label: "เบอร์โทร / อีเมลผู้รับ", hint: "ข้อมูลส่วนตัว" },
+  contact: { label: "เบอร์โทร / อีเมล", hint: "ของผู้ส่งและผู้รับ — ข้อมูลส่วนตัว" },
   packages: { label: "รายการกล่อง", hint: "จำนวน ขนาด น้ำหนัก" },
   billed_weight: { label: "น้ำหนักที่คิดเงิน", hint: "ช่วยอธิบายว่าทำไมกล่องใหญ่คิดแพงขึ้น" },
   quotes: { label: "ตัวเลือกราคาจาก Check Rate" },
-  transit: { label: "ระยะเวลาจัดส่ง" },
   breakdown: { label: "ราคาแยกบรรทัด", hint: "ปิด = เห็นแค่ยอดรวมของบริการ" },
   addons: { label: "Add-on / ประกัน / วัสดุ" },
   total: { label: "ยอดรวมสุดท้าย" },
   tracking: { label: "เลข Tracking หลังจองเสร็จ" },
 };
 
-export const getCustomerDisplaySettings = () => apiClient.get<CustomerDisplaySettings>("/customer-display/settings");
+export const getCustomerDisplaySettings = () => apiClient.get<CustomerDisplaySettings>("/customer-display/settings").then(withDefaults);
+
+/** Settings over the defaults — a section added later is never missing from older saved settings. */
+export function withDefaults(s: Partial<CustomerDisplaySettings>): CustomerDisplaySettings {
+  const d = DEFAULT_CUSTOMER_DISPLAY_SETTINGS;
+  return {
+    ...d,
+    ...s,
+    sections: { ...d.sections, ...s.sections },
+    idle: { ...d.idle, ...s.idle },
+    brand: { ...d.brand, ...s.brand },
+    banner: { ...d.banner, ...s.banner },
+    thank_you: { ...d.thank_you, ...s.thank_you },
+  };
+}
+
+// An uploaded image is saved as a host-free path ("/api/customer-display/media/1") — served by
+// whichever API this frontend talks to (dev and production share the database).
+export const mediaUrl = (url: string | null | undefined) =>
+  !url ? "" : url.startsWith("/api/") ? `${API_URL.replace(/\/api\/?$/, "")}${url}` : url;
+
+// Upload a banner image (max 3 MB) → its public URL, to put in banner.image_url.
+export const uploadCustomerDisplayImage = (file: File) => {
+  const form = new FormData();
+  form.append("image", file);
+  return apiClient.upload<{ url: string }>("/customer-display/media", form);
+};
 
 export const saveCustomerDisplaySettings = (settings: CustomerDisplaySettings) =>
   apiClient.put<CustomerDisplaySettings>("/customer-display/settings", settings);
@@ -78,13 +109,13 @@ export type DisplayQuote = {
   service: string;
   price: number;
   currency: string;
-  transitDays: number | null;
   selected: boolean;
 };
 
 export type DisplayState = {
   stage: "idle" | "shipping" | "quotes" | "selected" | "booked";
   settings: CustomerDisplaySettings;
+  sender?: { name: string; company: string; lines: string[]; phone: string };
   recipient?: { name: string; company: string; lines: string[]; country: string; countryCode: string };
   contact?: { phone: string; email: string };
   packages?: { kind: "box" | "document"; dims: string | null; weight: number; quantity: number }[];

@@ -4,6 +4,7 @@ import { Fragment, useEffect, useState } from "react";
 import { Check, GitBranch, Loader2, Plus, Search, X } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import PageLoading from "@/components/ui/PageLoading";
+import ChargeLineOrderEditor from "@/components/config/ChargeLineOrderEditor";
 import { invalidateChargeDisplayNames } from "@/hooks/useChargeDisplayNames";
 import {
   addChargeDisplayName,
@@ -181,6 +182,8 @@ export default function ChargeDisplayNamesPage() {
               );
             })}
           </div>
+
+          <ChargeLineOrderEditor provider={provider} codes={codes} />
 
           <div className="mb-4 flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <label className="flex min-w-[200px] flex-1 flex-col gap-1.5">

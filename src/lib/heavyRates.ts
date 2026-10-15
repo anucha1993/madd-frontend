@@ -2,7 +2,8 @@ import { apiClient } from "./apiClient";
 
 export type HeavyRateCarrier = "UPS" | "DHL";
 
-// rates by column — "all" (every zone without its own price) or "zone:5"; THB per kg.
+// rates by column — "all" (every zone without its own price), "zone:5" or "country:US" (a special
+// price for one country, beating its zone); THB per kg.
 export type HeavyRateBand = { min_weight: number; max_weight: number | null; rates: Record<string, number | null> };
 
 // replaced_codes = the quote lines the Heavy Weight Rate line replaces (the rest stay); codes = every

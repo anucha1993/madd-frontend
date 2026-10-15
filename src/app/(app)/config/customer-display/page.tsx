@@ -9,7 +9,9 @@ import {
   CUSTOMER_DISPLAY_PATH,
   SECTION_LABELS,
   getCustomerDisplaySettings,
+  mediaUrl,
   saveCustomerDisplaySettings,
+  uploadCustomerDisplayImage,
   type CustomerDisplaySection,
   type CustomerDisplaySettings,
 } from "@/lib/customerDisplay";
@@ -26,6 +28,7 @@ export default function CustomerDisplaySettingsPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [newImage, setNewImage] = useState("");
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     getCustomerDisplaySettings()
@@ -101,17 +104,7 @@ export default function CustomerDisplaySettingsPage() {
                 <option value="cheapest_per_carrier">ถูกสุดของแต่ละ Carrier</option>
                 <option value="selected">เฉพาะที่พนักงานเลือก</option>
               </select>
-            </label>
-            <label className="flex flex-col gap-1.5">
-              <span className={labelClass}>เรียงตาม</span>
-              <select
-                value={settings.quotes_sort}
-                onChange={(e) => patch({ quotes_sort: e.target.value as CustomerDisplaySettings["quotes_sort"] })}
-                className={fieldClass}
-              >
-                <option value="price">ราคาถูกสุดก่อน</option>
-                <option value="transit">ส่งเร็วสุดก่อน</option>
-              </select>
+              <span className="text-xs text-slate-400">เรียงจากราคาถูกสุด · ไม่แสดงจำนวนวันจัดส่ง</span>
             </label>
           </div>
         </section>
@@ -232,6 +225,66 @@ export default function CustomerDisplaySettingsPage() {
                 />
               </label>
             </div>
+          </section>
+
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="mb-1 text-sm font-semibold text-slate-700">Banner โฆษณา (ระหว่างทำรายการ)</h2>
+            <p className="mb-3 text-xs text-slate-400">แสดงมุมขวาล่างของจอลูกค้า · แนะนำรูปแนวนอน 1600 × 300 px (JPG / PNG / WEBP ไม่เกิน 3 MB)</p>
+            {settings.banner?.image_url ? (
+              <div className="mb-3 overflow-hidden rounded-xl border border-slate-200">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={mediaUrl(settings.banner.image_url)} alt="" className="aspect-[16/3] w-full object-cover" />
+              </div>
+            ) : (
+              <div className="mb-3 flex aspect-[16/3] w-full items-center justify-center rounded-xl border-2 border-dashed border-slate-200 text-sm text-slate-400">
+                ยังไม่มี Banner
+              </div>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <label className={`flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 ${uploading ? "opacity-60" : ""}`}>
+                {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                อัปโหลดรูป
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  className="hidden"
+                  disabled={uploading}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (!file) return;
+                    setUploading(true);
+                    setError("");
+                    try {
+                      const { url } = await uploadCustomerDisplayImage(file);
+                      patch({ banner: { image_url: url } });
+                      setMessage("อัปโหลดแล้ว — กดบันทึกเพื่อใช้ Banner นี้");
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : "อัปโหลดไม่สำเร็จ");
+                    } finally {
+                      setUploading(false);
+                    }
+                  }}
+                />
+              </label>
+              {settings.banner?.image_url && (
+                <button
+                  type="button"
+                  onClick={() => patch({ banner: { image_url: "" } })}
+                  className="rounded-lg px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
+                >
+                  เอา Banner ออก
+                </button>
+              )}
+            </div>
+            <label className="mt-3 flex flex-col gap-1.5">
+              <span className={labelClass}>หรือใส่ลิงก์รูป (https://…)</span>
+              <input
+                value={settings.banner?.image_url ?? ""}
+                onChange={(e) => patch({ banner: { image_url: e.target.value } })}
+                className={fieldClass}
+              />
+            </label>
           </section>
 
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

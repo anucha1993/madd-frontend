@@ -1,5 +1,6 @@
 "use client";
 
+import SearchPicker from "@/components/ui/SearchPicker";
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { useAccess } from "@/components/auth/AccessProvider";
@@ -31,6 +32,8 @@ export default function HeavyRatesPage() {
   const [codes, setCodes] = useState<{ code: string; label: string }[]>([]);
   const [replaced, setReplaced] = useState<string[]>([]);
   const [codeFilter, setCodeFilter] = useState("");
+  // Countries with a special price (added from the picker, or already priced in a band).
+  const [extraCountries, setExtraCountries] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -62,6 +65,7 @@ export default function HeavyRatesPage() {
         setBands(toEdit(res.bands));
         setCodes(res.codes);
         setReplaced(res.replaced_codes);
+        setExtraCountries([]);
       })
       .catch((e) => !cancelled && setError(e instanceof Error ? e.message : "โหลดข้อมูลไม่สำเร็จ"));
     return () => {
@@ -71,7 +75,16 @@ export default function HeavyRatesPage() {
 
   if (loading) return <PageLoading label="Loading Heavy Weight Rate..." />;
 
-  const scopeKeys = ["all", ...zones.map((z) => `zone:${z}`)];
+  const countryName = (iso2: string) => countries.find((c) => c.iso2 === iso2)?.name ?? iso2;
+  const pricedCountries = Array.from(
+    new Set([...bands.flatMap((b) => Object.keys(b.rates).filter((k) => k.startsWith("country:")).map((k) => k.slice(8))), ...extraCountries]),
+  ).sort((a, b) => countryName(a).localeCompare(countryName(b)));
+  const scopeKeys = ["all", ...zones.map((z) => `zone:${z}`), ...pricedCountries.map((c) => `country:${c}`)];
+
+  function removeCountry(iso2: string) {
+    setExtraCountries((prev) => prev.filter((c) => c !== iso2));
+    setBands((prev) => prev.map((b) => ({ ...b, rates: Object.fromEntries(Object.entries(b.rates).filter(([k]) => k !== `country:${iso2}`)) })));
+  }
 
   function setBand(i: number, patch: Partial<EditBand>) {
     setBands((prev) => prev.map((b, j) => (j === i ? { ...b, ...patch } : b)));
@@ -173,12 +186,42 @@ export default function HeavyRatesPage() {
               </thead>
               <tbody>
                 {scopeKeys.map((key) => (
-                  <tr key={key} className={`border-t border-slate-100 ${key === "all" ? "bg-amber-50/40" : ""}`}>
+                  <tr
+                    key={key}
+                    className={`border-t border-slate-100 ${key === "all" ? "bg-amber-50/40" : key.startsWith("country:") ? "bg-violet-50/50" : ""}`}
+                  >
                     <td className="px-3 py-1.5 font-medium text-slate-700">
-                      {key === "all" ? "ค่าปกติ (ทุก Zone)" : `Zone ${key.slice(5)}`}
+                      {key === "all" ? (
+                        "ค่าปกติ (ทุก Zone)"
+                      ) : key.startsWith("country:") ? (
+                        <span className="flex items-center gap-1.5">
+                          <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">พิเศษ</span>
+                          <span className="truncate" title={countryName(key.slice(8))}>
+                            {key.slice(8)} {countryName(key.slice(8))}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => removeCountry(key.slice(8))}
+                            className="ml-auto rounded p-0.5 text-red-400 hover:bg-red-50"
+                            aria-label="ลบราคาพิเศษของประเทศนี้"
+                            title="ลบราคาพิเศษของประเทศนี้"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </span>
+                      ) : (
+                        `Zone ${key.slice(5)}`
+                      )}
                     </td>
                     {bands.map((band, i) => {
-                      const fallback = band.rates.all?.trim() ? `ค่าปกติ ${band.rates.all}` : "ใช้ API";
+                      // A country without its own price → its zone's, else the default.
+                      const zone = key.startsWith("country:") ? countries.find((c) => c.iso2 === key.slice(8))?.[zoneColumn] : null;
+                      const zonePrice = zone ? band.rates[`zone:${zone}`]?.trim() : "";
+                      const fallback = zonePrice
+                        ? `Zone ${zone} ${zonePrice}`
+                        : band.rates.all?.trim()
+                          ? `ค่าปกติ ${band.rates.all}`
+                          : "ใช้ API";
                       return (
                         <td key={i} className="px-3 py-1.5">
                           <input
@@ -210,6 +253,18 @@ export default function HeavyRatesPage() {
           >
             <Plus className="h-4 w-4" /> เพิ่มช่วงน้ำหนัก
           </button>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <SearchPicker
+              options={countries
+                .filter((c) => !pricedCountries.includes(c.iso2))
+                .map((c) => ({ value: c.iso2, label: c.name, hint: c[zoneColumn] ? `Zone ${c[zoneColumn]}` : undefined }))}
+              onPick={(iso2) => setExtraCountries((prev) => (prev.includes(iso2) ? prev : [...prev, iso2]))}
+              placeholder="+ ราคาพิเศษรายประเทศ… (พิมพ์ชื่อ / รหัส เช่น Japan, US)"
+              openUp
+            />
+            <span className="text-xs text-slate-400">ลำดับ: ราคาประเทศ &gt; ราคา Zone &gt; ค่าปกติ · ช่องว่าง = ใช้ราคาถัดไป</span>
+          </div>
 
           <div className="mt-6 border-t border-slate-100 pt-4">
             <p className="text-sm font-semibold text-slate-700">รายการที่ตัดออก (แทนด้วย Heavy Weight Rate)</p>
@@ -261,7 +316,7 @@ export default function HeavyRatesPage() {
             รายการอื่นยังคิดตามปกติ
           </p>
           <p className="mt-1 text-slate-500">
-            ลำดับ: ราคา Zone &gt; ค่าปกติ · ค่าปกติว่าง = ใช้ราคาจาก API ตามเดิม · ยังถามราคา carrier เสมอ (ต้นทุน, รายการที่ไม่ตัด, Book จริง) ·
+            ลำดับ: ราคาพิเศษรายประเทศ &gt; ราคา Zone &gt; ค่าปกติ · ค่าปกติว่าง = ใช้ราคาจาก API ตามเดิม · ยังถามราคา carrier เสมอ (ต้นทุน, รายการที่ไม่ตัด, Book จริง) ·
             Zone ของแต่ละประเทศตั้งที่ Countries
           </p>
         </div>

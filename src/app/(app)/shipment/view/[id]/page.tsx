@@ -1,5 +1,6 @@
 "use client";
 
+import { useChargeLineOrder } from "@/hooks/useChargeLineOrder";
 import RawJsonViewer from "@/components/ui/RawJsonViewer";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -132,6 +133,7 @@ const headerBtn =
 export default function ShipmentViewPage() {
   const { can, canSeeField } = useAccess();
   const chargeName = useChargeDisplayNames();
+  const sortLines = useChargeLineOrder();
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const shipmentId = Number(params.id);
@@ -319,7 +321,7 @@ export default function ShipmentViewPage() {
   const status = STATUS[s.status] ?? { label: s.status, dot: "bg-slate-400", chip: "bg-white/10 text-white/70" };
   const packages = s.packages ?? [];
   const addons = s.addon_lines ?? [];
-  const charges = rateQuote?.chargeBreakdown ?? [];
+  const charges = sortLines(s.carrier, rateQuote?.chargeBreakdown ?? []);
   const pieces = describeShipmentPieces(s);
 
   return (
