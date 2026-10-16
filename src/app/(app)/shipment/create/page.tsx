@@ -194,6 +194,11 @@ const UPS_CHECKBOX_OPTIONS = [
 // getInsuranceOptionsForPackage), e.g. UPSC is configured to only apply to Silver boxes.
 // "OTHER" lets staff type a free-text classification (productTypeOther) not covered by the two presets.
 type ProductType = "SILVER" | "NON_SILVER" | "OTHER" | null;
+// What an Insurance Add-on is matched on: a Document package → items set to "Document"
+// (/config/addon); a box → "Box" items, by its Product Type (product_types).
+type InsuranceType = ProductType | "DOCUMENT";
+const insuranceTypeOf = (pkg: { is_document?: boolean; productType: ProductType }): InsuranceType =>
+  pkg.is_document ? "DOCUMENT" : pkg.productType;
 
 type PackageRow = ShipmentPackageInput & {
   key: number;
@@ -760,6 +765,7 @@ export default function ShipmentCreatePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [results, setResults] = useState<RateQuote[] | null>(null);
+  const rateQuotesRef = useRef<HTMLDivElement>(null);
   const [selectedQuote, setSelectedQuote] = useState<RateQuote | null>(null);
   // Declared Value actually SENT for each package on the last successful Check Rate — lets
   // API_COST insurance (e.g. DHL's own) tell when its frozen price is stale (Declared Value
@@ -815,7 +821,13 @@ export default function ShipmentCreatePage() {
     });
   }
 
+  // An insured document is quoted by DHL only (UPS has no document insurance).
+  const hasInsuredDocument = packages.some((p) => p.is_document && p.insured);
   function toggleCarrierFilter(carrier: "UPS" | "DHL") {
+    if (carrier === "UPS" && hasInsuredDocument && !selectedCarriers.includes("UPS")) {
+      alert("มีเอกสารที่ติ๊กประกันอยู่ — ประกันเอกสารมีเฉพาะ DHL จึงเช็คราคาเฉพาะ DHL (เอาติ๊ก Insurance ออกก่อน ถ้าต้องการราคา UPS)");
+      return;
+    }
     setSelectedCarriers((prev) => {
       const next = prev.includes(carrier) ? prev.filter((c) => c !== carrier) : [...prev, carrier];
       return next.length > 0 ? next : prev; // must always keep at least one carrier selected
@@ -869,7 +881,7 @@ export default function ShipmentCreatePage() {
     if (!selectedQuote) return;
     packages.forEach((pkg) => {
       if (!pkg.insured || (selectedQuote.carrier === "UPS" && pkg.is_document)) return;
-      const { carrierOption, thirdPartyOption, extraOptions } = getInsuranceOptionsForPackage(pkg.productType);
+      const { carrierOption, thirdPartyOption, extraOptions } = getInsuranceOptionsForPackage(insuranceTypeOf(pkg));
       const selectedRow = addonRows.find((r) => r.packageKey === pkg.key && r.category === "Insurance");
       const stillEligible =
         !!selectedRow &&
@@ -893,11 +905,12 @@ export default function ShipmentCreatePage() {
         const pkg = packages.find((p) => p.key === row.packageKey);
         if (!pkg) return row;
         const dhlChargeCode = pkg.is_document ? "IB" : "II";
-        const charge = selectedQuote.chargeBreakdown?.find(
-          (c) => c.code === (selectedQuote.carrier === "DHL" ? dhlChargeCode : "400"),
-        )?.amount;
-        const newUnitPrice = String(charge ?? 0);
-        const newCostPrice = charge != null ? String(charge) : undefined;
+        const insuranceCode = selectedQuote.carrier === "DHL" ? dhlChargeCode : "400";
+        // Sell = the line after the account's Fixed Charge; cost = the carrier's own amount.
+        const charge = selectedQuote.chargeBreakdown?.find((c) => c.code === insuranceCode)?.amount;
+        const cost = (selectedQuote.costBreakdown ?? selectedQuote.chargeBreakdown)?.find((c) => c.code === insuranceCode)?.amount;
+        const newUnitPrice = (Number(charge ?? 0) * (1 + (Number(item.markup_percent) || 0) / 100)).toFixed(2);
+        const newCostPrice = cost != null ? String(cost) : undefined;
         if (row.unitPrice === newUnitPrice && row.costPrice === newCostPrice) return row;
         return { ...row, unitPrice: newUnitPrice, costPrice: newCostPrice };
       }),
@@ -1226,8 +1239,12 @@ export default function ShipmentCreatePage() {
     // returned (UPS code "400", DHL code "II" for boxes / "IB" for documents) is kept separately
     // as our internal cost, purely for margin reference — it does NOT set the price.
     const dhlChargeCode = pkg.is_document ? "IB" : "II";
-    const carrierInsuranceCharge = !isThirdParty
-      ? selectedQuote?.chargeBreakdown?.find((c) => c.code === (selectedQuote.carrier === "DHL" ? dhlChargeCode : "400"))?.amount
+    const insuranceCode = selectedQuote?.carrier === "DHL" ? dhlChargeCode : "400";
+    // The line's amount is its sell price (after the account's Fixed Charge on it, if any) …
+    const carrierInsuranceCharge = !isThirdParty ? selectedQuote?.chargeBreakdown?.find((c) => c.code === insuranceCode)?.amount : undefined;
+    // … the carrier's own amount (costBreakdown) is the real cost, for margin reference.
+    const carrierInsuranceCost = !isThirdParty
+      ? (selectedQuote?.costBreakdown ?? selectedQuote?.chargeBreakdown)?.find((c) => c.code === insuranceCode)?.amount
       : undefined;
 
     const unitPrice =
@@ -1252,7 +1269,7 @@ export default function ShipmentCreatePage() {
         carriers: item.carriers.join("/"),
         unitPrice: markedUpUnitPrice,
         priceLocked: item.price_type === "FIXED" || item.price_type === "PERCENT" || item.price_type === "API_COST",
-        costPrice: carrierInsuranceCharge != null ? String(carrierInsuranceCharge) : undefined,
+        costPrice: carrierInsuranceCost != null ? String(carrierInsuranceCost) : undefined,
         packageKey: pkg.key,
       }),
     ]);
@@ -1279,7 +1296,7 @@ export default function ShipmentCreatePage() {
   // carrier's own insurance — either way falls back to whichever option is actually available.
   function applyDefaultInsurer(
     pkg: PackageRow,
-    productType: ProductType,
+    productType: InsuranceType,
     carrierOption: ReturnType<typeof getInsuranceOptionsForPackage>["carrierOption"],
     thirdPartyOption: ReturnType<typeof getInsuranceOptionsForPackage>["thirdPartyOption"],
   ) {
@@ -1290,8 +1307,8 @@ export default function ShipmentCreatePage() {
 
   // A checked "Insurance" box must never end up with no insurer/charge actually selected.
   function autoSelectPackageInsurer(pkg: PackageRow) {
-    const { carrierOption, thirdPartyOption } = getInsuranceOptionsForPackage(pkg.productType);
-    applyDefaultInsurer(pkg, pkg.productType, carrierOption, thirdPartyOption);
+    const { carrierOption, thirdPartyOption } = getInsuranceOptionsForPackage(insuranceTypeOf(pkg));
+    applyDefaultInsurer(pkg, insuranceTypeOf(pkg), carrierOption, thirdPartyOption);
   }
 
   // Remaining stock at the staff's branch (only when they belong to exactly one — otherwise the
@@ -1785,6 +1802,7 @@ export default function ShipmentCreatePage() {
         .sort((a, b) => (a.negotiated ?? a.published ?? Infinity) - (b.negotiated ?? b.published ?? Infinity))[0];
       setSelectedQuote(cheapest ?? null);
       setQuotedDeclaredValues(Object.fromEntries(packages.map((p) => [p.key, packageTotalDeclaredValue(p)])));
+      requestAnimationFrame(() => rateQuotesRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to check rate. Please try again.");
     } finally {
@@ -2076,14 +2094,39 @@ export default function ShipmentCreatePage() {
   // Scoped PER PACKAGE (not just carrier/customer type) — an Insurance item configured with
   // product_types at /config/addon only shows up for boxes with a matching Product Type
   // (Silver/Non Silver/Other), letting admins price/restrict insurance differently per type.
-  function getInsuranceOptionsForPackage(productType: ProductType) {
+  // Document insurance: UPS has none of its own, DHL's comes from a "Document" Insurance item.
+  // UPS-only = the picked quote is UPS, or (before Check Rate) only UPS is ticked.
+  function docUpsOnly(pkg: PackageRow): boolean {
+    if (!pkg.is_document) return false;
+    return selectedQuote ? selectedQuote.carrier === "UPS" : selectedCarriers.length > 0 && selectedCarriers.every((c) => c === "UPS");
+  }
+  function docInsuranceNote(pkg: PackageRow): string | null {
+    if (pkg.insured && !(selectedQuote?.carrier === "DHL")) return "ประกันเอกสารมีเฉพาะ DHL — เช็คราคาเฉพาะ DHL (ไม่เช็ค UPS)";
+    if (!pkg.insured && (selectedQuote?.carrier === "UPS" || docUpsOnly(pkg) || selectedCarriers.includes("UPS"))) {
+      return "UPS ไม่มีประกันสำหรับเอกสาร — ถ้าต้องการประกัน ติ๊ก Insurance แล้วระบบจะเช็คราคาเฉพาะ DHL";
+    }
+    if (pkg.insured && selectedQuote?.carrier === "DHL") {
+      const { carrierOption, thirdPartyOption, extraOptions } = getInsuranceOptionsForPackage("DOCUMENT");
+      if (!carrierOption && !thirdPartyOption && !extraOptions.length) {
+        return "ยังไม่มีรายการประกันเอกสารของ DHL — เพิ่มที่ /config/addon แท็บ Insurance (ใช้กับ: Document)";
+      }
+    }
+    return null;
+  }
+
+  function getInsuranceOptionsForPackage(productType: InsuranceType) {
     const items = selectedQuote
-      ? (addonByCategory["Insurance"] ?? []).filter((item) => {
-          const matchesCarrier = item.carriers.includes(selectedQuote.carrier);
-          const matchesCustomerType = !item.customer_types?.length || item.customer_types.includes(customerType);
-          const matchesProductType = !item.product_types?.length || (productType != null && item.product_types.includes(productType));
-          return matchesCarrier && matchesCustomerType && matchesProductType;
-        })
+      ? (addonByCategory["Insurance"] ?? [])
+          .filter((item) => {
+            const matchesCarrier = item.carriers.includes(selectedQuote.carrier);
+            const matchesCustomerType = !item.customer_types?.length || item.customer_types.includes(customerType);
+            const isDocument = productType === "DOCUMENT";
+            const matchesPackage = (item.package_type ?? "box") === (isDocument ? "document" : "box");
+            // Product Type only classifies boxes — a Document item applies to every document.
+            const matchesProductType =
+              isDocument || !item.product_types?.length || (productType != null && item.product_types.includes(productType));
+            return matchesCarrier && matchesCustomerType && matchesPackage && matchesProductType;
+          })
       : [];
     // "แสดงทุกเมื่อ" (always_show) items — special customer rates — never take one of the two
     // default slots below (so they can't shadow, or be shadowed by, the regular items) and are
@@ -2503,7 +2546,7 @@ export default function ShipmentCreatePage() {
       carrierOption: insuranceCarrierOption,
       thirdPartyOption: insuranceThirdPartyOption,
       extraOptions: insuranceExtraOptions,
-    } = getInsuranceOptionsForPackage(pkg.productType);
+    } = getInsuranceOptionsForPackage(insuranceTypeOf(pkg));
     if (!insuranceCarrierOption && !insuranceThirdPartyOption && insuranceExtraOptions.length === 0) {
       return <p className="text-sm text-slate-400">ไม่มีตัวเลือกประกันที่ตรงเงื่อนไข — กรุณาเลือก Rate Quote ก่อน</p>;
     }
@@ -3788,12 +3831,12 @@ export default function ShipmentCreatePage() {
                     {/* <span className={labelClass}>Insurance</span> */}
                     <label
                       className="flex h-[34px] items-center gap-1.5"
-                      title={selectedQuote?.carrier === "UPS" && pkg.is_document ? "UPS ไม่คุ้มครองพัสดุประเภทเอกสาร (Document) ด้วยประกันของ UPS เอง" : undefined}
+                      title={pkg.is_document ? "ประกันเอกสารมีเฉพาะ DHL — ติ๊กแล้วจะเช็คราคาเฉพาะ DHL" : undefined}
                     >
                       <input
                         type="checkbox"
                         checked={pkg.insured}
-                        disabled={!isActive || (selectedQuote?.carrier === "UPS" && !!pkg.is_document)}
+                        disabled={!isActive}
                         onChange={(e) => {
                           const insured = e.target.checked;
                           // Documents have no Declared Value input (see below) — insurance is a
@@ -3802,6 +3845,18 @@ export default function ShipmentCreatePage() {
                             insured,
                             ...(insured && pkg.is_document ? { declared_value: DHL_DOCUMENT_FIXED_COVERAGE_THB } : {}),
                           });
+                          // Document insurance exists only with DHL — so an insured document is quoted
+                          // by DHL alone; quotes so far (maybe UPS) no longer apply.
+                          if (pkg.is_document) {
+                            const otherInsuredDoc = packages.some((p) => p.key !== pkg.key && p.is_document && p.insured);
+                            if (insured) {
+                              setSelectedCarriers(["DHL"]);
+                              setResults(null);
+                              setSelectedQuote(null);
+                            } else if (!otherInsuredDoc) {
+                              setSelectedCarriers((prev) => (prev.includes("UPS") ? prev : ["UPS", ...prev]));
+                            }
+                          }
                           if (!insured) {
                             setAddonRows((prev) => prev.filter((r) => !(r.category === "Insurance" && r.packageKey === pkg.key)));
                           } else {
@@ -3816,6 +3871,9 @@ export default function ShipmentCreatePage() {
                       <span className="text-xs text-slate-500">Insurance</span>
                     </label>
                   </div>
+                  {pkg.is_document && docInsuranceNote(pkg) && (
+                    <p className="max-w-xs self-center rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800">{docInsuranceNote(pkg)}</p>
+                  )}
                   {pkg.insured && !pkg.is_document && (
                     <label className="flex w-52 flex-col gap-1">
                       <div className="flex items-center justify-between gap-2">
@@ -3972,7 +4030,7 @@ export default function ShipmentCreatePage() {
 
         <div className="lg:col-span-1">
           <div className="sticky top-4 flex flex-col gap-4">
-            <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
+            <div ref={rateQuotesRef} className="scroll-mt-4 rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
             <div className="mb-1 flex items-center justify-between">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Rate Quotes</h2>
               {canOrderLines && (

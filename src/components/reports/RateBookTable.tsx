@@ -11,6 +11,7 @@ import {
   type RateBookRow,
   type RateBookRowsResponse,
   type RateBookRun,
+  type RateBookService,
 } from "@/lib/rateBook";
 import RateBookChart from "./RateBookChart";
 
@@ -107,6 +108,8 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
   // "card" | "doc" | column key | "chart"
   const [sheet, setSheet] = useState<string>("card");
   const [chartType, setChartType] = useState<RateBookPackageType>("box");
+  // Which service's rates (UPS Saver / Eco …); null = the main one.
+  const [serviceKey, setServiceKey] = useState<string | null>(null);
   const [chartZone, setChartZone] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
@@ -129,15 +132,26 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
   }, [runId, carrier, requestKey]);
 
   const columns = useMemo(() => data?.columns ?? [], [data]);
-  const byType = useMemo(() => {
-    const all = data?.rows ?? [];
-    return { document: all.filter((r) => r.package_type === "document"), box: all.filter((r) => r.package_type === "box") };
-  }, [data]);
+  const services: RateBookService[] = useMemo(
+    () => (data?.services?.length ? data.services : [{ key: "main", label: carrier === "UPS" ? "Saver" : "Express Worldwide", main: true, codes: [] }]),
+    [data, carrier],
+  );
+  const service = services.find((s) => s.key === serviceKey) ?? services[0];
+  // Rows of the service on screen — an extra service's rows carry its code, the rest are the main one's.
+  const serviceRows = useMemo(() => {
+    const extras = services.filter((s) => !s.main);
+    const owner = (r: RateBookRow) => extras.find((s) => r.service_code != null && s.codes.includes(r.service_code)) ?? services[0];
+    return (data?.rows ?? []).filter((r) => owner(r).key === service.key);
+  }, [data, services, service]);
+  const byType = useMemo(
+    () => ({ document: serviceRows.filter((r) => r.package_type === "document"), box: serviceRows.filter((r) => r.package_type === "box") }),
+    [serviceRows],
+  );
   const cellMap = useMemo(() => {
     const map = new Map<string, RateBookRow>();
-    (data?.rows ?? []).forEach((r) => map.set(`${r.package_type}|${r.band_label}|${r.weight}|${r.zone}`, r));
+    serviceRows.forEach((r) => map.set(`${r.package_type}|${r.band_label}|${r.weight}|${r.zone}`, r));
     return map;
-  }, [data]);
+  }, [serviceRows]);
 
   if (completed.length === 0) {
     return <p className="px-5 py-6 text-center text-sm text-slate-400">ยังไม่มีข้อมูลเรท — กด Sync เพื่อสร้าง Rate Book ชุดแรก</p>;
@@ -173,11 +187,11 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
   function renderUpsSave() {
     const all = lines(byType.box);
     const pages: { title: string | null; lines: Line[]; after?: string }[] = [
-      { title: "UPS Regular Express Saver", lines: all.filter((l) => !l.rate && l.kg <= 10) },
+      { title: service.main ? "UPS Regular Express Saver" : `UPS ${service.label}`, lines: all.filter((l) => !l.rate && l.kg <= 10) },
       { title: null, lines: all.filter((l) => !l.rate && l.kg > 10 && l.kg <= 24), after: "See Next Page for  25 Kg up" },
-      { title: "Saver", lines: all.filter((l) => !l.rate && l.kg > 24 && l.kg <= 45) },
-      { title: "Saver", lines: all.filter((l) => !l.rate && l.kg > 45) },
-      { title: "Saver", lines: all.filter((l) => l.rate) },
+      { title: service.label, lines: all.filter((l) => !l.rate && l.kg > 24 && l.kg <= 45) },
+      { title: service.label, lines: all.filter((l) => !l.rate && l.kg > 45) },
+      { title: service.label, lines: all.filter((l) => l.rate) },
     ];
     return (
       <>
@@ -477,10 +491,28 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
     <div className="p-5">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         {(["UPS", "DHL"] as const).map((c) => (
-          <button key={c} type="button" onClick={() => setCarrier(c)} className={tabClass(carrier === c)}>
+          <button
+            key={c}
+            type="button"
+            onClick={() => {
+              setCarrier(c);
+              setServiceKey(null);
+            }}
+            className={tabClass(carrier === c)}
+          >
             {c}
           </button>
         ))}
+        {services.length > 1 && (
+          <>
+            <span className="mx-1 h-6 w-px bg-slate-200" />
+            {services.map((s) => (
+              <button key={s.key} type="button" onClick={() => setServiceKey(s.key)} className={tabClass(service.key === s.key)}>
+                {s.label}
+              </button>
+            ))}
+          </>
+        )}
         <button
           type="button"
           onClick={handleExport}
@@ -509,8 +541,8 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
       {/* Sheet tabs, named like the rate files' sheets. */}
       <div className="mb-4 flex flex-wrap items-center gap-1 border-b border-slate-200">
         {[
-          { id: "card", label: ups ? "SAVE" : "SELLING" },
-          { id: "doc", label: "DOC" },
+          { id: "card", label: service.main ? (ups ? "SAVE" : "SELLING") : service.label.toUpperCase() },
+          ...(service.main || byType.document.length ? [{ id: "doc", label: "DOC" }] : []),
           ...columns.map((c) => ({ id: c.key, label: c.key })),
           { id: "chart", label: "กราฟ ต้นทุน vs ราคาขาย" },
         ].map((t) => (

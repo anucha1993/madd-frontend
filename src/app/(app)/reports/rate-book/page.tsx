@@ -98,8 +98,103 @@ export default function RateBookPage() {
     setSettings((prev) => (prev ? { ...prev, carriers: { ...prev.carriers, [carrierTab]: { ...prev.carriers[carrierTab], ...patch } } } : prev));
   }
 
-  function updateBand(type: RateBookPackageType, index: number, patch: Partial<RateBookBand>) {
-    updateCarrier({ bands: { ...carrier.bands, [type]: carrier.bands[type].map((b, i) => (i === index ? { ...b, ...patch } : b)) } });
+  // Weight bands editor — the main service's per package type, or an extra service's.
+  function renderBands(bands: RateBookBand[], set: (next: RateBookBand[]) => void) {
+    const patchBand = (index: number, patch: Partial<RateBookBand>) => set(bands.map((b, i) => (i === index ? { ...b, ...patch } : b)));
+    return (
+      <>
+          <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50 text-xs text-slate-500">
+                <tr>
+                  <th className="px-3 py-2 font-medium">ตั้งแต่ (kg)</th>
+                  <th className="px-3 py-2 font-medium">ถึง (kg) — ว่าง = ขึ้นไป</th>
+                  <th className="px-3 py-2 font-medium">แสดงราคา</th>
+                  <th className="px-3 py-2 font-medium">บัญชีที่ใช้ดึงราคา</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {bands.map((band, i) => (
+                  <tr key={i} className="border-t border-slate-100">
+                    <td className="px-3 py-1.5">
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={band.min}
+                        onChange={(e) => patchBand(i, { min: Number(e.target.value) })}
+                        className={`${inputClass} w-24`}
+                      />
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={band.max ?? ""}
+                        onChange={(e) =>
+                          patchBand(i, e.target.value === "" ? { max: null, step: null } : { max: Number(e.target.value) })
+                        }
+                        className={`${inputClass} w-24`}
+                      />
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <select
+                        value={band.step == null ? "" : String(band.step)}
+                        onChange={(e) => patchBand(i, { step: e.target.value === "" ? null : Number(e.target.value) })}
+                        className={`${inputClass} w-40`}
+                      >
+                        <option value="0.5" disabled={band.max == null}>
+                          ทุก 0.5 kg
+                        </option>
+                        <option value="1" disabled={band.max == null}>
+                          ทุก 1 kg
+                        </option>
+                        <option value="">ราคาต่อ kg</option>
+                      </select>
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <select
+                        value={band.account_id ?? ""}
+                        onChange={(e) => patchBand(i, { account_id: e.target.value ? Number(e.target.value) : null })}
+                        className={`${inputClass} w-44`}
+                      >
+                        <option value="">— เลือกบัญชี —</option>
+                        {accountsFor(carrierTab).map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.username}
+                            {a.mode === "test" ? " (test)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="px-3 py-1.5 text-right">
+                      <button
+                        type="button"
+                        onClick={() => set(bands.filter((_, j) => j !== i))}
+                        className="rounded-lg p-1.5 text-red-500 hover:bg-red-50"
+                        aria-label="ลบช่วง"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              const last = bands[bands.length - 1];
+              const min = last?.max != null ? Number((last.max + 0.01).toFixed(2)) : 0.1;
+              set([...bands, { min, max: null, step: null, account_id: last?.account_id ?? null }]);
+            }}
+            className="mt-2 flex items-center gap-1 text-sm font-medium text-brand-navy hover:underline"
+          >
+            <Plus className="h-4 w-4" /> เพิ่มช่วงน้ำหนัก
+          </button>
+      </>
+    );
   }
 
   async function handleSave() {
@@ -372,6 +467,21 @@ export default function RateBookPage() {
               </label>
             </div>
 
+            <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg bg-slate-50 px-3 py-2">
+              <span className="text-sm font-semibold text-slate-700">บริการหลัก</span>
+              <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                ชื่อในตารางเรท
+                <input
+                  type="text"
+                  value={carrier.service_label ?? ""}
+                  onChange={(e) => updateCarrier({ service_label: e.target.value })}
+                  placeholder={carrierTab === "UPS" ? "Saver" : "Express Worldwide"}
+                  className={`${inputClass} w-44`}
+                />
+              </label>
+              <span className="text-xs text-slate-400">Service code และช่วงน้ำหนักของบริการหลักอยู่ด้านล่าง (แยก Document / Box)</span>
+            </div>
+
             {PACKAGE_TYPES.map(({ key, label }) => (
               <div key={key} className="mb-5">
                 <div className="mb-2 flex flex-wrap items-center gap-3">
@@ -386,99 +496,67 @@ export default function RateBookPage() {
                     />
                   </label>
                 </div>
-                <div className="overflow-x-auto rounded-lg border border-slate-200">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-50 text-xs text-slate-500">
-                      <tr>
-                        <th className="px-3 py-2 font-medium">ตั้งแต่ (kg)</th>
-                        <th className="px-3 py-2 font-medium">ถึง (kg) — ว่าง = ขึ้นไป</th>
-                        <th className="px-3 py-2 font-medium">แสดงราคา</th>
-                        <th className="px-3 py-2 font-medium">บัญชีที่ใช้ดึงราคา</th>
-                        <th className="px-3 py-2" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {carrier.bands[key].map((band, i) => (
-                        <tr key={i} className="border-t border-slate-100">
-                          <td className="px-3 py-1.5">
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={band.min}
-                              onChange={(e) => updateBand(key, i, { min: Number(e.target.value) })}
-                              className={`${inputClass} w-24`}
-                            />
-                          </td>
-                          <td className="px-3 py-1.5">
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={band.max ?? ""}
-                              onChange={(e) =>
-                                updateBand(key, i, e.target.value === "" ? { max: null, step: null } : { max: Number(e.target.value) })
-                              }
-                              className={`${inputClass} w-24`}
-                            />
-                          </td>
-                          <td className="px-3 py-1.5">
-                            <select
-                              value={band.step == null ? "" : String(band.step)}
-                              onChange={(e) => updateBand(key, i, { step: e.target.value === "" ? null : Number(e.target.value) })}
-                              className={`${inputClass} w-40`}
-                            >
-                              <option value="0.5" disabled={band.max == null}>
-                                ทุก 0.5 kg
-                              </option>
-                              <option value="1" disabled={band.max == null}>
-                                ทุก 1 kg
-                              </option>
-                              <option value="">ราคาต่อ kg</option>
-                            </select>
-                          </td>
-                          <td className="px-3 py-1.5">
-                            <select
-                              value={band.account_id ?? ""}
-                              onChange={(e) => updateBand(key, i, { account_id: e.target.value ? Number(e.target.value) : null })}
-                              className={`${inputClass} w-44`}
-                            >
-                              <option value="">— เลือกบัญชี —</option>
-                              {accountsFor(carrierTab).map((a) => (
-                                <option key={a.id} value={a.id}>
-                                  {a.username}
-                                  {a.mode === "test" ? " (test)" : ""}
-                                </option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="px-3 py-1.5 text-right">
-                            <button
-                              type="button"
-                              onClick={() => updateCarrier({ bands: { ...carrier.bands, [key]: carrier.bands[key].filter((_, j) => j !== i) } })}
-                              className="rounded-lg p-1.5 text-red-500 hover:bg-red-50"
-                              aria-label="ลบช่วง"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const last = carrier.bands[key][carrier.bands[key].length - 1];
-                    const min = last?.max != null ? Number((last.max + 0.01).toFixed(2)) : 0.1;
-                    updateCarrier({ bands: { ...carrier.bands, [key]: [...carrier.bands[key], { min, max: null, step: null, account_id: last?.account_id ?? null }] } });
-                  }}
-                  className="mt-2 flex items-center gap-1 text-sm font-medium text-brand-navy hover:underline"
-                >
-                  <Plus className="h-4 w-4" /> เพิ่มช่วงน้ำหนัก
-                </button>
+                {renderBands(carrier.bands[key], (next) => updateCarrier({ bands: { ...carrier.bands, [key]: next } }))}
               </div>
             ))}
             <p className="mb-5 text-xs text-slate-400">ตั้งแต่ 10.01 kg ขึ้นไปไม่มีขายน้ำหนักทศนิยม — ระบบปัดขึ้นเป็น kg เต็มเสมอ (10.01 → 11)</p>
+
+            <div className="mb-6 rounded-xl border border-slate-200 p-4">
+              <h3 className="mb-1 text-sm font-semibold text-slate-700">บริการเพิ่ม (ตารางเรทแยก)</h3>
+              <p className="mb-3 text-xs text-slate-400">
+                ดึงราคาอีกบริการไว้ในตารางของตัวเอง (แท็บ / ชีต Excel แยก) เช่น UPS 08 Worldwide Expedited ชื่อ &quot;Eco&quot; · ช่วงน้ำหนักว่าง = ไม่ดึงประเภทนั้น
+              </p>
+              {(carrier.extra_services ?? []).map((svc, si) => {
+                const setSvc = (patch: Partial<typeof svc>) =>
+                  updateCarrier({ extra_services: (carrier.extra_services ?? []).map((x, j) => (j === si ? { ...x, ...patch } : x)) });
+                return (
+                  <div key={si} className="mb-4 rounded-lg bg-slate-50 p-3">
+                    <div className="mb-3 flex flex-wrap items-center gap-3">
+                      <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                        Service code
+                        <input
+                          type="text"
+                          value={svc.code}
+                          onChange={(e) => setSvc({ code: e.target.value.toUpperCase() })}
+                          className={`${inputClass} w-16`}
+                        />
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                        ชื่อในตารางเรท
+                        <input type="text" value={svc.label} onChange={(e) => setSvc({ label: e.target.value })} className={`${inputClass} w-44`} />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => updateCarrier({ extra_services: (carrier.extra_services ?? []).filter((_, j) => j !== si) })}
+                        className="ml-auto flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-red-600 hover:bg-red-50"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> ลบบริการนี้
+                      </button>
+                    </div>
+                    {PACKAGE_TYPES.map(({ key, label }) => (
+                      <div key={key} className="mb-3">
+                        <h4 className="mb-1.5 text-xs font-semibold text-slate-600">
+                          {label}
+                          {svc.bands[key].length === 0 && <span className="ml-2 font-normal text-slate-400">— ไม่ดึง</span>}
+                        </h4>
+                        {renderBands(svc.bands[key], (next) => setSvc({ bands: { ...svc.bands, [key]: next } }))}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() =>
+                  updateCarrier({
+                    extra_services: [...(carrier.extra_services ?? []), { code: "", label: "", bands: { document: [], box: carrier.bands.box.map((b) => ({ ...b })) } }],
+                  })
+                }
+                className="flex items-center gap-1 text-sm font-medium text-brand-navy hover:underline"
+              >
+                <Plus className="h-4 w-4" /> เพิ่มบริการ
+              </button>
+            </div>
 
             <div className="mb-5">
               <h3 className="mb-1 text-sm font-semibold text-slate-700">บัญชีเฉพาะ Zone</h3>

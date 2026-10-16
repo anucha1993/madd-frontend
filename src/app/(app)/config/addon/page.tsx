@@ -37,6 +37,7 @@ type ItemForm = {
   carriers: ("UPS" | "DHL")[];
   customer_types: string[];
   product_types: string[];
+  package_type: "box" | "document";
   price_type: "FIXED" | "MANUAL" | "PERCENT" | "API_COST";
   price: string;
   markup_percent: string;
@@ -51,6 +52,7 @@ const emptyForm: ItemForm = {
   carriers: ["UPS", "DHL"],
   customer_types: [],
   product_types: [],
+  package_type: "box",
   price_type: "MANUAL",
   price: "",
   markup_percent: "",
@@ -150,6 +152,7 @@ export default function AddonSettingsPage() {
       carriers: item.carriers,
       customer_types: item.customer_types ?? [],
       product_types: item.product_types ?? [],
+      package_type: item.package_type ?? "box",
       price_type: item.price_type,
       price: item.price != null ? String(item.price) : "",
       markup_percent: item.markup_percent != null ? String(item.markup_percent) : "",
@@ -201,7 +204,9 @@ export default function AddonSettingsPage() {
         name: form.name.trim(),
         carriers: form.carriers,
         customer_types: form.customer_types.length > 0 ? form.customer_types : null,
-        product_types: form.product_types.length > 0 ? form.product_types : null,
+        // A Document package has no Silver/Non Silver/Other — only boxes keep a Product Type.
+        product_types: isInsuranceCategory && form.package_type === "document" ? null : form.product_types.length > 0 ? form.product_types : null,
+        package_type: isInsuranceCategory ? form.package_type : "box",
         price_type: form.price_type,
         price: form.price ? Number(form.price) : null,
         markup_percent: form.markup_percent ? Number(form.markup_percent) : null,
@@ -325,6 +330,15 @@ export default function AddonSettingsPage() {
                         <tr key={item.id} className="border-b border-slate-200 last:border-0">
                           <td className="px-5 py-3 font-medium text-slate-700">
                             {item.name}
+                            {isInsuranceCategory && (
+                              <span
+                                className={`ml-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                  item.package_type === "document" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-500"
+                                }`}
+                              >
+                                {item.package_type === "document" ? "Document" : "Box"}
+                              </span>
+                            )}
                             {item.always_show && (
                               <span className="ml-1.5 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-600">
                                 แสดงทุกเมื่อ
@@ -477,6 +491,34 @@ export default function AddonSettingsPage() {
                   </div>
                 </div>
 
+                {isInsuranceCategory && (
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-sm font-medium text-slate-600">
+                      ใช้กับพัสดุประเภท <span className="font-normal text-slate-400">(ค่าเริ่มต้น Box)</span>
+                    </span>
+                    <div className="flex gap-2">
+                      {(
+                        [
+                          { value: "box", label: "Box (กล่อง)" },
+                          { value: "document", label: "Document (เอกสาร)" },
+                        ] as const
+                      ).map((opt) => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => setForm((prev) => ({ ...prev, package_type: opt.value }))}
+                          className={`rounded-lg px-4 py-1.5 text-sm font-semibold ${
+                            form.package_type === opt.value ? "bg-brand-navy-dark text-white" : "border border-slate-300 text-slate-600 hover:bg-slate-50"
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {!(isInsuranceCategory && form.package_type === "document") && (
                 <div className="flex flex-col gap-1.5">
                   <span className="text-sm font-medium text-slate-600">
                     Product Type <span className="font-normal text-slate-400">(ว่าง = ใช้ได้ทุก Product Type — สำหรับหมวด Insurance เพื่อกำหนดราคา/สิทธิ์ตาม Silver/Non Silver/Other)</span>
@@ -494,6 +536,7 @@ export default function AddonSettingsPage() {
                     ))}
                   </div>
                 </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-3">
                   <label className="flex flex-col gap-1.5">

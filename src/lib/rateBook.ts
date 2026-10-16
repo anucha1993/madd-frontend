@@ -14,9 +14,16 @@ export type RateBookAccountRule = { zone: string; min_weight: number; account_id
 
 export type RateBookZoneAddress = { iso2: string; city: string; postcode: string; state_code: string };
 
+// Another service priced in the same book (e.g. UPS 08 Worldwide Expedited shown as "Eco"), with
+// its own weight bands — leave a package type's bands empty to skip it.
+export type RateBookExtraService = { code: string; label: string; bands: Record<RateBookPackageType, RateBookBand[]> };
+
 export type RateBookCarrierSettings = {
   enabled: boolean;
   service_codes: Record<RateBookPackageType, string>;
+  // The main service's name on the rate table (UPS 65 = "Saver").
+  service_label: string;
+  extra_services: RateBookExtraService[];
   bands: Record<RateBookPackageType, RateBookBand[]>;
   account_rules: RateBookAccountRule[];
   zone_countries: Record<string, RateBookZoneAddress>;
@@ -127,8 +134,12 @@ export type RateBookColumn = {
   countries: string[];
 };
 
+// A service a run priced; rows belong to it by service_code (anything else = the main one).
+export type RateBookService = { key: string; label: string; main: boolean; codes: string[] };
+
 export type RateBookRowsResponse = {
   vat_percent: number;
+  services?: RateBookService[];
   columns: RateBookColumn[];
   rows: RateBookRow[];
 };

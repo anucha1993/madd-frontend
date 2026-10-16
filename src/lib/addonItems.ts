@@ -14,6 +14,8 @@ export type AddonItem = {
   customer_types: string[] | null;
   // Which Create Shipment box Product Type(s) this item applies to — null/empty = all.
   product_types: string[] | null;
+  // Insurance: which package it's for — a Box (default) or a Document package.
+  package_type?: "box" | "document";
   price_type: "FIXED" | "MANUAL" | "PERCENT" | "API_COST";
   price: string | number | null;
   // Extra % applied on top of whatever price_type already computes — independent of price_type.
@@ -46,6 +48,7 @@ export type AddonItemInput = {
   carriers: ("UPS" | "DHL")[];
   customer_types?: string[] | null;
   product_types?: string[] | null;
+  package_type?: "box" | "document";
   price_type: "FIXED" | "MANUAL" | "PERCENT" | "API_COST";
   price?: number | null;
   markup_percent?: number | null;

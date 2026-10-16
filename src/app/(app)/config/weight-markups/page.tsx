@@ -37,6 +37,9 @@ function sortScopes(keys: string[], countryName: (iso2: string) => string): stri
   });
 }
 
+// UPS / DHL zones from Thailand.
+const STANDARD_ZONES = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
+
 export default function WeightMarkupsPage() {
   const { can } = useAccess();
   // View-only users (config.weight_markups without _edit) see the matrix but can't change it.
@@ -62,7 +65,8 @@ export default function WeightMarkupsPage() {
   const zoneColumn = carrier === "UPS" ? "ups_zone" : "dhl_zone";
   const zones = useMemo(
     () =>
-      Array.from(new Set(countries.map((c) => c[zoneColumn]).filter((z): z is string => !!z))).sort((a, b) =>
+      // Zones 1–9 always (a zone no country is in yet can still be priced), plus any other the countries use.
+      Array.from(new Set([...STANDARD_ZONES, ...countries.map((c) => c[zoneColumn]).filter((z): z is string => !!z)])).sort((a, b) =>
         a.localeCompare(b, undefined, { numeric: true }),
       ),
     [countries, zoneColumn],
