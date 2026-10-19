@@ -28,7 +28,11 @@ export type AgentAccount = {
   // null = no limit on that side.
   rate_min_weight: number | null;
   rate_max_weight: number | null;
+  // Per-service range (e.g. UPS 08 Expedited 10.01–70); a service not listed uses the range above.
+  service_weight_ranges: ServiceWeightRange[] | null;
 };
+
+export type ServiceWeightRange = { service_code: string; min: number | null; max: number | null };
 
 export type AgentAccountInput = {
   agent_id: number;
@@ -43,17 +47,15 @@ export type AgentAccountInput = {
   is_api_enabled?: boolean;
   rate_min_weight?: number | null;
   rate_max_weight?: number | null;
+  service_weight_ranges?: ServiceWeightRange[];
 };
 
-// "0–10 kg", "10.01 kg ขึ้นไป", "ถึง 10 kg" — null when the account is asked for every weight.
+// "0–10 kg", "10.01 kg ขึ้นไป", "ถึง 10 kg" — null when there's no limit.
+export const weightRangeText = (min: number | null | undefined, max: number | null | undefined) =>
+  min == null && max == null ? null : max == null ? `${min} kg ขึ้นไป` : min == null ? `ถึง ${max} kg` : `${min}–${max} kg`;
+
 export const rateWeightRangeLabel = (a: Pick<AgentAccount, "rate_min_weight" | "rate_max_weight">) =>
-  a.rate_min_weight == null && a.rate_max_weight == null
-    ? null
-    : a.rate_max_weight == null
-      ? `${a.rate_min_weight} kg ขึ้นไป`
-      : a.rate_min_weight == null
-        ? `ถึง ${a.rate_max_weight} kg`
-        : `${a.rate_min_weight}–${a.rate_max_weight} kg`;
+  weightRangeText(a.rate_min_weight, a.rate_max_weight);
 
 export const listAgents = () => apiClient.get<Agent[]>("/agents");
 

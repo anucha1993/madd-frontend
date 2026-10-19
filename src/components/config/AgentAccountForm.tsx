@@ -1,7 +1,11 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { Plus, Trash2 } from "lucide-react";
 import type { Agent, AgentAccount, AgentAccountInput } from "@/lib/agentAccounts";
+import { serviceOptionsFor } from "@/lib/carrierServices";
+
+type RangeDraft = { service_code: string; min: string; max: string };
 
 type Props = {
   agents: Agent[];
@@ -23,6 +27,13 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
   const [isApiEnabled, setIsApiEnabled] = useState(initial?.is_api_enabled ?? true);
   const [rateMinWeight, setRateMinWeight] = useState(initial?.rate_min_weight != null ? String(initial.rate_min_weight) : "");
   const [rateMaxWeight, setRateMaxWeight] = useState(initial?.rate_max_weight != null ? String(initial.rate_max_weight) : "");
+  // Per-service ranges — none = every service uses the range above.
+  const [serviceRanges, setServiceRanges] = useState<RangeDraft[]>(() =>
+    (initial?.service_weight_ranges ?? []).map((r) => ({ service_code: r.service_code, min: r.min != null ? String(r.min) : "", max: r.max != null ? String(r.max) : "" })),
+  );
+  const [perService, setPerService] = useState((initial?.service_weight_ranges ?? []).length > 0);
+  const agentCode = agents.find((a) => a.id === agentId)?.agent_code;
+  const serviceOptions = serviceOptionsFor(agentCode);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -36,6 +47,17 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
     }
     if (rateMinWeight !== "" && rateMaxWeight !== "" && Number(rateMaxWeight) <= Number(rateMinWeight)) {
       setError("ช่วงน้ำหนัก Check Rate: น้ำหนักสูงสุดต้องมากกว่าน้ำหนักต่ำสุด");
+      return;
+    }
+    const ranges = perService ? serviceRanges.filter((r) => r.service_code) : [];
+    const codes = ranges.map((r) => r.service_code);
+    if (new Set(codes).size !== codes.length) {
+      setError("ช่วงน้ำหนักแยกตาม Service: เลือก Service ซ้ำกัน");
+      return;
+    }
+    const bad = ranges.find((r) => r.min !== "" && r.max !== "" && Number(r.max) <= Number(r.min));
+    if (bad) {
+      setError(`Service ${bad.service_code}: น้ำหนักสูงสุดต้องมากกว่าน้ำหนักต่ำสุด`);
       return;
     }
 
@@ -54,6 +76,11 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
         is_api_enabled: isApiEnabled,
         rate_min_weight: rateMinWeight === "" ? null : Number(rateMinWeight),
         rate_max_weight: rateMaxWeight === "" ? null : Number(rateMaxWeight),
+        service_weight_ranges: ranges.map((r) => ({
+          service_code: r.service_code,
+          min: r.min === "" ? null : Number(r.min),
+          max: r.max === "" ? null : Number(r.max),
+        })),
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
@@ -65,6 +92,8 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
   const inputClass =
     "w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-brand-navy focus:bg-white focus:ring-2 focus:ring-brand-navy/15";
   const labelClass = "text-sm font-medium text-slate-600";
+  // Same look without w-full — for inputs sharing a row.
+  const compactInput = inputClass.replace("w-full ", "");
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -197,6 +226,90 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
           <p className="text-xs text-slate-400">
             เช่น 0 – 10 = ดึงราคาจากบัญชีนี้เฉพาะ Shipment ที่น้ำหนักคิดเงิน (รวมน้ำหนักตามขนาด) ไม่เกิน 10 kg · ว่างทั้งสองช่อง = ทุกน้ำหนัก
           </p>
+
+          {serviceOptions.length > 0 && (
+            <div className="mt-2 flex flex-col gap-2 rounded-lg border border-slate-200 p-3">
+              <div className="flex flex-wrap gap-4 text-sm text-slate-600">
+                <label className="flex items-center gap-1.5">
+                  <input type="radio" checked={!perService} onChange={() => setPerService(false)} className="accent-brand-amber" />
+                  ใช้ช่วงเดียวกันทุก Service
+                </label>
+                <label className="flex items-center gap-1.5">
+                  <input
+                    type="radio"
+                    checked={perService}
+                    onChange={() => {
+                      setPerService(true);
+                      if (serviceRanges.length === 0) setServiceRanges([{ service_code: serviceOptions[0].code, min: "", max: "" }]);
+                    }}
+                    className="accent-brand-amber"
+                  />
+                  กำหนดแยกตาม Service
+                </label>
+              </div>
+              {perService && (
+                <>
+                  {serviceRanges.map((r, i) => {
+                    const set = (patch: Partial<RangeDraft>) => setServiceRanges((prev) => prev.map((x, k) => (k === i ? { ...x, ...patch } : x)));
+                    return (
+                      <div key={i} className="flex items-center gap-2">
+                        <select value={r.service_code} onChange={(e) => set({ service_code: e.target.value })} className={`${compactInput} min-w-0 flex-1`}>
+                          {serviceOptions.map((o) => (
+                            <option key={o.code} value={o.code}>
+                              {o.code} · {o.label}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={r.min}
+                          onChange={(e) => set({ min: e.target.value })}
+                          placeholder="ตั้งแต่"
+                          className={`${compactInput} w-20 shrink-0`}
+                        />
+                        <span className="text-slate-400">–</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={r.max}
+                          onChange={(e) => set({ max: e.target.value })}
+                          placeholder="ถึง"
+                          title="ว่าง = ไม่จำกัด"
+                          className={`${compactInput} w-20 shrink-0`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setServiceRanges((prev) => prev.filter((_, k) => k !== i))}
+                          className="shrink-0 rounded p-1.5 text-red-500 hover:bg-red-50"
+                          aria-label="ลบ"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setServiceRanges((prev) => [
+                        ...prev,
+                        { service_code: serviceOptions.find((o) => !prev.some((p) => p.service_code === o.code))?.code ?? serviceOptions[0].code, min: "", max: "" },
+                      ])
+                    }
+                    className="flex w-fit items-center gap-1 text-sm font-medium text-brand-navy hover:underline"
+                  >
+                    <Plus className="h-4 w-4" /> เพิ่ม Service
+                  </button>
+                  <p className="text-xs text-slate-400">
+                    เช่น 08 Worldwide Expedited 10.01 – 70 = ดึง Expedited จากบัญชีนี้เฉพาะ 10.01–70 kg · Service ที่ไม่ได้ระบุใช้ช่วงด้านบน
+                  </p>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
 

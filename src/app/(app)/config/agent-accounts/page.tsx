@@ -24,6 +24,7 @@ import {
   listAgentAccounts,
   listAgents,
   rateWeightRangeLabel,
+  weightRangeText,
   testAgentAccount,
   updateAgent,
   updateAgentAccount,
@@ -705,6 +706,16 @@ export default function AgentAccountsPage() {
                                 {rateWeightRangeLabel(account)}
                               </span>
                             )}
+                            {account.is_api_enabled &&
+                              (account.service_weight_ranges ?? []).map((r) => (
+                                <span
+                                  key={r.service_code}
+                                  title={`Check Rate ดึง Service ${r.service_code} จากบัญชีนี้เฉพาะช่วงนี้`}
+                                  className="ml-1 whitespace-nowrap rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700"
+                                >
+                                  {r.service_code}: {weightRangeText(r.min, r.max) ?? "ทุกน้ำหนัก"}
+                                </span>
+                              ))}
                           </td>
                           <td className="px-5 py-3">
                             <span

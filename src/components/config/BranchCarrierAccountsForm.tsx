@@ -1,5 +1,6 @@
 "use client";
 
+import { DHL_SERVICE_OPTIONS, UPS_SERVICE_OPTIONS } from "@/lib/carrierServices";
 import { useMemo } from "react";
 import type { AgentAccount } from "@/lib/agentAccounts";
 import type { BranchCarrierAccountInput } from "@/lib/branchCarrierAccounts";
@@ -9,25 +10,6 @@ type Props = {
   value: BranchCarrierAccountInput[];
   onChange: (value: BranchCarrierAccountInput[]) => void;
 };
-
-// Mirrors UpsRateService::SERVICE_CODES (madd-backend) — UPS only ever quotes these 4 services.
-const UPS_SERVICE_OPTIONS: { code: string; label: string }[] = [
-  { code: "65", label: "Worldwide Saver" },
-  { code: "07", label: "Worldwide Express" },
-  { code: "08", label: "Worldwide Expedited" },
-  { code: "11", label: "UPS Standard" },
-];
-
-// DHL has no fixed product list per se, but these are the products actually seen returned by
-// our DHL accounts (via DhlRateService::listAvailableProducts) — kept as a static list here
-// (same simple checkbox UX as UPS) instead of fetching live every time.
-const DHL_SERVICE_OPTIONS: { code: string; label: string }[] = [
-  { code: "P", label: "EXPRESS WORLDWIDE" },
-  { code: "M", label: "EXPRESS 10:30" },
-  { code: "Y", label: "EXPRESS 12:00" },
-  { code: "8", label: "EXPRESS EASY" },
-  { code: "Q", label: "MEDICAL EXPRESS" },
-];
 
 /** Controlled checkbox fields for assigning carrier accounts to a branch, grouped by agent. */
 export default function BranchCarrierAccountsForm({ agentAccounts, value, onChange }: Props) {
