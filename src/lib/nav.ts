@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  Boxes,
   Building2,
   FileBarChart2,
   LayoutDashboard,
@@ -78,6 +79,12 @@ export const NAV_SECTIONS: NavItem[] = [
     icon: Users,
     href: "/customer",
   },
+  // Branch staff count / receive stock here — a menu of its own, not buried under Management.
+  {
+    label: "Packaging Stock",
+    icon: Boxes,
+    href: "/config/supplies/stock",
+  },
   {
     id: "management",
     label: "Management",
@@ -91,7 +98,6 @@ export const NAV_SECTIONS: NavItem[] = [
       { label: "Add-on Settings", href: "/config/addon" },
       { label: "Insurance UPSC", href: "/config/insurance-caps" },
       { label: "Packaging Supplies", href: "/config/supplies" },
-      { label: "Packaging Stock", href: "/config/supplies/stock" },
       { label: "Shipment Weight Bands", href: "/config/weight-bands" },
       { label: "Manifest Form Options", href: "/config/manifest-options" },
       { label: "Receipt Line Templates", href: "/config/receipt-line-templates" },
