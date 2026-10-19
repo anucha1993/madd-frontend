@@ -504,7 +504,7 @@ export default function RateBookPage() {
             <div className="mb-6 rounded-xl border border-slate-200 p-4">
               <h3 className="mb-1 text-sm font-semibold text-slate-700">บริการเพิ่ม (ตารางเรทแยก)</h3>
               <p className="mb-3 text-xs text-slate-400">
-                ดึงราคาอีกบริการไว้ในตารางของตัวเอง (แท็บ / ชีต Excel แยก) เช่น UPS 08 Worldwide Expedited ชื่อ &quot;Eco&quot; · ช่วงน้ำหนักว่าง = ไม่ดึงประเภทนั้น
+                ดึงราคาอีกบริการ เช่น UPS 08 Worldwide Expedited ชื่อ &quot;Eco&quot; — ใน Excel แทรกเป็นอีกส่วนต่อท้ายในชีต SAVE / SELLING (แบบชีต ALL ของไฟล์ตัวอย่าง) · ช่วงน้ำหนักว่าง = ไม่ดึงประเภทนั้น
               </p>
               {(carrier.extra_services ?? []).map((svc, si) => {
                 const setSvc = (patch: Partial<typeof svc>) =>

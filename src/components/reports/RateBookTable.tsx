@@ -105,10 +105,11 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
   const runId = pickedRunId != null && completed.some((r) => r.id === pickedRunId) ? pickedRunId : (completed[0]?.id ?? null);
   const run = completed.find((r) => r.id === runId);
   const [carrier, setCarrier] = useState<RateBookCarrier>("UPS");
-  // "card" | "doc" | column key | "chart"
+  // "card" | "doc" | "<service key>::<column key>" (calc sheet) | "chart"
   const [sheet, setSheet] = useState<string>("card");
   const [chartType, setChartType] = useState<RateBookPackageType>("box");
-  // Which service's rates (UPS Saver / Eco …); null = the main one.
+  // Which service the chart shows (UPS Saver / Eco …); null = the main one. The rate cards show
+  // every service on one sheet, like the sample's "ALL" sheet.
   const [serviceKey, setServiceKey] = useState<string | null>(null);
   const [chartZone, setChartZone] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -136,22 +137,25 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
     () => (data?.services?.length ? data.services : [{ key: "main", label: carrier === "UPS" ? "Saver" : "Express Worldwide", main: true, codes: [] }]),
     [data, carrier],
   );
-  const service = services.find((s) => s.key === serviceKey) ?? services[0];
-  // Rows of the service on screen — an extra service's rows carry its code, the rest are the main one's.
-  const serviceRows = useMemo(() => {
+  // Each row's service: an extra service's rows carry its code, the rest are the main one's.
+  const rowsByService = useMemo(() => {
     const extras = services.filter((s) => !s.main);
-    const owner = (r: RateBookRow) => extras.find((s) => r.service_code != null && s.codes.includes(r.service_code)) ?? services[0];
-    return (data?.rows ?? []).filter((r) => owner(r).key === service.key);
-  }, [data, services, service]);
-  const byType = useMemo(
-    () => ({ document: serviceRows.filter((r) => r.package_type === "document"), box: serviceRows.filter((r) => r.package_type === "box") }),
-    [serviceRows],
-  );
+    const map = new Map<string, RateBookRow[]>(services.map((s) => [s.key, []]));
+    for (const r of data?.rows ?? []) {
+      const owner = extras.find((s) => r.service_code != null && s.codes.includes(r.service_code)) ?? services[0];
+      map.get(owner.key)?.push(r);
+    }
+    return map;
+  }, [data, services]);
+  const typeRows = (svc: string, type: RateBookPackageType) => (rowsByService.get(svc) ?? []).filter((r) => r.package_type === type);
   const cellMap = useMemo(() => {
     const map = new Map<string, RateBookRow>();
-    serviceRows.forEach((r) => map.set(`${r.package_type}|${r.band_label}|${r.weight}|${r.zone}`, r));
+    rowsByService.forEach((rows, svc) => rows.forEach((r) => map.set(`${svc}|${r.package_type}|${r.band_label}|${r.weight}|${r.zone}`, r)));
     return map;
-  }, [serviceRows]);
+  }, [rowsByService]);
+  const service = services.find((s) => s.key === serviceKey) ?? services[0];
+  const chartRows = { document: typeRows(service.key, "document"), box: typeRows(service.key, "box") };
+  const extraServices = services.filter((s) => !s.main && (rowsByService.get(s.key)?.length ?? 0) > 0);
 
   if (completed.length === 0) {
     return <p className="px-5 py-6 text-center text-sm text-slate-400">ยังไม่มีข้อมูลเรท — กด Sync เพื่อสร้าง Rate Book ชุดแรก</p>;
@@ -159,7 +163,11 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
 
   const ups = carrier === "UPS";
   const year = (run?.finished_at ?? run?.started_at ?? "").slice(0, 4);
-  const activeSheet = ["card", "doc", "chart"].includes(sheet) || columns.some((c) => c.key === sheet) ? sheet : "card";
+  // Calc sheets: the main service's ("1", "2" …), then each extra service's ("ECO 1" …) — as in the Excel.
+  const calcSheets = [services[0], ...extraServices].flatMap((s) =>
+    columns.map((c) => ({ id: `${s.key}::${c.key}`, label: s.main ? c.key : `${s.label.toUpperCase()} ${c.key}`, service: s.key, column: c })),
+  );
+  const activeSheet = ["card", "doc", "chart"].includes(sheet) || calcSheets.some((t) => t.id === sheet) ? sheet : "card";
   const chartColumns = columns;
   const activeChartZone = chartZone != null && chartColumns.some((c) => c.key === chartZone) ? chartZone : (chartColumns[0]?.key ?? "");
 
@@ -176,8 +184,8 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
     }
   }
 
-  const price = (type: RateBookPackageType, line: Line, col: RateBookColumn, decimals: number) => {
-    const row = cellMap.get(`${type}|${line.source}|${col.key}`);
+  const price = (svc: string, type: RateBookPackageType, line: Line, col: RateBookColumn, decimals: number) => {
+    const row = cellMap.get(`${svc}|${type}|${line.source}|${col.key}`);
     if (!row) return { text: "", title: undefined as string | undefined, error: false };
     if (row.error) return { text: "ERROR", title: row.error, error: true };
     return { text: fmt(Number(row.sell) * line.mult, decimals), title: undefined, error: false };
@@ -185,13 +193,22 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
 
   // ---- UPS "SAVE" -------------------------------------------------------------------------------
   function renderUpsSave() {
-    const all = lines(byType.box);
-    const pages: { title: string | null; lines: Line[]; after?: string }[] = [
-      { title: service.main ? "UPS Regular Express Saver" : `UPS ${service.label}`, lines: all.filter((l) => !l.rate && l.kg <= 10) },
-      { title: null, lines: all.filter((l) => !l.rate && l.kg > 10 && l.kg <= 24), after: "See Next Page for  25 Kg up" },
-      { title: service.label, lines: all.filter((l) => !l.rate && l.kg > 24 && l.kg <= 45) },
-      { title: service.label, lines: all.filter((l) => !l.rate && l.kg > 45) },
-      { title: service.label, lines: all.filter((l) => l.rate) },
+    const main = services[0];
+    const all = lines(typeRows(main.key, "box"));
+    const pages: { svc: string; title: string | null; lines: Line[]; after?: string }[] = [
+      { svc: main.key, title: "UPS Regular Express Saver", lines: all.filter((l) => !l.rate && l.kg <= 10) },
+      { svc: main.key, title: null, lines: all.filter((l) => !l.rate && l.kg > 10 && l.kg <= 24), after: "See Next Page for  25 Kg up" },
+      { svc: main.key, title: main.label, lines: all.filter((l) => !l.rate && l.kg > 24 && l.kg <= 45) },
+      { svc: main.key, title: main.label, lines: all.filter((l) => !l.rate && l.kg > 45) },
+      { svc: main.key, title: main.label, lines: all.filter((l) => l.rate) },
+      // Extra services (e.g. Eco) below Saver on the same sheet, like the sample's "ALL" sheet.
+      ...extraServices.flatMap((s) => {
+        const sl = lines(typeRows(s.key, "box"));
+        return [
+          { svc: s.key, title: s.label, lines: sl.filter((l) => !l.rate) },
+          { svc: s.key, title: s.label, lines: sl.filter((l) => l.rate) },
+        ];
+      }),
     ];
     return (
       <>
@@ -227,11 +244,11 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
                               **for each box weighing 31 kgs and up , 1,200 THB is applied for AHC ( Additional Handling Charge )
                             </td>
                           </tr>
-                          {saveRow(line, li)}
+                          {saveRow(page.svc, line, li)}
                         </Fragment>
                       );
                     }
-                    return saveRow(line, li);
+                    return saveRow(page.svc, line, li);
                   })}
                 </tbody>
               </table>
@@ -243,7 +260,7 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
     );
   }
 
-  function saveRow(line: Line, li: number) {
+  function saveRow(svc: string, line: Line, li: number) {
     const thick = !line.rate && line.kg === 5 ? "border-b-2 border-b-slate-800" : "";
     return (
       <tr key={line.key + li} className={thick}>
@@ -251,7 +268,7 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
           {typeof line.label === "number" ? line.label.toFixed(1) : line.label}
         </td>
         {columns.map((c) => {
-          const p = price("box", line, c, 0);
+          const p = price(svc, "box", line, c, 0);
           return (
             <td
               key={c.key}
@@ -292,16 +309,30 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
   function renderDhlSelling() {
     return (
       <>
+        {[services[0], ...extraServices].map((s) => (
+          <Fragment key={s.key}>
+            {!s.main && <p className="mb-1 mt-6 text-base font-bold text-slate-900">DHL {s.label}</p>}
+            {dhlSellingTable(s.key)}
+          </Fragment>
+        ))}
+        <p className="mt-2 text-xs font-bold text-slate-700">*For each box weighing 26 Kgs and up, 1,200 THB is applied for overweight charge.</p>
+      </>
+    );
+  }
+
+  function dhlSellingTable(svc: string) {
+    return (
+      <>
         <table className="w-full border-collapse text-sm tabular-nums">
           <thead className="sticky top-0 z-10">{dhlHeader("#CCCCCC")}</thead>
           <tbody>
-            {lines(byType.box).map((line) => (
+            {lines(typeRows(svc, "box")).map((line) => (
               <tr key={line.key}>
                 <td className={`${cellBorder} px-2 py-0.5 text-center`}>
                   {line.rate ? `${line.label} KG (ต่อ KG)` : typeof line.label === "number" ? line.label.toFixed(1) : line.label}
                 </td>
                 {columns.map((c, i) => {
-                  const p = price("box", line, c, 2);
+                  const p = price(svc, "box", line, c, 2);
                   return (
                     <td key={c.key} title={p.title} className={`${cellBorder} px-2 py-0.5 text-right ${p.error ? "text-red-500" : ""}`} style={shadeAlternate(i, c)}>
                       {p.text}
@@ -312,7 +343,6 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
             ))}
           </tbody>
         </table>
-        <p className="mt-2 text-xs font-bold text-slate-700">*For each box weighing 26 Kgs and up, 1,200 THB is applied for overweight charge.</p>
       </>
     );
   }
@@ -337,7 +367,24 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
   }
 
   function renderDoc() {
-    const docLines = lines(byType.document);
+    const main = services[0].key;
+    const docLines = lines(typeRows(main, "document"));
+    // Extra services' documents follow the main ones, each under its own name row.
+    const extraDocs = (cols: RateBookColumn[], heading: (label: string) => string, alternate: boolean) =>
+      extraServices.map((s) => {
+        const sl = lines(typeRows(s.key, "document"));
+        if (!sl.length) return null;
+        return (
+          <Fragment key={s.key}>
+            <tr>
+              <td colSpan={cols.length + 1} className={`${cellBorder} px-2 py-0.5 font-bold`}>
+                {heading(s.label)}
+              </td>
+            </tr>
+            {sl.map((l) => docRow(s.key, l, cols, `${s.key}-doc`, alternate))}
+          </Fragment>
+        );
+      });
     if (ups) {
       const zones = columns.filter((c) => !c.extra);
       return (
@@ -368,7 +415,7 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
                       UPS Express Saver Envelope
                     </td>
                   </tr>
-                  {docRow(docLines[0], zones, "env")}
+                  {docRow(main, docLines[0], zones, "env")}
                   <tr>
                     <td colSpan={zones.length + 1} className={`${cellBorder} px-2 py-0.5 font-bold`}>
                       UPS Express Saver Documents
@@ -376,7 +423,8 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
                   </tr>
                 </>
               )}
-              {docLines.map((l) => docRow(l, zones, "doc"))}
+              {docLines.map((l) => docRow(main, l, zones, "doc"))}
+              {extraDocs(zones, (label) => `UPS ${label} Documents`, false)}
               {countryBlock(zones, false)}
             </tbody>
           </table>
@@ -389,7 +437,8 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
         <table className="w-full border-collapse text-sm tabular-nums">
           <thead>{dhlHeader("#B7B7B7")}</thead>
           <tbody>
-            {docLines.map((l) => docRow(l, columns, "doc", true))}
+            {docLines.map((l) => docRow(main, l, columns, "doc", true))}
+            {extraDocs(columns, (label) => `DHL ${label}`, true)}
             {countryBlock(columns, true)}
           </tbody>
         </table>
@@ -397,12 +446,12 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
     );
   }
 
-  function docRow(line: Line, cols: RateBookColumn[], prefix: string, alternate = false) {
+  function docRow(svc: string, line: Line, cols: RateBookColumn[], prefix: string, alternate = false) {
     return (
       <tr key={`${prefix}-${line.key}`}>
         <td className={`${cellBorder} px-2 py-0.5 text-center`}>{typeof line.label === "number" ? line.label.toFixed(1) : line.label}</td>
         {cols.map((c, i) => {
-          const p = price("document", line, c, ups ? 0 : 2);
+          const p = price(svc, "document", line, c, ups ? 0 : 2);
           return (
             <td
               key={c.key}
@@ -419,7 +468,7 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
   }
 
   // ---- calc sheet per column ("1".."9", JP, AU …) -----------------------------------------------
-  function renderCalc(column: RateBookColumn) {
+  function renderCalc(column: RateBookColumn, svc: string) {
     const calc = CALC_COLUMNS[carrier](column.extra ? column.label : ups ? `Zone ${column.key}` : column.label);
     return (
       <>
@@ -428,8 +477,8 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
           {ups && " · SIGN / INS ว่าง: ราคาขายของระบบไม่ได้รวมค่าบริการเสริม"}
         </p>
         {(["document", "box"] as const).map((type) => {
-          const typeRows = byType[type].filter((r) => r.zone === column.key);
-          if (!typeRows.length) return null;
+          const zoneRows = typeRows(svc, type).filter((r) => r.zone === column.key);
+          if (!zoneRows.length) return null;
           return (
             <div key={type} className="mb-6">
               <p className={`mb-2 text-sm text-slate-800 ${type === "box" ? "font-bold" : ""}`}>
@@ -449,8 +498,8 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {lines(typeRows).map((line) => {
-                    const row = typeRows.find((r) => `${r.band_label}|${r.weight}` === line.source);
+                  {lines(zoneRows).map((line) => {
+                    const row = zoneRows.find((r) => `${r.band_label}|${r.weight}` === line.source);
                     return (
                       <tr key={line.key} className="border-b border-slate-100">
                         <td className="px-3 py-1 text-left text-slate-700">
@@ -485,7 +534,7 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
 
   const tabClass = (active: boolean) =>
     `rounded-lg px-3 py-1.5 text-sm font-semibold ${active ? "bg-brand-navy-dark text-white" : "border border-slate-300 text-slate-600 hover:bg-slate-50"}`;
-  const activeColumn = columns.find((c) => c.key === activeSheet);
+  const activeCalc = calcSheets.find((t) => t.id === activeSheet);
 
   return (
     <div className="p-5">
@@ -503,16 +552,6 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
             {c}
           </button>
         ))}
-        {services.length > 1 && (
-          <>
-            <span className="mx-1 h-6 w-px bg-slate-200" />
-            {services.map((s) => (
-              <button key={s.key} type="button" onClick={() => setServiceKey(s.key)} className={tabClass(service.key === s.key)}>
-                {s.label}
-              </button>
-            ))}
-          </>
-        )}
         <button
           type="button"
           onClick={handleExport}
@@ -541,9 +580,9 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
       {/* Sheet tabs, named like the rate files' sheets. */}
       <div className="mb-4 flex flex-wrap items-center gap-1 border-b border-slate-200">
         {[
-          { id: "card", label: service.main ? (ups ? "SAVE" : "SELLING") : service.label.toUpperCase() },
-          ...(service.main || byType.document.length ? [{ id: "doc", label: "DOC" }] : []),
-          ...columns.map((c) => ({ id: c.key, label: c.key })),
+          { id: "card", label: ups ? "SAVE" : "SELLING" },
+          { id: "doc", label: "DOC" },
+          ...calcSheets.map((t) => ({ id: t.id, label: t.label })),
           { id: "chart", label: "กราฟ ต้นทุน vs ราคาขาย" },
         ].map((t) => (
           <button
@@ -587,6 +626,16 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
                 {label}
               </button>
             ))}
+            {extraServices.length > 0 && (
+              <>
+                <span className="mx-1 h-6 w-px bg-slate-200" />
+                {[services[0], ...extraServices].map((s) => (
+                  <button key={s.key} type="button" onClick={() => setServiceKey(s.key)} className={tabClass(service.key === s.key)}>
+                    {s.label}
+                  </button>
+                ))}
+              </>
+            )}
             <span className="mx-1 h-6 w-px bg-slate-200" />
             {chartColumns.map((c) => (
               <button
@@ -602,12 +651,12 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
               </button>
             ))}
           </div>
-          <RateBookChart rows={byType[chartType]} zone={activeChartZone} />
+          <RateBookChart rows={chartRows[chartType]} zone={activeChartZone} />
           <p className="mt-2 text-xs text-slate-400">ช่วงที่คิดราคาต่อ kg ไม่อยู่ในกราฟ (คนละหน่วย) — ดูได้ใน sheet ตาราง</p>
         </div>
       ) : (
         <div className="max-h-[40rem] overflow-auto">
-          {activeSheet === "card" ? (ups ? renderUpsSave() : renderDhlSelling()) : activeSheet === "doc" ? renderDoc() : activeColumn ? renderCalc(activeColumn) : null}
+          {activeSheet === "card" ? (ups ? renderUpsSave() : renderDhlSelling()) : activeSheet === "doc" ? renderDoc() : activeCalc ? renderCalc(activeCalc.column, activeCalc.service) : null}
         </div>
       )}
     </div>
