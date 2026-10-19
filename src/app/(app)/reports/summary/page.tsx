@@ -1,7 +1,7 @@
 "use client";
 
+import ShipmentLink from "@/components/shipment/ShipmentLink";
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { AlertTriangle, ChevronDown, Download, Loader2, Table2, X } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import PageLoading from "@/components/ui/PageLoading";
@@ -531,7 +531,7 @@ function Attention({ attention }: { attention: ShipmentAnalytics["attention"] })
               <ul className="mt-2 space-y-1 pl-11">
                 {g.items.map((s) => (
                   <li key={s.id}>
-                    <Link href={`/shipment/view/${s.id}`} className="flex items-center justify-between gap-2 rounded-md px-2 py-1 text-xs hover:bg-slate-50">
+                    <ShipmentLink id={s.id} className="flex items-center justify-between gap-2 rounded-md px-2 py-1 text-xs hover:bg-slate-50">
                       <span className="flex items-center gap-1.5 font-mono text-slate-700">
                         <span className="h-2 w-2 rounded-sm" style={{ background: CARRIER_COLOR[s.carrier] ?? "#64748b" }} />
                         {s.tracking_number ?? `#${s.id}`}
@@ -540,7 +540,7 @@ function Attention({ attention }: { attention: ShipmentAnalytics["attention"] })
                         {s.country && `${s.country} · `}
                         {new Date(s.created_at).toLocaleDateString("th-TH", { day: "numeric", month: "short" })}
                       </span>
-                    </Link>
+                    </ShipmentLink>
                   </li>
                 ))}
                 {g.count > g.items.length && <li className="px-2 text-[11px] text-slate-400">และอีก {num(g.count - g.items.length)} รายการ</li>}

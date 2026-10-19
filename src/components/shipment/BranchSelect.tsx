@@ -40,7 +40,7 @@ export default function BranchSelect({ branches, value, onChange, className }: P
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [selected]);
 
   const term = query.trim().toLowerCase();

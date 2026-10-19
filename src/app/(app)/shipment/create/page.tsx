@@ -16,6 +16,11 @@ import {
   DEFAULT_CUSTOMER_DISPLAY_SETTINGS,
   getCustomerDisplaySettings,
   openDisplayChannel,
+  getRemoteDisplayKey,
+  createRemoteDisplayKey,
+  clearRemoteDisplayKey,
+  remoteDisplayUrl,
+  pushRemoteDisplayState,
   withDefaults,
   type CustomerDisplaySettings,
   type DisplayMessage,
@@ -357,7 +362,16 @@ const ENTITY_TYPE_OPTIONS: { value: "INDIVIDUAL" | "COMPANY"; label: string; des
 export default function ShipmentCreatePage() {
   // Field groups a Role may leave read-only (config/permissions.php) — the API rejects any
   // non-default value for them anyway, so the inputs are locked to their defaults here.
-  const { can, canEditField, canSeeField } = useAccess();
+  const { can, canEditField, canSeeField, canVisit } = useAccess();
+  // Label / Waybill / Invoice API routes sit inside the shipment.view group — both are needed.
+  const canViewShipments = can("shipment.view");
+  // After a booking: to the Shipments list if this user can open it, else a fresh Create Shipment.
+  const leaveAfterBooking = () => {
+    if (canVisit("/shipment/list")) router.push("/shipment/list");
+    // A full reload on purpose: this IS /shipment/create, and every form field must start empty.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+    else window.location.assign("/shipment/create");
+  };
   const chargeName = useChargeDisplayNames();
   // Charge lines in the order set at /config/charge-names.
   const sortLines = useChargeLineOrder();
@@ -1013,6 +1027,7 @@ export default function ShipmentCreatePage() {
   // Draft payloads are our own serialized snapshots (see buildDraftSnapshot) — trusted shape,
   // just defensively guarded against missing/older fields so an older draft never crashes the page.
   function applyDraftSnapshot(raw: Record<string, unknown>) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- every field is type-checked below before use
     const s = raw as Record<string, any>;
     if (s.step === 1 || s.step === 2 || s.step === 3 || s.step === 4 || s.step === 5) setStep(s.step);
     if (typeof s.customerType === "string") setCustomerType(s.customerType);
@@ -2339,6 +2354,29 @@ export default function ShipmentCreatePage() {
     if (displayJson) displayChannelRef.current?.postMessage({ type: "state", state: JSON.parse(displayJson) } satisfies DisplayMessage);
   }, [displayJson]);
 
+  // Display on another computer: relay the same state through the API (debounced), and the idle
+  // screen when leaving this page.
+  const [remoteDisplayKey, setRemoteDisplayKey] = useState<string | null>(() =>
+    typeof window === "undefined" ? null : getRemoteDisplayKey(),
+  );
+  const [remoteDisplayOpen, setRemoteDisplayOpen] = useState(false);
+  useEffect(() => {
+    if (!canOpenCustomerDisplay || !remoteDisplayKey || !displayJson) return;
+    const timer = setTimeout(() => {
+      pushRemoteDisplayState(remoteDisplayKey, JSON.parse(displayJson) as DisplayState).catch(() => {});
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [canOpenCustomerDisplay, remoteDisplayKey, displayJson]);
+  useEffect(() => {
+    if (!canOpenCustomerDisplay || !remoteDisplayKey) return;
+    return () => {
+      if (lastDisplayJsonRef.current) {
+        const idle: DisplayState = { stage: "idle", settings: (JSON.parse(lastDisplayJsonRef.current) as DisplayState).settings };
+        pushRemoteDisplayState(remoteDisplayKey, idle).catch(() => {});
+      }
+    };
+  }, [canOpenCustomerDisplay, remoteDisplayKey]);
+
   function openCustomerDisplay() {
     window.open(CUSTOMER_DISPLAY_PATH, "madd-customer-display", "popup,width=1280,height=800");
     reloadDisplaySettings();
@@ -2732,6 +2770,74 @@ export default function ShipmentCreatePage() {
           >
             <Monitor className="h-4 w-4" /> เปิดจอลูกค้า
           </button>
+        )}
+        {canOpenCustomerDisplay && (
+          <button
+            type="button"
+            onClick={() => setRemoteDisplayOpen(true)}
+            title="จอลูกค้าบนคอมพิวเตอร์ / แท็บเล็ตอีกเครื่อง"
+            className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            <ExternalLink className="h-4 w-4" /> จอเครื่องอื่น
+          </button>
+        )}
+        {remoteDisplayOpen && (
+          <Modal title="จอลูกค้าบนเครื่องอื่น" onClose={() => setRemoteDisplayOpen(false)}>
+            <div className="flex flex-col gap-3 text-sm text-slate-600">
+              <p>
+                เปิดลิงก์นี้บนคอมพิวเตอร์ / แท็บเล็ตที่หันหาลูกค้า (ไม่ต้องล็อกอิน) — จอจะแสดงตามที่กรอกบนหน้านี้ ภายใน ~1 วินาที
+              </p>
+              {remoteDisplayKey ? (
+                <>
+                  <div className="flex items-center gap-2">
+                    <input
+                      readOnly
+                      value={remoteDisplayUrl(remoteDisplayKey)}
+                      onFocus={(e) => e.target.select()}
+                      className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard?.writeText(remoteDisplayUrl(remoteDisplayKey)).catch(() => {})}
+                      className="flex shrink-0 items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium hover:bg-slate-50"
+                    >
+                      <Copy className="h-3.5 w-3.5" /> คัดลอก
+                    </button>
+                  </div>
+                  <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                    ลิงก์นี้คือกุญแจของจอนี้ — ใครมีลิงก์ก็เห็นข้อมูลที่แสดงให้ลูกค้า อย่าส่งต่อ ถ้าหลุดให้กด &quot;สร้างลิงก์ใหม่&quot;
+                  </p>
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearRemoteDisplayKey();
+                        setRemoteDisplayKey(null);
+                      }}
+                      className="rounded-lg border border-red-200 px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50"
+                    >
+                      ปิดจอเครื่องอื่น
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRemoteDisplayKey(createRemoteDisplayKey())}
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium hover:bg-slate-50"
+                    >
+                      สร้างลิงก์ใหม่
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setRemoteDisplayKey(createRemoteDisplayKey())}
+                  className="self-start rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
+                >
+                  เปิดใช้จอเครื่องอื่น
+                </button>
+              )}
+            </div>
+          </Modal>
         )}
         {can("shipment.draft") && (
           <div className="flex flex-col items-end gap-1">
@@ -5139,7 +5245,7 @@ export default function ShipmentCreatePage() {
           onClose={() => {
             if (booking) return;
             if (bookedShipment) {
-              router.push("/shipment/list");
+              leaveAfterBooking();
               return;
             }
             setBookingModalOpen(false);
@@ -5182,17 +5288,17 @@ export default function ShipmentCreatePage() {
                   ];
 
                   const documents: { label: string; icon: typeof FileText; onOpen: () => void; loading: boolean }[] = [
-                    ...(hasLabel && can(isMultiPiece ? "shipment.label_all" : "shipment.label")
+                    ...(hasLabel && canViewShipments && can(isMultiPiece ? "shipment.label_all" : "shipment.label")
                       ? [
                           isMultiPiece
                             ? { label: `Shipping Label (รวม ${pieces.length} กล่อง)`, icon: Package, onOpen: handleOpenAllLabels, loading: openingAllLabels }
                             : { label: "Shipping Label", icon: Package, onOpen: handleOpenLabel, loading: openingLabel },
                         ]
                       : []),
-                    ...(hasWaybill && can("shipment.waybill")
+                    ...(hasWaybill && canViewShipments && can("shipment.waybill")
                       ? [{ label: "Waybill (Shipper's Copy)", icon: FileText, onOpen: handleOpenWaybill, loading: openingWaybill }]
                       : []),
-                    ...(bookedShipment.carrier === "DHL" && bookedShipment.waybill_storage_key && can("shipment.waybill_original")
+                    ...(bookedShipment.carrier === "DHL" && bookedShipment.waybill_storage_key && canViewShipments && can("shipment.waybill_original")
                       ? [
                           {
                             label: "DHL original waybill (ดาวน์โหลด)",
@@ -5204,7 +5310,7 @@ export default function ShipmentCreatePage() {
                           },
                         ]
                       : []),
-                    ...(hasInvoice && can("shipment.invoice")
+                    ...(hasInvoice && canViewShipments && can("shipment.invoice")
                       ? [{ label: "Commercial Invoice", icon: Receipt, onOpen: handleOpenCommercialInvoice, loading: openingInvoice }]
                       : []),
                   ];
@@ -5296,7 +5402,7 @@ export default function ShipmentCreatePage() {
                               <Copy className="h-3.5 w-3.5" />
                               {copiedTracking === piece.tracking_number ? "คัดลอกแล้ว" : "คัดลอก"}
                             </button>
-                            {isMultiPiece && piece.label_storage_key && can("shipment.label") && (
+                            {isMultiPiece && piece.label_storage_key && canViewShipments && can("shipment.label") && (
                               <button
                                 type="button"
                                 onClick={() => handleOpenPieceLabel(piece.tracking_number)}
@@ -5348,7 +5454,7 @@ export default function ShipmentCreatePage() {
                 <div className="flex justify-end">
                   <button
                     type="button"
-                    onClick={() => router.push("/shipment/list")}
+                    onClick={leaveAfterBooking}
                     className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
                   >
                     ปิด

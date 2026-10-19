@@ -9,7 +9,7 @@ import { useAccess } from "@/components/auth/AccessProvider";
 import Modal from "@/components/ui/Modal";
 import CarrierBadge from "@/components/ui/CarrierBadge";
 import BillingCustomerManagerModal from "@/components/config/BillingCustomerManagerModal";
-import { listShipments, getShipment, type Shipment } from "@/lib/shipments";
+import { listShipments, getShipmentsByIds, type Shipment } from "@/lib/shipments";
 import { listBranches, type Branch } from "@/lib/branches";
 import BranchSelect from "@/components/shipment/BranchSelect";
 import { listAgentAccounts, type AgentAccount } from "@/lib/agentAccounts";
@@ -90,7 +90,9 @@ function Card({ title, children, right }: { title: string; children: React.React
 export default function IssueReceiptPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { can } = useAccess();
+  const { can, canVisit } = useAccess();
+  // The PDF route sits inside the receipt.view group — print needs both.
+  const canOpenPdf = can("receipt.print") && can("receipt.view");
   const initialShipmentIds = useMemo(
     () =>
       (searchParams.get("shipment_ids") ?? "")
@@ -166,7 +168,7 @@ export default function IssueReceiptPage() {
       return;
     }
     const [shipmentDetails, preview] = await Promise.all([
-      Promise.all(ids.map((id) => getShipment(id))),
+      getShipmentsByIds(ids),
       previewReceiptLines(ids),
     ]);
     setShipments(shipmentDetails);
@@ -221,7 +223,7 @@ export default function IssueReceiptPage() {
       );
     }, 250);
     return () => clearTimeout(timeout);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [pickerQuery, shipments]);
 
   async function addShipment(id: number) {
@@ -420,7 +422,7 @@ export default function IssueReceiptPage() {
   // those only happen from the Tax Invoice Customers management page.
   async function autoSaveBillingCustomer() {
     const name = buyerName.trim();
-    if (!name || billingCustomerId) return;
+    if (!name || billingCustomerId || !can("billing_customer.create")) return;
 
     const taxId = buyerTaxId.trim();
     const normText = (v: string) => v.trim().toLowerCase();
@@ -464,6 +466,7 @@ export default function IssueReceiptPage() {
         buyer_address: buyerAddress || null,
         buyer_is_head_office: buyerIsHeadOffice,
         buyer_branch_no: buyerBranchNo || null,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars -- dropping the UI-only formula field
         lines: lines.map(({ formula: _formula, ...line }) => line),
         vat_rate: 7,
       });
@@ -481,12 +484,14 @@ export default function IssueReceiptPage() {
     return (
       <div className="mx-auto max-w-lg rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
         <p className="text-sm font-medium text-slate-700">{loadError}</p>
+        {canVisit("/shipment/list") && (
         <Link
           href="/shipment/list"
           className="mt-4 inline-flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
         >
           <ArrowLeft className="h-4 w-4" /> Back to My Shipments
         </Link>
+        )}
       </div>
     );
   }
@@ -500,7 +505,7 @@ export default function IssueReceiptPage() {
             <span className="text-slate-600">
               Cash Receipt <span className="font-mono text-xs text-slate-400">{successPair.cash_receipt.vol_no}/{successPair.cash_receipt.no}</span>
             </span>
-            {can("receipt.print") && (
+            {canOpenPdf && (
               <button
                 type="button"
                 onClick={() => openReceiptPdf(successPair.cash_receipt.id)}
@@ -514,7 +519,7 @@ export default function IssueReceiptPage() {
             <span className="text-slate-600">
               Tax Invoice <span className="font-mono text-xs text-slate-400">{successPair.tax_invoice.vol_no}/{successPair.tax_invoice.no}</span>
             </span>
-            {can("receipt.print") && (
+            {canOpenPdf && (
               <button
                 type="button"
                 onClick={() => openReceiptPdf(successPair.tax_invoice.id)}
@@ -538,9 +543,11 @@ export default function IssueReceiptPage() {
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-3">
+      {canVisit("/shipment/list") && (
       <Link href="/shipment/list" className="flex w-fit items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-800">
         <ArrowLeft className="h-3.5 w-3.5" /> Back to My Shipments
       </Link>
+      )}
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_300px] lg:items-start">
         <div className="flex flex-col gap-3 lg:order-2">

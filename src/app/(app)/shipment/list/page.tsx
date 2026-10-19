@@ -100,6 +100,17 @@ const TRACKING_STATUS_LABEL: Record<string, string> = {
 type ShipmentColumn = ColumnDef & { align?: "right"; field?: string; render: (s: Shipment) => ReactNode };
 
 const money = (n: unknown) => Number(n ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+const kg = (n: number) => `${n.toLocaleString(undefined, { maximumFractionDigits: 2 })} kg`;
+
+// Every box counted (a package line with quantity 3 = 3 boxes).
+const actualWeight = (s: Shipment) => (s.packages ?? []).reduce((sum, p) => sum + (Number(p.weight) || 0) * (Number(p.quantity) || 1), 0);
+
+// "40×30×20 cm ×2" per package line — one line each.
+function boxSizes(s: Shipment) {
+  return (s.packages ?? [])
+    .filter((p) => p.length || p.width || p.height)
+    .map((p) => `${Number(p.length) || 0}×${Number(p.width) || 0}×${Number(p.height) || 0} cm${(Number(p.quantity) || 1) > 1 ? ` ×${p.quantity}` : ""}`);
+}
 
 const SHIPMENT_COLUMNS: ShipmentColumn[] = [
   {
@@ -161,6 +172,39 @@ const SHIPMENT_COLUMNS: ShipmentColumn[] = [
     id: "packages",
     label: "Packages",
     render: (s) => `${(s.packages ?? []).reduce((sum, p) => sum + (Number(p.quantity) || 1), 0)} boxes`,
+  },
+  { id: "zone", label: "Zone", render: (s) => (s.zone ? `Zone ${s.zone}` : "-") },
+  {
+    id: "weight",
+    label: "Weight",
+    render: (s) => {
+      const w = actualWeight(s);
+      return w > 0 ? kg(w) : "-";
+    },
+  },
+  {
+    id: "billed_weight",
+    label: "Chargeable Weight",
+    render: (s) => {
+      const bw = Number(s.rate_quote?.billedWeight);
+      return bw > 0 ? kg(bw) : "-";
+    },
+  },
+  {
+    id: "dimensions",
+    label: "Box Dimensions",
+    render: (s) => {
+      const sizes = boxSizes(s);
+      return sizes.length ? (
+        <div className="flex flex-col whitespace-nowrap">
+          {sizes.map((d, i) => (
+            <span key={i}>{d}</span>
+          ))}
+        </div>
+      ) : (
+        "-"
+      );
+    },
   },
   { id: "date", label: "Date", render: (s) => new Date(s.created_at).toLocaleDateString() },
   {
@@ -294,7 +338,7 @@ const SHIPMENT_COLUMNS: ShipmentColumn[] = [
 
 export default function ShipmentListPage() {
   const router = useRouter();
-  const { can, canSeeField } = useAccess();
+  const { can, canSeeField, canVisit } = useAccess();
   const allowedColumns = useMemo(
     () => SHIPMENT_COLUMNS.filter((c) => !c.field || canSeeField("shipment", c.field)),
     [canSeeField],
@@ -419,7 +463,7 @@ export default function ShipmentListPage() {
       .catch(() => {
         // Non-critical — the filter dropdown just stays empty if this fails.
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   // Prev/Next only ever change `page` — reload whenever it does. This also covers the initial
@@ -905,6 +949,7 @@ export default function ShipmentListPage() {
           <button
             type="button"
             onClick={columnsMgr.openModal}
+            disabled={!columnsMgr.loaded}
             className="flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
           >
             <Columns3 className="h-4 w-4" />
@@ -918,6 +963,7 @@ export default function ShipmentListPage() {
           columns={columnsMgr.orderedColumns}
           visible={columnsMgr.visible}
           groupOf={columnsMgr.groupOf}
+          headers={columnsMgr.headers}
           onCancel={columnsMgr.closeModal}
           onSave={columnsMgr.save}
           lockVisibility={!columnsMgr.canManage}
@@ -1004,7 +1050,7 @@ export default function ShipmentListPage() {
                   key={slot.map((c) => c.id).join("+")}
                   className={`px-5 py-2.5 font-medium ${slot.length === 1 && slot[0].align === "right" ? "text-right" : ""}`}
                 >
-                  {slot.map((c) => c.label).join(" / ")}
+                  {columnsMgr.headerOf(slot)}
                 </th>
               ))}
               <th className="px-5 py-2.5 font-medium text-right">Actions</th>
@@ -1377,7 +1423,7 @@ export default function ShipmentListPage() {
                 ? `Pickup scheduled successfully — reference number from ${pickup.carrier}: ${pickup.carrier_reference ?? "-"}`
                 : `Failed to schedule pickup: ${pickup.error_message ?? "unknown error"}`,
             );
-            router.push("/pickup/list");
+            if (canVisit("/pickup/list")) router.push("/pickup/list");
           }}
         />
       )}

@@ -5,6 +5,7 @@ import { Check, FileText, Maximize2, Package, Plane, ReceiptText } from "lucide-
 import {
   DEFAULT_CUSTOMER_DISPLAY_SETTINGS,
   DEFAULT_DISPLAY_LOGO,
+  fetchRemoteDisplayState,
   openDisplayChannel,
   type DisplayMessage,
   type DisplayState,
@@ -15,7 +16,8 @@ import {
 /**
  * The customer-facing 2nd screen, laid out like a POS customer display: the itemised bill on the
  * left; the amount due, the shipment's details and one ad banner on the right. Opened from Create
- * Shipment ("เปิดจอลูกค้า"); it only shows what Create Shipment sends over the BroadcastChannel —
+ * Shipment ("เปิดจอลูกค้า"); it only shows what Create Shipment sends over the BroadcastChannel (or,
+ * on another computer, relays through the API — ?k=<key>) —
  * no login, no API calls, no cost data, and never an estimated delivery time.
  *
  * Everything is sized in em off a root size that follows the screen height, so the same layout
@@ -42,6 +44,32 @@ export default function CustomerDisplayPage() {
     // Ask Create Shipment for what's on screen right now.
     channel.postMessage({ type: "hello" } satisfies DisplayMessage);
     return () => channel.close();
+  }, []);
+
+  // On another computer (opened with ?k=…): poll the state Create Shipment relays through the API.
+  useEffect(() => {
+    const key = new URLSearchParams(window.location.search).get("k");
+    if (!key) return;
+    let version = 0;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const live = await fetchRemoteDisplayState(key, version);
+        if (live && !stopped) {
+          version = live.v;
+          setState({ ...live.state, settings: withDefaults(live.state.settings) });
+        }
+      } catch {
+        // offline for a moment — keep showing the last state
+      }
+      if (!stopped) timer = setTimeout(poll, 1000);
+    };
+    poll();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
   }, []);
 
   useEffect(() => {

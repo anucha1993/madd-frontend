@@ -6,7 +6,9 @@ export type DataScope = "own" | "branch" | "all";
 
 export type Access = {
   is_super_admin: boolean;
-  roles: { id: number; key: string; name: string }[];
+  // Role hierarchy rank — Roles / users are manageable only if ranked strictly below this.
+  level?: number;
+  roles: { id: number; key: string; name: string; level?: number }[];
   permissions: string[];
   fields: Record<string, Record<string, FieldLevel>>;
   scopes: Record<string, DataScope>;
@@ -37,15 +39,19 @@ export function canEditField(access: Access, module: string, group: string): boo
 // Page-level requirements, matched most-specific first. A route not listed here (e.g.
 // /profile) is open to every signed-in user. Keep in sync with the `perm:` middleware in
 // madd-backend/routes/api.php.
-const ROUTE_PERMISSIONS: { pattern: RegExp; permission: string | string[] }[] = [
+// `permission`: any one of them. `all`: every one too — for pages whose API needs two (e.g. the
+// shipment detail page reads GET shipments/{id}, which needs shipment.view as well).
+const ROUTE_PERMISSIONS: { pattern: RegExp; permission: string | string[]; all?: string[] }[] = [
   { pattern: /^\/shipment\/create(\/|$)/, permission: "shipment.create" },
   { pattern: /^\/shipment\/draft(\/|$)/, permission: "shipment.draft" },
-  { pattern: /^\/shipment\/view(\/|$)/, permission: "shipment.detail" },
+  { pattern: /^\/shipment\/view(\/|$)/, permission: "shipment.detail", all: ["shipment.view"] },
   { pattern: /^\/shipment(\/|$)/, permission: "shipment.view" },
   { pattern: /^\/dashboard(\/|$)/, permission: "shipment.view" },
   { pattern: /^\/pickup(\/|$)/, permission: "pickup.view" },
-  { pattern: /^\/billing\/receipts\/new(\/|$)/, permission: "receipt.create" },
-  { pattern: /^\/billing\/receipts\/[^/]+\/edit(\/|$)/, permission: "receipt.edit" },
+  // Issuing picks the shipments to bill (GET shipments — shipment.view).
+  { pattern: /^\/billing\/receipts\/new(\/|$)/, permission: "receipt.create", all: ["shipment.view"] },
+  { pattern: /^\/billing\/receipts\/[^/]+\/edit(\/|$)/, permission: "receipt.edit", all: ["receipt.view"] },
+  { pattern: /^\/billing\/carrier-invoices(\/|$)/, permission: "carrier_invoice.view" },
   { pattern: /^\/billing\/receipts(\/|$)/, permission: "receipt.view" },
   { pattern: /^\/billing\/customers(\/|$)/, permission: ["billing_customer.view", "receipt.create"] },
   { pattern: /^\/tracking(\/|$)/, permission: ["tracking.view", "shipment.view"] },
@@ -53,6 +59,7 @@ const ROUTE_PERMISSIONS: { pattern: RegExp; permission: string | string[] }[] = 
   { pattern: /^\/reports\/summary(\/|$)/, permission: "report.summary" },
   { pattern: /^\/reports\/finance(\/|$)/, permission: "report.finance" },
   { pattern: /^\/reports\/rate-book(\/|$)/, permission: "report.rate_book" },
+  { pattern: /^\/reports\/key-billing(\/|$)/, permission: "report.key_billing" },
   { pattern: /^\/branch(\/|$)/, permission: "branch.view" },
   { pattern: /^\/customer(\/|$)/, permission: "customer.view" },
   { pattern: /^\/config\/markup(\/|$)/, permission: "config.markup" },
@@ -88,6 +95,7 @@ export function routePermission(pathname: string): string | string[] | null {
 }
 
 export function canVisit(access: Access, pathname: string): boolean {
-  const permission = routePermission(pathname);
-  return permission === null || can(access, permission);
+  const rule = ROUTE_PERMISSIONS.find((r) => r.pattern.test(pathname));
+  if (!rule) return true;
+  return can(access, rule.permission) && (rule.all ?? []).every((p) => can(access, p));
 }

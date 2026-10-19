@@ -411,8 +411,8 @@ export default function ReceiptLineTemplatesPage() {
                     <span className="text-slate-400"> → 100.00</span>
                   </div>
                   <p className="mt-2 text-xs text-slate-400">
-                    ดูตัวอย่างจริงได้จาก 2 Template ที่ระบบสร้างไว้ให้แล้ว ("ตัวอย่าง: Freight + Service Charge 12%"
-                    และ "ตัวอย่าง: Freight + Insurance + Service Charge 10%") — กด Edit เพื่อดูวิธีตั้งสูตรได้เลย
+                    ดูตัวอย่างจริงได้จาก 2 Template ที่ระบบสร้างไว้ให้แล้ว (&quot;ตัวอย่าง: Freight + Service Charge 12%&quot;
+                    และ &quot;ตัวอย่าง: Freight + Insurance + Service Charge 10%&quot;) — กด Edit เพื่อดูวิธีตั้งสูตรได้เลย
                   </p>
                 </section>
 

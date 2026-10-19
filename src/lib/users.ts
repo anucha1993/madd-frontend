@@ -16,6 +16,8 @@ export type AppUser = {
   roles: UserRoleRef[];
   can_access_all_branches: boolean;
   branches: Branch[];
+  // The current user ranks above them (or is Super Admin) — only then edit / delete.
+  manageable?: boolean;
 };
 
 export type AppUserInput = {

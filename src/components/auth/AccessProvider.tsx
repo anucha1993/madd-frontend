@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useMemo, type ReactNode } from "react";
-import { can, canEditField, canSeeField, fieldLevel, NO_ACCESS, type Access } from "@/lib/access";
+import { can, canEditField, canSeeField, canVisit, fieldLevel, NO_ACCESS, type Access } from "@/lib/access";
 
 const AccessContext = createContext<Access>(NO_ACCESS);
 
@@ -24,6 +24,8 @@ export function useAccess() {
       fieldLevel: (module: string, group: string) => fieldLevel(access, module, group),
       canSeeField: (module: string, group: string) => canSeeField(access, module, group),
       canEditField: (module: string, group: string) => canEditField(access, module, group),
+      // Whether a page (e.g. "/shipment/view/12") is open to this user — hide links that lead nowhere.
+      canVisit: (pathname: string) => canVisit(access, pathname),
     }),
     [access],
   );

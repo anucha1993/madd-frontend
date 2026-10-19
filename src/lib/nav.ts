@@ -17,6 +17,8 @@ export type NavLeaf = {
 };
 
 export type NavItem = {
+  // Stable id for a group (its renamed name is stored under it) — never change one.
+  id?: string;
   label: string;
   icon: LucideIcon;
   href?: string;
@@ -30,6 +32,7 @@ export const NAV_SECTIONS: NavItem[] = [
     href: "/shipment/list",
   },
   {
+    id: "shipments",
     label: "Shipments",
     icon: Package,
     children: [
@@ -38,6 +41,7 @@ export const NAV_SECTIONS: NavItem[] = [
     ],
   },
   {
+    id: "billing",
     label: "Billing",
     icon: Receipt,
     children: [
@@ -52,6 +56,7 @@ export const NAV_SECTIONS: NavItem[] = [
     href: "/tracking",
   },
   {
+    id: "reports",
     label: "Reports",
     icon: FileBarChart2,
     children: [
@@ -74,6 +79,7 @@ export const NAV_SECTIONS: NavItem[] = [
     href: "/customer",
   },
   {
+    id: "management",
     label: "Management",
     icon: Layers,
     children: [
@@ -93,6 +99,7 @@ export const NAV_SECTIONS: NavItem[] = [
     ],
   },
   {
+    id: "settings",
     label: "System Settings",
     icon: Settings,
     children: [

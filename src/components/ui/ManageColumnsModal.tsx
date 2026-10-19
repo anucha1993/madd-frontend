@@ -1,9 +1,9 @@
 "use client";
 
 import { useMemo, useState, type DragEvent } from "react";
-import { GripVertical, Link2Off, Search } from "lucide-react";
+import { GripVertical, Link2Off, Pencil, Search } from "lucide-react";
 import Modal from "@/components/ui/Modal";
-import type { ColumnDef, ProfileMeta } from "@/hooks/useManageColumns";
+import { headerKey, type ColumnDef, type ProfileMeta } from "@/hooks/useManageColumns";
 import type { ColumnProfile } from "@/lib/columnProfiles";
 
 type Props = {
@@ -12,8 +12,10 @@ type Props = {
   visible: Record<string, boolean>;
   // Column id -> group key; ids sharing the same key stack into one combined column.
   groupOf: Record<string, string>;
+  // Custom header names (column id / group id → name) — handy for combined columns.
+  headers?: Record<string, string>;
   onCancel: () => void;
-  onSave: (visible: Record<string, boolean>, order: string[], groupOf: Record<string, string>) => void;
+  onSave: (visible: Record<string, boolean>, order: string[], groupOf: Record<string, string>, headers: Record<string, string>) => void;
   // Regular users: columns come from an admin-defined profile — no show/hide ticks, only
   // re-arranging (order / stacking) is allowed.
   lockVisibility?: boolean;
@@ -45,13 +47,16 @@ const GROUP_STYLES = [
 
 type DropZone = "before" | "after" | "merge";
 
-export default function ManageColumnsModal({ columns, visible, groupOf, onCancel, onSave, lockVisibility, onReset, profileEditor }: Props) {
+export default function ManageColumnsModal({ columns, visible, groupOf, headers: initialHeaders, onCancel, onSave, lockVisibility, onReset, profileEditor }: Props) {
   const [draft, setDraft] = useState<Record<string, boolean>>(visible);
   const [order, setOrder] = useState<string[]>(() => columns.map((c) => c.id));
   const [groups, setGroups] = useState<Record<string, string>>(groupOf);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ id: string; zone: DropZone } | null>(null);
   const [query, setQuery] = useState("");
+  const [headers, setHeaders] = useState<Record<string, string>>(initialHeaders ?? {});
+  // Header-name editors opened with the pencil (rows with a name already show theirs).
+  const [editingHeaders, setEditingHeaders] = useState<Record<string, boolean>>({});
 
   const editingProfile = profileEditor?.profile ?? null;
   const [profileName, setProfileName] = useState(editingProfile?.name ?? "");
@@ -157,7 +162,7 @@ export default function ManageColumnsModal({ columns, visible, groupOf, onCancel
     setBusy(true);
     setError("");
     try {
-      await profileEditor.onSaveProfile({ name: profileName.trim(), role_ids: profileRoleIds }, draft, order, groups, asNew);
+      await profileEditor.onSaveProfile({ name: profileName.trim(), role_ids: profileRoleIds, headers }, draft, order, groups, asNew);
     } catch (err) {
       setError(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ");
       setBusy(false);
@@ -291,6 +296,17 @@ export default function ManageColumnsModal({ columns, visible, groupOf, onCancel
                         )}
                         {c.label}
                       </label>
+                      {c.id === members[0].id && !editingHeaders[headerKey(c.id, groups)] && !headers[headerKey(c.id, groups)] && (
+                        <button
+                          type="button"
+                          onClick={() => setEditingHeaders((prev) => ({ ...prev, [headerKey(c.id, groups)]: true }))}
+                          className="rounded p-1 text-slate-300 hover:bg-white hover:text-brand-navy"
+                          title="ตั้งชื่อหัวคอลัมน์"
+                          aria-label={`ตั้งชื่อหัวคอลัมน์ ${c.label}`}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                       {groupId && (
                         <button
                           type="button"
@@ -309,6 +325,25 @@ export default function ManageColumnsModal({ columns, visible, groupOf, onCancel
                     Shown as one column: {members.map((m) => m.label).join(" / ")}
                   </p>
                 )}
+                {(() => {
+                  const hk = headerKey(members[0].id, groups);
+                  const defaultHeader = members.map((m) => m.label).join(" / ");
+                  if (!editingHeaders[hk] && !headers[hk]) return null;
+                  return (
+                    <label className="ml-7 flex items-center gap-1.5 pb-0.5 pr-1.5 text-[11px] text-slate-500">
+                      <Pencil className="h-3 w-3 shrink-0 text-brand-navy" />
+                      <span className="shrink-0">หัวคอลัมน์</span>
+                      <input
+                        value={headers[hk] ?? ""}
+                        maxLength={60}
+                        autoFocus={!headers[hk]}
+                        onChange={(e) => setHeaders((prev) => ({ ...prev, [hk]: e.target.value }))}
+                        placeholder={defaultHeader}
+                        className="min-w-0 flex-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 outline-none focus:border-brand-navy"
+                      />
+                    </label>
+                  );
+                })()}
               </div>
             );
           })
@@ -355,7 +390,7 @@ export default function ManageColumnsModal({ columns, visible, groupOf, onCancel
               ) : (
                 <button
                   type="button"
-                  onClick={() => onSave(draft, order, groups)}
+                  onClick={() => onSave(draft, order, groups, headers)}
                   className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
                 >
                   ใช้เฉพาะฉัน
@@ -373,7 +408,7 @@ export default function ManageColumnsModal({ columns, visible, groupOf, onCancel
           ) : (
             <button
               type="button"
-              onClick={() => onSave(draft, order, groups)}
+              onClick={() => onSave(draft, order, groups, headers)}
               className="rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
             >
               Save

@@ -50,7 +50,7 @@ export default function EditReceiptPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const receiptId = Number(params.id);
-  const { can } = useAccess();
+  const { can, canVisit } = useAccess();
 
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [loading, setLoading] = useState(true);
@@ -352,7 +352,7 @@ export default function EditReceiptPage() {
           <Card
             title="Buyer"
             right={
-              isTaxInvoice ? (
+              isTaxInvoice && canVisit("/billing/customers") ? (
                 <Link href="/billing/customers" target="_blank" className="text-xs font-medium text-brand-amber hover:underline">
                   + Manage Customers
                 </Link>

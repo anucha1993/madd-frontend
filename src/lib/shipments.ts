@@ -220,6 +220,8 @@ export type Shipment = {
   ref_insurance_no?: string | null;
   ref_purchase_no?: string | null;
   rate_quote?: Record<string, unknown> | null;
+  // Only from listShipments(): the quoted zone, else the destination's zone in /config/countries.
+  zone?: string | null;
   label_storage_key: string | null;
   // UPS's Shipper's Copy waybill/receipt (ControlLogReceipt) — proof of booking, kept separate
   // from the label(s) actually stuck on the boxes. Always null for DHL (no equivalent document).
@@ -346,6 +348,15 @@ export const uploadCommercialInvoiceFile = (file: File) => {
 };
 
 export const getShipment = (id: number) => apiClient.get<Shipment>(`/shipments/${id}`);
+
+/** Exact shipments through the list API (shipment.view) — 20 per request, kept in the given order. */
+export async function getShipmentsByIds(ids: number[]): Promise<Shipment[]> {
+  const chunks: number[][] = [];
+  for (let i = 0; i < ids.length; i += 20) chunks.push(ids.slice(i, i + 20));
+  const pages = await Promise.all(chunks.map((c) => apiClient.get<PaginatedShipments>(`/shipments?ids=${c.join(",")}`)));
+  const byId = new Map(pages.flatMap((p) => p.data).map((s) => [s.id, s]));
+  return ids.map((id) => byId.get(id)).filter((s): s is Shipment => !!s);
+}
 
 // Pieces come back from the carrier as a flat list expanded in package/quantity order (see
 // ShipmentController) — rebuild the same expansion here so each tracking number can be labeled

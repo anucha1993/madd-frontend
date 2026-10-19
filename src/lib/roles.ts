@@ -36,6 +36,10 @@ export type Role = {
   description: string | null;
   is_super_admin: boolean;
   is_system: boolean;
+  // Hierarchy rank: only Roles below the editor's own can be edited / handed out.
+  level: number;
+  // The current user ranks above it (or is Super Admin) — see RoleHierarchy on the backend.
+  manageable?: boolean;
   permissions: string[];
   field_access: Record<string, Record<string, FieldLevel>>;
   data_scopes: Record<string, DataScope>;
@@ -47,6 +51,7 @@ export type RoleInput = {
   name: string;
   description?: string | null;
   is_super_admin?: boolean;
+  level?: number;
   permissions: string[];
   field_access: Record<string, Record<string, FieldLevel>>;
   data_scopes: Record<string, DataScope>;

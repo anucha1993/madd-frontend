@@ -207,7 +207,7 @@ function groupReceipts(receipts: Receipt[]): ReceiptPairRow[] {
 }
 
 export default function ReceiptsListPage() {
-  const { can } = useAccess();
+  const { can, canVisit } = useAccess();
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(20);
@@ -433,7 +433,7 @@ export default function ReceiptsListPage() {
     <div>
       <div className="mb-6 flex items-start justify-between">
         <PageHeader title="Receipts & Tax Invoices" description="All documents issued so far" />
-        {can("receipt.create") && (
+        {can("receipt.create") && canVisit("/shipment/list") && (
           <Link
             href="/shipment/list"
             className="flex items-center gap-2 rounded-lg bg-brand-navy-dark px-4 py-2 text-sm font-semibold text-white hover:bg-brand-navy-dark/90"
@@ -485,6 +485,7 @@ export default function ReceiptsListPage() {
             <button
               type="button"
               onClick={columnsMgr.openModal}
+            disabled={!columnsMgr.loaded}
               className="flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
             >
               <Columns3 className="h-4 w-4" />
@@ -613,6 +614,7 @@ export default function ReceiptsListPage() {
           columns={columnsMgr.orderedColumns}
           visible={columnsMgr.visible}
           groupOf={columnsMgr.groupOf}
+          headers={columnsMgr.headers}
           onCancel={columnsMgr.closeModal}
           onSave={columnsMgr.save}
           lockVisibility={!columnsMgr.canManage}
@@ -688,7 +690,7 @@ export default function ReceiptsListPage() {
                     key={slot.map((c) => c.id).join("+")}
                     className={`px-5 py-3 font-medium ${slot.length === 1 && slot[0].align === "right" ? "text-right" : ""}`}
                   >
-                    {slot.map((c) => c.label).join(" / ")}
+                    {columnsMgr.headerOf(slot)}
                   </th>
                 ))}
                 <th className="px-5 py-3 font-medium text-right">Actions</th>
@@ -749,6 +751,7 @@ export default function ReceiptsListPage() {
                                 <p className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
                                   Receipt
                                 </p>
+                                {canVisit(`/billing/receipts/${row.cashReceipt.id}/edit`) && (
                                 <Link
                                   href={`/billing/receipts/${row.cashReceipt.id}/edit`}
                                   onClick={() => setActionsMenuKey(null)}
@@ -757,6 +760,7 @@ export default function ReceiptsListPage() {
                                   <FileText className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                                   View/Edit
                                 </Link>
+                                )}
                                 {can("receipt.print") && (
                                   <button
                                     type="button"
@@ -777,6 +781,7 @@ export default function ReceiptsListPage() {
                                 <p className="mt-1 border-t border-slate-100 px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
                                   Tax Invoice
                                 </p>
+                                {canVisit(`/billing/receipts/${row.taxInvoice.id}/edit`) && (
                                 <Link
                                   href={`/billing/receipts/${row.taxInvoice.id}/edit`}
                                   onClick={() => setActionsMenuKey(null)}
@@ -785,6 +790,7 @@ export default function ReceiptsListPage() {
                                   <FileCheck className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                                   View/Edit
                                 </Link>
+                                )}
                                 {can("receipt.print") && (
                                   <button
                                     type="button"

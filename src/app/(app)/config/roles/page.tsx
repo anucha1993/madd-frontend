@@ -18,7 +18,7 @@ import {
   type RoleInput,
 } from "@/lib/roles";
 
-type Draft = RoleInput & { id?: number; is_system?: boolean; users_count?: number };
+type Draft = RoleInput & { id?: number; is_system?: boolean; users_count?: number; manageable?: boolean };
 
 // One tickable item inside a permission row's picker — either an action permission
 // ("shipment.void") or a view/hide field group ("rate.markup").
@@ -41,6 +41,8 @@ function toDraft(role: Role): Draft {
     name: role.name,
     description: role.description,
     is_super_admin: role.is_super_admin,
+    level: role.level,
+    manageable: role.manageable,
     is_system: role.is_system,
     users_count: role.users_count,
     permissions: [...role.permissions],
@@ -58,7 +60,7 @@ function emptyDraft(registry: PermissionRegistry): Draft {
     }
     if (def.scope) data_scopes[module] = "branch";
   }
-  return { key: "", name: "", description: "", is_super_admin: false, permissions: [], field_access, data_scopes };
+  return { key: "", name: "", description: "", is_super_admin: false, level: 10, permissions: [], field_access, data_scopes };
 }
 
 /** "ดู, จอง, Void & 2 more" — like the summary next to each toggle. */
@@ -225,6 +227,7 @@ export default function RolesPage() {
         name: draft.name.trim(),
         description: draft.description?.trim() || null,
         is_super_admin: draft.is_super_admin,
+        level: draft.level,
         permissions: draft.permissions,
         field_access: draft.field_access,
         data_scopes: draft.data_scopes,
@@ -254,7 +257,10 @@ export default function RolesPage() {
 
   if (loading && !registry) return <PageLoading label="Loading Roles..." />;
 
-  const locked = !canEdit || !!draft?.is_super_admin;
+  // An existing Role is editable only if it ranks below me (Super Admin: always); a new one always.
+  const canEditDraft = canEdit && (!draft?.id || !!draft.manageable);
+  const myLevel = access.is_super_admin ? Infinity : (access.level ?? 0);
+  const locked = !canEditDraft || !!draft?.is_super_admin;
   const superRoleCount = roles.filter((r) => r.is_super_admin).length;
   // Mirrors RoleController::destroy() — explained next to the button instead of failing on click.
   const deleteBlockedReason = !draft?.id
@@ -466,9 +472,10 @@ export default function RolesPage() {
                     <ShieldCheck className="h-4 w-4 text-slate-400" />
                   )}
                   <span className="font-medium text-slate-700">{role.name}</span>
+                  {!role.manageable && <span className="ml-auto text-xs" title="ระดับเท่ากับหรือสูงกว่าคุณ — แก้ไม่ได้">🔒</span>}
                 </div>
                 <div className="mt-1 text-xs text-slate-400">
-                  {role.users_count ?? 0} ผู้ใช้ ·{" "}
+                  {role.is_super_admin ? "สูงสุด" : `Lv ${role.level ?? 0}`} · {role.users_count ?? 0} ผู้ใช้ ·{" "}
                   {role.is_super_admin ? "ทุกสิทธิ์" : `${role.permissions.length}/${totalActions} สิทธิ์`}
                 </div>
               </button>
@@ -493,28 +500,51 @@ export default function RolesPage() {
         {/* Editor */}
         {draft && registry && (
           <div className="flex min-w-0 flex-col gap-5">
+            {canEdit && draft.id && !draft.manageable && (
+              <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                🔒 Role นี้ระดับเท่ากับหรือสูงกว่าคุณ — ดูได้อย่างเดียว (แก้ / ลบได้เฉพาะผู้ที่ระดับสูงกว่า หรือ Super Admin)
+              </p>
+            )}
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="flex flex-col gap-1.5">
                   <span className="text-sm font-medium text-slate-600">ชื่อ Role</span>
-                  <input value={draft.name} onChange={(e) => update({ name: e.target.value })} disabled={!canEdit} className={inputClass} />
+                  <input value={draft.name} onChange={(e) => update({ name: e.target.value })} disabled={!canEditDraft} className={inputClass} />
                 </label>
                 <label className="flex flex-col gap-1.5">
                   <span className="text-sm font-medium text-slate-600">รหัส (key)</span>
                   <input
                     value={draft.key ?? ""}
                     onChange={(e) => update({ key: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "_") })}
-                    disabled={!canEdit || !!draft.id}
+                    disabled={!canEditDraft || !!draft.id}
                     placeholder="เช่น cashier"
                     className={inputClass}
                   />
                 </label>
-                <label className="flex flex-col gap-1.5 sm:col-span-2">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-sm font-medium text-slate-600">
+                    ระดับ (Level){" "}
+                    <span className="font-normal text-slate-400">
+                      — สูงกว่าจัดการ Role / ผู้ใช้ที่ต่ำกว่าได้{access.is_super_admin ? "" : ` · ต้องต่ำกว่าของคุณ (${myLevel})`}
+                    </span>
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={access.is_super_admin ? 999 : Math.max(0, myLevel - 1)}
+                    value={draft.is_super_admin ? "" : (draft.level ?? 10)}
+                    placeholder={draft.is_super_admin ? "สูงสุด (Super Admin)" : undefined}
+                    onChange={(e) => update({ level: Number(e.target.value) })}
+                    disabled={!canEditDraft || !!draft.is_super_admin}
+                    className={inputClass}
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
                   <span className="text-sm font-medium text-slate-600">คำอธิบาย</span>
                   <input
                     value={draft.description ?? ""}
                     onChange={(e) => update({ description: e.target.value })}
-                    disabled={!canEdit}
+                    disabled={!canEditDraft}
                     className={inputClass}
                   />
                 </label>
@@ -522,7 +552,7 @@ export default function RolesPage() {
               <div className="mt-4 flex items-start gap-3">
                 <Toggle
                   on={!!draft.is_super_admin}
-                  disabled={!canEdit || !access.is_super_admin}
+                  disabled={!canEditDraft || !access.is_super_admin}
                   onChange={(on) => update({ is_super_admin: on })}
                 />
                 <span className="text-sm text-slate-700">
@@ -584,7 +614,7 @@ export default function RolesPage() {
               </>
             )}
 
-            {canEdit && (
+            {canEditDraft && (
               <div className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur">
                 <div className="flex min-w-0 items-center gap-3">
                   {draft.id && can("user.roles_delete") && (

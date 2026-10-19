@@ -62,7 +62,7 @@ export default function TrackingSyncPage() {
     Promise.all([loadSettings(), loadLogs()])
       .catch(() => {})
       .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   async function handleSave() {

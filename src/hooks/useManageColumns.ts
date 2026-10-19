@@ -12,12 +12,16 @@ import {
 
 export type ColumnDef = { id: string; label: string };
 
-export type ProfileMeta = { name: string; role_ids: number[] };
+export type ProfileMeta = { name: string; role_ids: number[]; headers?: Record<string, string> };
+
+/** Which header name a slot uses: its group's (combined column) or its own column id's. */
+export const headerKey = (firstId: string, groupOf: Record<string, string>) => groupOf[firstId] ?? firstId;
 
 const STORAGE_PREFIX = "manageColumns:";
 const ORDER_SUFFIX = ":order";
 const GROUP_SUFFIX = ":groups";
 const PROFILE_SUFFIX = ":profile";
+const HEADERS_SUFFIX = ":headers";
 
 // WHICH columns a page shows is decided by an admin through Column Profiles (server-side, per
 // Role — see ColumnProfileController); each user may only re-arrange (order / stack) a
@@ -63,6 +67,13 @@ function mergeOrder(saved: string[] | null, ids: string[]): string[] {
   return [...kept, ...ids.filter((id) => !kept.includes(id))];
 }
 
+// Header names only for a column / group that still exists; blanks dropped.
+function filterHeaders(headers: Record<string, string> | [] | null | undefined, ids: string[], groupOf: Record<string, string>): Record<string, string> {
+  if (!headers || Array.isArray(headers)) return {};
+  const keys = new Set([...ids, ...Object.values(groupOf)]);
+  return Object.fromEntries(Object.entries(headers).filter(([k, v]) => keys.has(k) && typeof v === "string" && v.trim() !== ""));
+}
+
 // Group entries whose column is no longer present are dropped.
 function filterGroups(groups: Record<string, string> | [] | null | undefined, ids: string[]): Record<string, string> {
   if (!groups || Array.isArray(groups)) return {};
@@ -106,13 +117,11 @@ export function useManageColumns<T extends ColumnDef>(storageKey: string, column
   }
 
   useEffect(() => {
-    let cancelled = false;
+    // Each page passes one fixed key, so a repeated request (React re-running the effect) is just
+    // as valid — whichever answer arrives first is used instead of discarding the first one.
     listColumnProfiles(storageKey)
-      .then((res) => !cancelled && setServer(res))
-      .catch(() => !cancelled && setServer({ can_manage: false, profiles: [], roles: [] }));
-    return () => {
-      cancelled = true;
-    };
+      .then(setServer)
+      .catch(() => setServer((prev) => prev ?? { can_manage: false, profiles: [], roles: [] }));
   }, [storageKey]);
 
   const canManage = !!server?.can_manage;
@@ -138,22 +147,29 @@ export function useManageColumns<T extends ColumnDef>(storageKey: string, column
         return {
           order,
           groupOf: defaultGroups,
+          headers: filterHeaders(activeProfile.headers, profileIds, defaultGroups),
           visible: Object.fromEntries(allIds.map((id) => [id, profileIds.includes(id)])),
         };
       }
       const key = `${STORAGE_PREFIX}${storageKey}:p${activeProfile.id}`;
       const savedGroups = readJson<Record<string, string>>(key + GROUP_SUFFIX);
+      const groupOf = savedGroups ? filterGroups(savedGroups, profileIds) : defaultGroups;
+      // The user's own header names, else the profile's.
+      const savedHeaders = readJson<Record<string, string>>(key + HEADERS_SUFFIX);
       return {
         order: mergeOrder(readJson<string[]>(key + ORDER_SUFFIX), profileIds),
-        groupOf: savedGroups ? filterGroups(savedGroups, profileIds) : defaultGroups,
+        groupOf,
+        headers: filterHeaders(savedHeaders ?? activeProfile.headers, profileIds, groupOf),
         visible: Object.fromEntries(profileIds.map((id) => [id, true])),
       };
     }
     const key = STORAGE_PREFIX + storageKey;
     const savedVisible = canManage ? readJson<Record<string, boolean>>(key) : null;
+    const groupOf = filterGroups(readJson<Record<string, string>>(key + GROUP_SUFFIX), allIds);
     return {
       order: mergeOrder(readJson<string[]>(key + ORDER_SUFFIX), allIds),
-      groupOf: filterGroups(readJson<Record<string, string>>(key + GROUP_SUFFIX), allIds),
+      groupOf,
+      headers: filterHeaders(readJson<Record<string, string>>(key + HEADERS_SUFFIX), allIds, groupOf),
       visible: Object.fromEntries(allIds.map((id) => [id, savedVisible?.[id] ?? true])),
     };
   }, [activeProfile, canManage, storageKey, allIds, byId, version]);
@@ -171,17 +187,25 @@ export function useManageColumns<T extends ColumnDef>(storageKey: string, column
 
   const columnSlots = buildSlots(layout.order, layout.groupOf, byId, isVisible);
 
+  /** A slot's header: its custom name, else its columns' labels joined. */
+  function headerOf(slot: ColumnDef[]) {
+    return layout.headers[headerKey(slot[0].id, layout.groupOf)] || slot.map((c) => c.label).join(" / ");
+  }
+
   /** Personal arrangement (regular users) / personal show-hide (managers with no profile). */
-  function save(nextVisible: Record<string, boolean>, nextOrder: string[], nextGroupOf: Record<string, string>) {
+  function save(nextVisible: Record<string, boolean>, nextOrder: string[], nextGroupOf: Record<string, string>, nextHeaders: Record<string, string> = {}) {
+    const headers = filterHeaders(nextHeaders, nextOrder, nextGroupOf);
     if (activeProfile) {
       const key = `${STORAGE_PREFIX}${storageKey}:p${activeProfile.id}`;
       writeJson(key + ORDER_SUFFIX, nextOrder);
       writeJson(key + GROUP_SUFFIX, nextGroupOf);
+      writeJson(key + HEADERS_SUFFIX, headers);
     } else {
       const key = STORAGE_PREFIX + storageKey;
       if (canManage) writeJson(key, nextVisible);
       writeJson(key + ORDER_SUFFIX, nextOrder);
       writeJson(key + GROUP_SUFFIX, nextGroupOf);
+      writeJson(key + HEADERS_SUFFIX, headers);
     }
     setVersion((v) => v + 1);
     setIsOpen(false);
@@ -190,7 +214,7 @@ export function useManageColumns<T extends ColumnDef>(storageKey: string, column
   /** Drops the user's own arrangement for the current profile, back to its default. */
   function resetLayout() {
     const key = activeProfile ? `${STORAGE_PREFIX}${storageKey}:p${activeProfile.id}` : STORAGE_PREFIX + storageKey;
-    removeKeys(key + ORDER_SUFFIX, key + GROUP_SUFFIX);
+    removeKeys(key + ORDER_SUFFIX, key + GROUP_SUFFIX, key + HEADERS_SUFFIX);
     setVersion((v) => v + 1);
     setIsOpen(false);
   }
@@ -203,7 +227,8 @@ export function useManageColumns<T extends ColumnDef>(storageKey: string, column
   /** Managers only — `asNew` saves a copy instead of overwriting the active profile. */
   async function saveProfile(meta: ProfileMeta, nextVisible: Record<string, boolean>, nextOrder: string[], nextGroupOf: Record<string, string>, asNew: boolean) {
     const cols = nextOrder.filter((id) => nextVisible[id]);
-    const payload = { name: meta.name, role_ids: meta.role_ids, columns: cols, group_of: filterGroups(nextGroupOf, cols) };
+    const group_of = filterGroups(nextGroupOf, cols);
+    const payload = { name: meta.name, role_ids: meta.role_ids, columns: cols, group_of, headers: filterHeaders(meta.headers, cols, group_of) };
     const saved =
       activeProfile && !asNew
         ? await updateColumnProfile(activeProfile.id, payload)
@@ -226,10 +251,13 @@ export function useManageColumns<T extends ColumnDef>(storageKey: string, column
     orderedColumns,
     columnSlots,
     groupOf: layout.groupOf,
+    headers: layout.headers,
+    headerOf,
     visible: layout.visible,
     isVisible,
     isOpen,
-    openModal: () => setIsOpen(true),
+    // Not before the profiles load — until then a manager would look like a regular user.
+    openModal: () => server && setIsOpen(true),
     closeModal: () => setIsOpen(false),
     save,
     resetLayout,

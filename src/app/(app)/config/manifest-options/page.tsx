@@ -95,7 +95,7 @@ export default function ManifestOptionsPage() {
 
   useEffect(() => {
     loadOptions(activeGroup);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [activeGroup]);
 
   async function loadOptions(group: ManifestOptionGroup) {

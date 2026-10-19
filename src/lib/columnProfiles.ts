@@ -8,6 +8,8 @@ export type ColumnProfile = {
   columns: string[];
   // PHP serializes an empty map as [] — treat that the same as {}.
   group_of: Record<string, string> | [];
+  // Custom header names — column id, or group id for a combined column. Null/[] = the labels.
+  headers?: Record<string, string> | [] | null;
   role_ids?: number[];
 };
 
@@ -22,6 +24,7 @@ export type ColumnProfileInput = {
   name: string;
   columns: string[];
   group_of: Record<string, string>;
+  headers?: Record<string, string>;
   role_ids: number[];
 };
 

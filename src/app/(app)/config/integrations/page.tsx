@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { HardDrive, Plug, Sparkles } from "lucide-react";
+import { useAccess } from "@/components/auth/AccessProvider";
 import PageHeader from "@/components/layout/PageHeader";
 import PageLoading from "@/components/ui/PageLoading";
 import { getAiSettings, toggleAi, updateAiSettings, type AiSettings } from "@/lib/ai";
@@ -13,6 +14,8 @@ const inputClass =
   "w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-sm text-slate-800 outline-none transition focus:border-brand-navy focus:bg-white focus:ring-2 focus:ring-brand-navy/15";
 
 export default function IntegrationsPage() {
+  // restcountries.com is a Countries setting (config.countries) — only shown to who can change it.
+  const canCountries = useAccess().can("config.countries");
   const [loading, setLoading] = useState(true);
 
   const [settings, setSettings] = useState<RestCountriesSettings | null>(null);
@@ -44,7 +47,8 @@ export default function IntegrationsPage() {
   const [visionKeyError, setVisionKeyError] = useState("");
 
   useEffect(() => {
-    Promise.all([getRestCountriesSettings(), getAiSettings(), getR2Settings(), getGoogleVisionSettings()])
+    // restcountries.com belongs to Countries (its own permission) — a 403 there must not blank the other cards.
+    Promise.all([getRestCountriesSettings().catch(() => null), getAiSettings(), getR2Settings(), getGoogleVisionSettings()])
       .then(([rc, ai, r2, vision]) => {
         setSettings(rc);
         setAiSettings(ai);
@@ -161,6 +165,7 @@ export default function IntegrationsPage() {
         <PageLoading label="Loading Integrations..." />
       ) : (
         <div className="flex flex-col gap-4">
+          {canCountries && (
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-3 flex items-center gap-2">
               <Plug className="h-4 w-4 text-slate-400" />
@@ -206,6 +211,7 @@ export default function IntegrationsPage() {
             {keyError && <p className="mt-2 text-sm text-red-600">{keyError}</p>}
           </div>
 
+          )}
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-3 flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-slate-400" />

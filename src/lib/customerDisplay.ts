@@ -2,10 +2,14 @@ import { apiClient } from "./apiClient";
 import { API_URL } from "./apiUrl";
 
 /**
- * Customer Display — a 2nd screen facing the customer, on the same computer as Create Shipment.
- * The two windows talk through a BroadcastChannel (browser only, no server). Create Shipment builds
- * a whitelisted DisplayState (sell prices only — never cost, markup, formulas or raw carrier data)
- * and posts it on every change; the display page only renders what it receives.
+ * Customer Display — a 2nd screen facing the customer. Create Shipment builds a whitelisted
+ * DisplayState (sell prices only — never cost, markup, formulas or raw carrier data) and sends it
+ * on every change; the display page only renders what it receives.
+ *
+ * - Same computer: the two windows talk through a BroadcastChannel (no server).
+ * - Another computer (a tablet / PC at the counter): Create Shipment also relays the state
+ *   through the API under this counter's random key, and the display opened with
+ *   /customer-display?k=<key> polls it (see CustomerDisplayController::live).
  */
 
 // No transit time — estimated delivery days are never shown to the customer.
@@ -134,3 +138,50 @@ export type DisplayMessage = { type: "state"; state: DisplayState } | { type: "h
 
 export const openDisplayChannel = (): BroadcastChannel | null =>
   typeof window !== "undefined" && "BroadcastChannel" in window ? new BroadcastChannel(CUSTOMER_DISPLAY_CHANNEL) : null;
+
+// ---- Display on another computer (relayed through the API) ----
+
+const REMOTE_KEY_STORAGE = "madd-customer-display-remote-key";
+
+/** This counter's remote key, or null when the remote display is off. */
+export function getRemoteDisplayKey(): string | null {
+  try {
+    return localStorage.getItem(REMOTE_KEY_STORAGE);
+  } catch {
+    return null;
+  }
+}
+
+/** Turns the remote display on with a new random 32-char key (an old link stops working). */
+export function createRemoteDisplayKey(): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const key = Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("");
+  try {
+    localStorage.setItem(REMOTE_KEY_STORAGE, key);
+  } catch {
+    // storage blocked — the key still works until this page reloads
+  }
+  return key;
+}
+
+export function clearRemoteDisplayKey() {
+  try {
+    localStorage.removeItem(REMOTE_KEY_STORAGE);
+  } catch {
+    // ignore
+  }
+}
+
+export const remoteDisplayUrl = (key: string) =>
+  typeof window === "undefined" ? "" : `${window.location.origin}${CUSTOMER_DISPLAY_PATH}?k=${key}`;
+
+export const pushRemoteDisplayState = (key: string, state: DisplayState) =>
+  apiClient.put<{ v: number }>(`/customer-display/live/${key}`, { state });
+
+/** The display's poll (no login) — null when there's nothing newer than `since`. */
+export async function fetchRemoteDisplayState(key: string, since: number): Promise<{ v: number; state: DisplayState } | null> {
+  const res = await fetch(`${API_URL}/customer-display/live/${encodeURIComponent(key)}?v=${since}`, { headers: { Accept: "application/json" } });
+  if (res.status === 204 || !res.ok) return null;
+  return res.json();
+}

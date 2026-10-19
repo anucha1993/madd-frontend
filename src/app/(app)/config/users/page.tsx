@@ -128,7 +128,8 @@ export default function UsersPage() {
                         : "-"}
                   </td>
                   <td className="px-5 py-3 text-right">
-                    {can("user.edit") && (
+                    {/* Only users ranked below me (Super Admin: everyone) — see RoleHierarchy. */}
+                    {can("user.edit") && user.manageable !== false && (
                       <button
                         type="button"
                         onClick={() => setModalUser(user)}
@@ -138,7 +139,7 @@ export default function UsersPage() {
                         <Pencil className="h-4 w-4" />
                       </button>
                     )}
-                    {can("user.delete") && (
+                    {can("user.delete") && user.manageable !== false && (
                       <button
                         type="button"
                         onClick={() => handleDelete(user)}
@@ -149,6 +150,11 @@ export default function UsersPage() {
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
+                    )}
+                    {user.manageable === false && (can("user.edit") || can("user.delete")) && (
+                      <span className="text-xs text-slate-400" title="ระดับ Role เท่ากับหรือสูงกว่าคุณ — แก้ / ลบไม่ได้">
+                        🔒
+                      </span>
                     )}
                   </td>
                 </tr>
@@ -165,7 +171,7 @@ export default function UsersPage() {
         >
           <UserForm
             branches={branches}
-            roles={roles}
+            roles={roles.filter((r) => r.manageable !== false)}
             initial={modalUser === "new" ? null : modalUser}
             onSubmit={handleSubmit}
             onCancel={() => setModalUser(null)}

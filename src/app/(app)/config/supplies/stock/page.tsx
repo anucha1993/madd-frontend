@@ -1,5 +1,6 @@
 "use client";
 
+import ShipmentLink from "@/components/shipment/ShipmentLink";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
@@ -699,12 +700,9 @@ function MovementsTab({
                   </td>
                   <td className="max-w-xs px-4 py-2.5 text-slate-600">
                     {m.shipment ? (
-                      <Link
-                        href={`/shipment/view/${m.shipment.id}`}
-                        className="text-brand-navy hover:underline"
-                      >
+                      <ShipmentLink id={m.shipment.id} className="text-brand-navy hover:underline">
                         {m.shipment.tracking_number ?? `#${m.shipment.id}`}
-                      </Link>
+                      </ShipmentLink>
                     ) : (
                       m.reference
                     )}

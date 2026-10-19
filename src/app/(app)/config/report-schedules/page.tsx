@@ -19,7 +19,6 @@ import {
 import { listBranches, type Branch } from "@/lib/branches";
 import { listAgentAccounts, type AgentAccount } from "@/lib/agentAccounts";
 
-const FREQUENCY_LABEL: Record<string, string> = { daily: "Daily", weekly: "Weekly", monthly: "Monthly" };
 const RANGE_LABEL: Record<string, string> = { daily: "Today", weekly: "This Week", monthly: "This Month", yearly: "This Year" };
 const DAY_OF_WEEK_LABEL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 

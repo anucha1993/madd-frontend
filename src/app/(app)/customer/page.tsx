@@ -46,7 +46,7 @@ export default function CustomerPage() {
   useEffect(() => {
     const handle = setTimeout(() => loadAll(search.trim() || undefined), 300);
     return () => clearTimeout(handle);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [search]);
 
   // Only used for creating a brand-new customer — editing an existing one happens inline

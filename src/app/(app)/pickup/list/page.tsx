@@ -1,7 +1,7 @@
 "use client";
 
+import ShipmentLink from "@/components/shipment/ShipmentLink";
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { Eye, History, Loader2, PackageCheck, RefreshCw, Search, XCircle } from "lucide-react";
 import { TimelineModal } from "@/components/timeline/Timeline";
 import PageHeader from "@/components/layout/PageHeader";
@@ -208,14 +208,14 @@ export default function PickupListPage() {
                         <div className="mt-0.5 flex flex-wrap gap-x-1.5 gap-y-0.5 text-xs">
                           {(p.shipments ?? []).map((s, i) => (
                             <span key={s.id}>
-                              <Link
-                                href={`/shipment/view/${s.id}`}
+                              <ShipmentLink
+                                id={s.id}
                                 className={`font-mono hover:underline ${s.picked_up_at ? "text-emerald-600" : "text-brand-navy-dark"}`}
                                 title={s.picked_up_at ? `รับแล้ว ${new Date(s.picked_up_at).toLocaleString()}` : "ยังไม่ถูกรับ"}
                               >
                                 {s.picked_up_at && "✓ "}
                                 {s.tracking_number ?? `#${s.id}`}
-                              </Link>
+                              </ShipmentLink>
                               {i < (p.shipments ?? []).length - 1 && <span className="text-slate-300">,</span>}
                             </span>
                           ))}
@@ -371,13 +371,13 @@ export default function PickupListPage() {
               <dt className="mb-1 text-xs text-slate-400">Shipments ({(viewingPickup.shipments ?? []).length})</dt>
               <dd className="flex flex-col gap-1">
                 {(viewingPickup.shipments ?? []).map((s) => (
-                  <Link
+                  <ShipmentLink
                     key={s.id}
-                    href={`/shipment/view/${s.id}`}
+                    id={s.id}
                     className="rounded-lg border border-slate-200 px-3 py-1.5 font-mono text-brand-navy-dark hover:bg-slate-50"
                   >
                     {s.tracking_number ?? `#${s.id}`}
-                  </Link>
+                  </ShipmentLink>
                 ))}
               </dd>
             </div>
