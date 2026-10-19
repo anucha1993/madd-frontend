@@ -19,6 +19,8 @@ import {
   type RateBookRun,
   type RateBookSettings,
   type RateBookSettingsResponse,
+  type RateBookSubColumn,
+  UPS_ECO_COLUMNS,
 } from "@/lib/rateBook";
 
 const inputClass =
@@ -245,6 +247,66 @@ export default function RateBookPage() {
     } finally {
       setDownloading(null);
     }
+  }
+
+  // Columns of the rate table (zones + extra columns like JP / AU / USA PR), for the sub-column pickers.
+  const columnKeys = (() => {
+    const c = settings?.carriers[carrierTab];
+    if (!c) return [] as string[];
+    return [...Object.keys(c.zone_countries ?? {}), ...(c.extra_columns ?? []).map((x) => x.label)];
+  })();
+
+  function renderSubColumns(list: RateBookSubColumn[], onChange: (next: RateBookSubColumn[]) => void, isUpsEco: boolean) {
+    const set = (i: number, patch: Partial<RateBookSubColumn>) => onChange(list.map((x, k) => (k === i ? { ...x, ...patch } : x)));
+    return (
+      <div className="mt-2">
+        <h4 className="mb-1.5 text-xs font-semibold text-slate-600">
+          คอลัมน์ในตาราง SAVE
+          {list.length === 0 && <span className="ml-2 font-normal text-slate-400">— ว่าง = ทุกคอลัมน์</span>}
+        </h4>
+        <div className="flex flex-col gap-1.5">
+          {list.map((col, i) => (
+            <div key={i} className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+              อยู่ใต้
+              <select value={col.under} onChange={(e) => set(i, { under: e.target.value })} className={`${inputClass} w-24`}>
+                {columnKeys.map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
+              </select>
+              ราคาไปปลายทางของ
+              <select value={col.source} onChange={(e) => set(i, { source: e.target.value })} className={`${inputClass} w-24`}>
+                {columnKeys.map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
+              </select>
+              หัวคอลัมน์
+              <input value={col.label} onChange={(e) => set(i, { label: e.target.value })} className={`${inputClass} w-28`} placeholder="Eco" />
+              <button type="button" onClick={() => onChange(list.filter((_, k) => k !== i))} className="rounded p-1 text-red-500 hover:bg-red-50" aria-label="ลบคอลัมน์">
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="mt-2 flex gap-3">
+          <button
+            type="button"
+            onClick={() => onChange([...list, { under: columnKeys[0] ?? "", source: columnKeys[0] ?? "", label: "" }])}
+            className="flex items-center gap-1 text-xs font-medium text-brand-navy hover:underline"
+          >
+            <Plus className="h-3.5 w-3.5" /> เพิ่มคอลัมน์
+          </button>
+          {isUpsEco && (
+            <button type="button" onClick={() => onChange(UPS_ECO_COLUMNS.map((c) => ({ ...c })))} className="text-xs font-medium text-slate-500 hover:underline">
+              ตั้งตามไฟล์ตัวอย่าง (JP · 5 US/CA · 7 · 8 · 9)
+            </button>
+          )}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -502,9 +564,9 @@ export default function RateBookPage() {
             <p className="mb-5 text-xs text-slate-400">ตั้งแต่ 10.01 kg ขึ้นไปไม่มีขายน้ำหนักทศนิยม — ระบบปัดขึ้นเป็น kg เต็มเสมอ (10.01 → 11)</p>
 
             <div className="mb-6 rounded-xl border border-slate-200 p-4">
-              <h3 className="mb-1 text-sm font-semibold text-slate-700">บริการเพิ่ม (ตารางเรทแยก)</h3>
+              <h3 className="mb-1 text-sm font-semibold text-slate-700">บริการเพิ่ม (แทรกในตารางเรท)</h3>
               <p className="mb-3 text-xs text-slate-400">
-                ดึงราคาอีกบริการ เช่น UPS 08 Worldwide Expedited ชื่อ &quot;Eco&quot; — ใน Excel แทรกเป็นอีกส่วนต่อท้ายในชีต SAVE / SELLING (แบบชีต ALL ของไฟล์ตัวอย่าง) · ช่วงน้ำหนักว่าง = ไม่ดึงประเภทนั้น
+                ดึงราคาอีกบริการ เช่น UPS 08 Worldwide Expedited ชื่อ &quot;Eco&quot; — แทรกเป็นคอลัมน์ย่อยในตาราง SAVE ข้างคอลัมน์ที่เลือก (เช่น JP | Eco JP) แบบไฟล์ UPS SAMPLE · ช่วงน้ำหนักว่าง = ไม่ดึงประเภทนั้น
               </p>
               {(carrier.extra_services ?? []).map((svc, si) => {
                 const setSvc = (patch: Partial<typeof svc>) =>
@@ -542,6 +604,7 @@ export default function RateBookPage() {
                         {renderBands(svc.bands[key], (next) => setSvc({ bands: { ...svc.bands, [key]: next } }))}
                       </div>
                     ))}
+                    {renderSubColumns(svc.columns ?? [], (next) => setSvc({ columns: next }), svc.code === "08" && carrierTab === "UPS")}
                   </div>
                 );
               })}

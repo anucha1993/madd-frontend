@@ -165,7 +165,9 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
   const year = (run?.finished_at ?? run?.started_at ?? "").slice(0, 4);
   // Calc sheets: the main service's ("1", "2" …), then each extra service's ("ECO 1" …) — as in the Excel.
   const calcSheets = [services[0], ...extraServices].flatMap((s) =>
-    columns.map((c) => ({ id: `${s.key}::${c.key}`, label: s.main ? c.key : `${s.label.toUpperCase()} ${c.key}`, service: s.key, column: c })),
+    columns
+      .filter((c) => s.main || (rowsByService.get(s.key) ?? []).some((r) => r.zone === c.key))
+      .map((c) => ({ id: `${s.key}::${c.key}`, label: s.main ? c.key : `${s.label.toUpperCase()} ${c.key}`, service: s.key, column: c })),
   );
   const activeSheet = ["card", "doc", "chart"].includes(sheet) || calcSheets.some((t) => t.id === sheet) ? sheet : "card";
   const chartColumns = columns;
@@ -193,92 +195,134 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
 
   // ---- UPS "SAVE" -------------------------------------------------------------------------------
   function renderUpsSave() {
-    const main = services[0];
-    const all = lines(typeRows(main.key, "box"));
-    const pages: { svc: string; title: string | null; lines: Line[]; after?: string }[] = [
-      { svc: main.key, title: "UPS Regular Express Saver", lines: all.filter((l) => !l.rate && l.kg <= 10) },
-      { svc: main.key, title: null, lines: all.filter((l) => !l.rate && l.kg > 10 && l.kg <= 24), after: "See Next Page for  25 Kg up" },
-      { svc: main.key, title: main.label, lines: all.filter((l) => !l.rate && l.kg > 24 && l.kg <= 45) },
-      { svc: main.key, title: main.label, lines: all.filter((l) => !l.rate && l.kg > 45) },
-      { svc: main.key, title: main.label, lines: all.filter((l) => l.rate) },
-      // Extra services (e.g. Eco) below Saver on the same sheet, like the sample's "ALL" sheet.
-      ...extraServices.flatMap((s) => {
-        const sl = lines(typeRows(s.key, "box"));
-        return [
-          { svc: s.key, title: s.label, lines: sl.filter((l) => !l.rate) },
-          { svc: s.key, title: s.label, lines: sl.filter((l) => l.rate) },
-        ];
-      }),
+    const main = services[0].key;
+    const all = lines(typeRows(main, "box"));
+    // Extra services (e.g. Eco) are sub-columns of this same table, next to the column each is
+    // priced for — JP | Eco JP, 5 | Eco/US CA, 7 | Eco … — like the UPS SAMPLE SAVE sheet.
+    const lineKey = (l: Line) => `${l.rate ? "r" : "k"}:${l.label}`;
+    const subsOf = (key: string) =>
+      extraServices.flatMap((s) => {
+        const byKey = new Map(lines(typeRows(s.key, "box")).map((l) => [lineKey(l), l]));
+        return (s.columns ?? []).filter((c) => c.under === key).map((c) => ({ svc: s.key, source: c.source, label: c.label, byKey }));
+      });
+    const groups = columns.map((c) => ({ column: c, subs: subsOf(c.key) }));
+    const pages: { title: string | null; lines: Line[]; after?: string }[] = [
+      { title: "UPS Regular Express Saver", lines: all.filter((l) => !l.rate && l.kg <= 10) },
+      { title: null, lines: all.filter((l) => !l.rate && l.kg > 10 && l.kg <= 24), after: "See Next Page for  25 Kg up" },
+      { title: services[0].label, lines: all.filter((l) => !l.rate && l.kg > 24 && l.kg <= 45) },
+      { title: services[0].label, lines: all.filter((l) => !l.rate && l.kg > 45) },
+      { title: services[0].label, lines: all.filter((l) => l.rate) },
     ];
     return (
       <>
         {pages
           .filter((p) => p.lines.length)
-          .map((page, pi) => (
-            <div key={pi} className="mb-8">
-              <div className="mb-1 flex items-end text-lg font-bold text-slate-900">
-                <span className="flex-1 text-center">{page.title}</span>
-                <span className="pr-2">UPS</span>
-              </div>
-              <table className="w-full border-collapse text-center text-sm tabular-nums">
-                <thead>
-                  <tr style={{ background: GREY }}>
-                    <th className={`${cellBorder} w-20 px-1 py-1 text-[11px] leading-tight`}>
-                      Weight /<br />
-                      Zone
-                    </th>
-                    {columns.map((c) => (
-                      <th key={c.key} className={`${cellBorder} px-1 py-1.5 text-base font-bold leading-tight`} title={c.country ?? undefined}>
-                        {c.extra ? c.label.split(" ").map((w, i) => <div key={i}>{w}</div>) : c.key}
+          .map((page, pi) => {
+            // Sub-columns only where the extra service has prices (Eco: from 25 kg).
+            const split = groups.some((g) => g.subs.some((sub) => page.lines.some((l) => sub.byKey.has(lineKey(l)))));
+            return (
+              <div key={pi} className="mb-8">
+                <div className="mb-1 flex items-end text-lg font-bold text-slate-900">
+                  <span className="flex-1 text-center">{page.title}</span>
+                  <span className="pr-2">UPS</span>
+                </div>
+                <table className="w-full border-collapse text-center text-sm tabular-nums">
+                  <thead>
+                    <tr style={{ background: GREY }}>
+                      <th rowSpan={split ? 2 : 1} className={`${cellBorder} w-20 px-1 py-1 text-[11px] leading-tight`}>
+                        Weight /<br />
+                        Zone
                       </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {page.lines.map((line, li) => {
-                    if (!line.rate && line.kg === 31) {
-                      return (
-                        <Fragment key={line.key}>
-                          <tr>
-                            <td colSpan={columns.length + 1} className="px-2 py-1 text-left text-xs font-bold text-slate-800">
-                              **for each box weighing 31 kgs and up , 1,200 THB is applied for AHC ( Additional Handling Charge )
-                            </td>
-                          </tr>
-                          {saveRow(page.svc, line, li)}
-                        </Fragment>
-                      );
-                    }
-                    return saveRow(page.svc, line, li);
-                  })}
-                </tbody>
-              </table>
-              {page.after && <p className="mt-2 text-sm font-bold text-slate-800">{page.after}</p>}
-            </div>
-          ))}
+                      {groups.map(({ column: c, subs }) => (
+                        <th
+                          key={c.key}
+                          colSpan={1 + subs.length}
+                          rowSpan={split && subs.length ? 1 : split ? 2 : 1}
+                          className={`${cellBorder} px-1 py-1.5 text-base font-bold leading-tight`}
+                          title={c.country ?? undefined}
+                        >
+                          {c.extra ? c.label.split(" ").map((w, i) => <div key={i}>{w}</div>) : c.key}
+                        </th>
+                      ))}
+                    </tr>
+                    {split && (
+                      <tr style={{ background: GREY }}>
+                        {groups
+                          .filter((g) => g.subs.length)
+                          .map(({ column: c, subs }) => (
+                            <Fragment key={c.key}>
+                              <th className={`${cellBorder} px-1 py-0.5 text-[11px] font-semibold`}>{services[0].label}</th>
+                              {subs.map((sub, k) => (
+                                <th key={k} className={`${cellBorder} px-1 py-0.5 text-[11px] font-semibold`}>
+                                  {sub.label}
+                                </th>
+                              ))}
+                            </Fragment>
+                          ))}
+                      </tr>
+                    )}
+                  </thead>
+                  <tbody>
+                    {page.lines.map((line, li) => {
+                      const row = saveRow(main, line, li, groups, split, lineKey);
+                      if (!line.rate && line.kg === 31) {
+                        return (
+                          <Fragment key={line.key}>
+                            <tr>
+                              <td colSpan={groups.reduce((n, g) => n + 1 + g.subs.length, 1)} className="px-2 py-1 text-left text-xs font-bold text-slate-800">
+                                **for each box weighing 31 kgs and up , 1,200 THB is applied for AHC ( Additional Handling Charge )
+                              </td>
+                            </tr>
+                            {row}
+                          </Fragment>
+                        );
+                      }
+                      return row;
+                    })}
+                  </tbody>
+                </table>
+                {page.after && <p className="mt-2 text-sm font-bold text-slate-800">{page.after}</p>}
+              </div>
+            );
+          })}
         <p className="text-xs text-slate-600">*800 THB or 30 THB / Kg may be charged for Remoted Area Depending on Destination Postal code or city</p>
       </>
     );
   }
 
-  function saveRow(svc: string, line: Line, li: number) {
+  type SaveGroup = { column: RateBookColumn; subs: { svc: string; source: string; label: string; byKey: Map<string, Line> }[] };
+
+  function saveRow(svc: string, line: Line, li: number, groups: SaveGroup[], split: boolean, lineKey: (l: Line) => string) {
     const thick = !line.rate && line.kg === 5 ? "border-b-2 border-b-slate-800" : "";
+    const cell = (key: string, p: ReturnType<typeof price>, shade: boolean, colSpan = 1) => (
+      <td
+        key={key}
+        colSpan={colSpan}
+        title={p.title}
+        className={`${cellBorder} px-2 py-0.5 text-right ${p.error ? "text-red-500" : "text-slate-800"}`}
+        style={shade ? { background: GREY } : undefined}
+      >
+        {p.text}
+      </td>
+    );
     return (
       <tr key={line.key + li} className={thick}>
         <td className={`${cellBorder} px-2 py-0.5 ${line.rate ? "font-semibold" : ""}`}>
           {typeof line.label === "number" ? line.label.toFixed(1) : line.label}
         </td>
-        {columns.map((c) => {
-          const p = price(svc, "box", line, c, 0);
-          return (
-            <td
-              key={c.key}
-              title={p.title}
-              className={`${cellBorder} px-2 py-0.5 text-right ${p.error ? "text-red-500" : "text-slate-800"}`}
-              style={c.extra ? { background: GREY } : undefined}
-            >
-              {p.text}
-            </td>
-          );
+        {groups.flatMap(({ column: c, subs }) => {
+          const main = price(svc, "box", line, c, 0);
+          // No sub-columns on this page: the main price spans its whole group, like the sample.
+          if (!split) return [cell(c.key, main, c.extra, 1 + subs.length)];
+          return [
+            cell(c.key, main, c.extra),
+            ...subs.map((sub, k) => {
+              const subLine = sub.byKey.get(lineKey(line));
+              const col = columns.find((x) => x.key === sub.source);
+              const p = subLine && col ? price(sub.svc, "box", subLine, col, 0) : { text: "", title: undefined, error: false };
+              return cell(`${c.key}-sub-${k}`, p, false);
+            }),
+          ];
         })}
       </tr>
     );

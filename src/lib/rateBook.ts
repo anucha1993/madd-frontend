@@ -16,7 +16,26 @@ export type RateBookZoneAddress = { iso2: string; city: string; postcode: string
 
 // Another service priced in the same book (e.g. UPS 08 Worldwide Expedited shown as "Eco"), with
 // its own weight bands — leave a package type's bands empty to skip it.
-export type RateBookExtraService = { code: string; label: string; bands: Record<RateBookPackageType, RateBookBand[]> };
+// A sub-column of an extra service in the main table: sits `under` a main column, priced to the
+// destination of the `source` column (Eco/US CA under zone 5 is priced to USA PR).
+export type RateBookSubColumn = { under: string; source: string; label: string };
+
+// The UPS SAMPLE SAVE sheet's Eco columns (same as RateBookSettings::UPS_ECO_COLUMNS).
+export const UPS_ECO_COLUMNS: RateBookSubColumn[] = [
+  { under: "JP", source: "JP", label: "Eco JP" },
+  { under: "5", source: "USA PR", label: "Eco/US CA" },
+  { under: "7", source: "7", label: "Eco" },
+  { under: "8", source: "8", label: "Eco" },
+  { under: "9", source: "9", label: "Eco" },
+];
+
+export type RateBookExtraService = {
+  code: string;
+  label: string;
+  bands: Record<RateBookPackageType, RateBookBand[]>;
+  // [] = a sub-column under every column.
+  columns?: RateBookSubColumn[];
+};
 
 export type RateBookCarrierSettings = {
   enabled: boolean;
@@ -25,6 +44,7 @@ export type RateBookCarrierSettings = {
   service_label: string;
   extra_services: RateBookExtraService[];
   bands: Record<RateBookPackageType, RateBookBand[]>;
+  extra_columns?: { label: string; after?: string }[];
   account_rules: RateBookAccountRule[];
   zone_countries: Record<string, RateBookZoneAddress>;
 };
@@ -135,7 +155,7 @@ export type RateBookColumn = {
 };
 
 // A service a run priced; rows belong to it by service_code (anything else = the main one).
-export type RateBookService = { key: string; label: string; main: boolean; codes: string[] };
+export type RateBookService = { key: string; label: string; main: boolean; codes: string[]; columns?: RateBookSubColumn[] };
 
 export type RateBookRowsResponse = {
   vat_percent: number;
