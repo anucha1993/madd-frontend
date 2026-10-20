@@ -90,6 +90,9 @@ export type RateQuote = {
   currency?: string;
   billedWeight?: string | number | null;
   billedWeightUnit?: string | null;
+  // Sold at this minimum weight (the service's range starts above the shipment — /config/agent-accounts);
+  // the booking still sends the real weight.
+  minChargeWeight?: number | null;
   // DHL only — dimensional/volumetric weight it calculated from the package dims, shown
   // alongside billedWeight since DHL bills whichever of the two is greater.
   volumetricWeight?: number | null;

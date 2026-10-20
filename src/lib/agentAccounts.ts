@@ -32,7 +32,8 @@ export type AgentAccount = {
   service_weight_ranges: ServiceWeightRange[] | null;
 };
 
-export type ServiceWeightRange = { service_code: string; min: number | null; max: number | null };
+// min_charge: under `min` still sold, priced at this weight (null = not sold under the range).
+export type ServiceWeightRange = { service_code: string; min: number | null; max: number | null; min_charge?: number | null };
 
 export type AgentAccountInput = {
   agent_id: number;

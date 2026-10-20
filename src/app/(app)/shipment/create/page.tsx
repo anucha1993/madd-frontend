@@ -4229,6 +4229,11 @@ export default function ShipmentCreatePage() {
                             {hasCpmPackage && totalRealBookingWeight !== totalShipmentWeight && (
                               <span className="text-amber-600"> · Book จริง: {totalRealBookingWeight.toLocaleString()} kg (CPM)</span>
                             )}
+                            {r.minChargeWeight != null && (
+                              <span className="text-amber-600" title="Service นี้ขายขั้นต่ำตามที่ตั้งใน Agent Accounts — ตอนจองจริงส่งน้ำหนักจริง">
+                                {" "}· คิดราคาขั้นต่ำ {r.minChargeWeight} kg (จองจริงตามน้ำหนักจริง)
+                              </span>
+                            )}
                           </p>
                         )}
                         {canSeeBreakdown && r.chargeBreakdown && r.chargeBreakdown.length > 0 && (

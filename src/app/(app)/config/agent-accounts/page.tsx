@@ -714,6 +714,7 @@ export default function AgentAccountsPage() {
                                   className="ml-1 whitespace-nowrap rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700"
                                 >
                                   {r.service_code}: {weightRangeText(r.min, r.max) ?? "ทุกน้ำหนัก"}
+                                  {r.min_charge != null && ` · ขั้นต่ำ ${r.min_charge} kg`}
                                 </span>
                               ))}
                           </td>

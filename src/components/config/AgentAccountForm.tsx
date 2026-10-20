@@ -5,7 +5,12 @@ import { Plus, Trash2 } from "lucide-react";
 import type { Agent, AgentAccount, AgentAccountInput } from "@/lib/agentAccounts";
 import { serviceOptionsFor } from "@/lib/carrierServices";
 
-type RangeDraft = { service_code: string; min: string; max: string };
+type RangeDraft = {
+  service_code: string;
+  min: string;
+  max: string;
+  min_charge: string;
+};
 
 type Props = {
   agents: Agent[];
@@ -29,7 +34,12 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
   const [rateMaxWeight, setRateMaxWeight] = useState(initial?.rate_max_weight != null ? String(initial.rate_max_weight) : "");
   // Per-service ranges — none = every service uses the range above.
   const [serviceRanges, setServiceRanges] = useState<RangeDraft[]>(() =>
-    (initial?.service_weight_ranges ?? []).map((r) => ({ service_code: r.service_code, min: r.min != null ? String(r.min) : "", max: r.max != null ? String(r.max) : "" })),
+    (initial?.service_weight_ranges ?? []).map((r) => ({
+      service_code: r.service_code,
+      min: r.min != null ? String(r.min) : "",
+      max: r.max != null ? String(r.max) : "",
+      min_charge: r.min_charge != null ? String(r.min_charge) : "",
+    })),
   );
   const [perService, setPerService] = useState((initial?.service_weight_ranges ?? []).length > 0);
   const agentCode = agents.find((a) => a.id === agentId)?.agent_code;
@@ -60,6 +70,11 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
       setError(`Service ${bad.service_code}: น้ำหนักสูงสุดต้องมากกว่าน้ำหนักต่ำสุด`);
       return;
     }
+    const badMin = ranges.find((r) => r.min_charge !== "" && (r.min === "" || (r.max !== "" && Number(r.min_charge) > Number(r.max))));
+    if (badMin) {
+      setError(`Service ${badMin.service_code}: ราคาขั้นต่ำต้องมีน้ำหนักเริ่มต้นของช่วง และไม่เกินน้ำหนักสูงสุด`);
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -80,6 +95,7 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
           service_code: r.service_code,
           min: r.min === "" ? null : Number(r.min),
           max: r.max === "" ? null : Number(r.max),
+          min_charge: r.min_charge === "" ? null : Number(r.min_charge),
         })),
       });
     } catch (err) {
@@ -144,12 +160,7 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
       <div className="grid grid-cols-2 gap-4">
         <label className="flex flex-col gap-1.5">
           <span className={labelClass}>Basic Auth Username</span>
-          <input
-            type="text"
-            value={basicAuthUsername}
-            onChange={(e) => setBasicAuthUsername(e.target.value)}
-            className={inputClass}
-          />
+          <input type="text" value={basicAuthUsername} onChange={(e) => setBasicAuthUsername(e.target.value)} className={inputClass} />
         </label>
         <label className="flex flex-col gap-1.5">
           <span className={labelClass}>Basic Auth Password</span>
@@ -170,7 +181,8 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
           <option value="test">Test (ทดสอบบน Sandbox — ไม่คิดเงินจริง)</option>
         </select>
         <p className="text-xs text-slate-400">
-          กำหนดว่า Client ID/Secret หรือ Basic Auth ของบัญชีนี้เป็นของ Sandbox (Test) หรือ Production จริง — ระบบจะเรียก URL ของ UPS/DHL คนละสภาพแวดล้อมตามค่านี้
+          กำหนดว่า Client ID/Secret หรือ Basic Auth ของบัญชีนี้เป็นของ Sandbox (Test) หรือ Production จริง — ระบบจะเรียก URL ของ UPS/DHL
+          คนละสภาพแวดล้อมตามค่านี้
         </p>
       </label>
 
@@ -224,7 +236,8 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
             />
           </div>
           <p className="text-xs text-slate-400">
-            เช่น 0 – 10 = ดึงราคาจากบัญชีนี้เฉพาะ Shipment ที่น้ำหนักคิดเงิน (รวมน้ำหนักตามขนาด) ไม่เกิน 10 kg · ว่างทั้งสองช่อง = ทุกน้ำหนัก
+            เช่น 0 – 10 = ดึงราคาจากบัญชีนี้เฉพาะ Shipment ที่น้ำหนักคิดเงิน (รวมน้ำหนักตามขนาด) ไม่เกิน 10 kg · ว่างทั้งสองช่อง =
+            ทุกน้ำหนัก
           </p>
 
           {serviceOptions.length > 0 && (
@@ -240,7 +253,15 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
                     checked={perService}
                     onChange={() => {
                       setPerService(true);
-                      if (serviceRanges.length === 0) setServiceRanges([{ service_code: serviceOptions[0].code, min: "", max: "" }]);
+                      if (serviceRanges.length === 0)
+                        setServiceRanges([
+                          {
+                            service_code: serviceOptions[0].code,
+                            min: "",
+                            max: "",
+                            min_charge: "",
+                          },
+                        ]);
                     }}
                     className="accent-brand-amber"
                   />
@@ -250,44 +271,68 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
               {perService && (
                 <>
                   {serviceRanges.map((r, i) => {
-                    const set = (patch: Partial<RangeDraft>) => setServiceRanges((prev) => prev.map((x, k) => (k === i ? { ...x, ...patch } : x)));
+                    const set = (patch: Partial<RangeDraft>) =>
+                      setServiceRanges((prev) => prev.map((x, k) => (k === i ? { ...x, ...patch } : x)));
                     return (
-                      <div key={i} className="flex items-center gap-2">
-                        <select value={r.service_code} onChange={(e) => set({ service_code: e.target.value })} className={`${compactInput} min-w-0 flex-1`}>
-                          {serviceOptions.map((o) => (
-                            <option key={o.code} value={o.code}>
-                              {o.code} · {o.label}
-                            </option>
-                          ))}
-                        </select>
-                        <input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          value={r.min}
-                          onChange={(e) => set({ min: e.target.value })}
-                          placeholder="ตั้งแต่"
-                          className={`${compactInput} w-20 shrink-0`}
-                        />
-                        <span className="text-slate-400">–</span>
-                        <input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          value={r.max}
-                          onChange={(e) => set({ max: e.target.value })}
-                          placeholder="ถึง"
-                          title="ว่าง = ไม่จำกัด"
-                          className={`${compactInput} w-20 shrink-0`}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setServiceRanges((prev) => prev.filter((_, k) => k !== i))}
-                          className="shrink-0 rounded p-1.5 text-red-500 hover:bg-red-50"
-                          aria-label="ลบ"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                      <div key={i} className="flex flex-col gap-1.5 rounded-lg bg-slate-50 p-2">
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={r.service_code}
+                            onChange={(e) => set({ service_code: e.target.value })}
+                            className={`${compactInput} min-w-0 flex-1`}
+                          >
+                            {serviceOptions.map((o) => (
+                              <option key={o.code} value={o.code}>
+                                {o.code} · {o.label}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={r.min}
+                            onChange={(e) => set({ min: e.target.value })}
+                            placeholder="ตั้งแต่"
+                            className={`${compactInput} w-20 shrink-0`}
+                          />
+                          <span className="text-slate-400">–</span>
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={r.max}
+                            onChange={(e) => set({ max: e.target.value })}
+                            placeholder="ถึง"
+                            title="ว่าง = ไม่จำกัด"
+                            className={`${compactInput} w-20 shrink-0`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setServiceRanges((prev) => prev.filter((_, k) => k !== i))}
+                            className="shrink-0 rounded p-1.5 text-red-500 hover:bg-red-50"
+                            aria-label="ลบ"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                        {r.min !== "" && (
+                          <label className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                            ต่ำกว่า {r.min} kg:
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={r.min_charge}
+                              onChange={(e) => set({ min_charge: e.target.value })}
+                              placeholder="ไม่ขาย"
+                              className={`${compactInput} w-24`}
+                            />
+                            {r.min_charge === ""
+                              ? "ว่าง = ไม่ขาย Service นี้"
+                              : `kg = ขายขั้นต่ำ ${r.min_charge} kg (จองจริงตามน้ำหนักจริง)`}
+                          </label>
+                        )}
                       </div>
                     );
                   })}
@@ -296,7 +341,13 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
                     onClick={() =>
                       setServiceRanges((prev) => [
                         ...prev,
-                        { service_code: serviceOptions.find((o) => !prev.some((p) => p.service_code === o.code))?.code ?? serviceOptions[0].code, min: "", max: "" },
+                        {
+                          service_code:
+                            serviceOptions.find((o) => !prev.some((p) => p.service_code === o.code))?.code ?? serviceOptions[0].code,
+                          min: "",
+                          max: "",
+                          min_charge: "",
+                        },
                       ])
                     }
                     className="flex w-fit items-center gap-1 text-sm font-medium text-brand-navy hover:underline"
@@ -304,7 +355,8 @@ export default function AgentAccountForm({ agents, initial, onSubmit, onCancel }
                     <Plus className="h-4 w-4" /> เพิ่ม Service
                   </button>
                   <p className="text-xs text-slate-400">
-                    เช่น 08 Worldwide Expedited 10.01 – 70 = ดึง Expedited จากบัญชีนี้เฉพาะ 10.01–70 kg · Service ที่ไม่ได้ระบุใช้ช่วงด้านบน
+                    เช่น 08 Worldwide Expedited 25.01 – 70 = ขาย Expedited จากบัญชีนี้ 25.01–70 kg · ต่ำกว่า 25.01 ใส่ 25 = ยังขาย
+                    แต่คิดราคาที่ 25 kg · Service ที่ไม่ได้ระบุใช้ช่วงด้านบน
                   </p>
                 </>
               )}
