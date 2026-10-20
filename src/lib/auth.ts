@@ -7,6 +7,9 @@ export type AuthUser = {
   email: string;
   can_access_all_branches?: boolean;
   branches?: { id: number; name: string; code?: string | null; nickname?: string | null }[];
+  // The branch this user belongs to — every Shipment they book is booked under it.
+  branch_id?: number | null;
+  home_branch?: { id: number; name: string; code?: string | null; nickname?: string | null } | null;
   access?: Access;
 };
 

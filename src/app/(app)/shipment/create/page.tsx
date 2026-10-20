@@ -449,9 +449,13 @@ export default function ShipmentCreatePage() {
 
   // Staff creating this shipment / their branch — shown in Order Summary as a final review.
   const currentUser = getUser();
-  const currentUserBranchLabel = currentUser?.can_access_all_branches
-    ? "ทุกสาขา"
-    : currentUser?.branches?.map((b) => branchLabel(b)).join(", ") || "-";
+  // Their own branch (/config/users "สาขา") — the server books under it whatever they may see.
+  const homeBranch = currentUser?.home_branch ?? null;
+  const currentUserBranchLabel = homeBranch
+    ? branchLabel(homeBranch)
+    : currentUser?.can_access_all_branches
+      ? "ทุกสาขา"
+      : currentUser?.branches?.map((b) => branchLabel(b)).join(", ") || "-";
   // Booking branch: users with one branch are bound to it (server side); users who can book
   // for several / all branches must pick one before confirming.
   const [allBranches, setAllBranches] = useState<{ id: number; name: string; code?: string | null; nickname?: string | null }[]>([]);
@@ -467,14 +471,14 @@ export default function ShipmentCreatePage() {
     };
   }, []);
   useEffect(() => {
-    if (!currentUser?.can_access_all_branches) return;
+    if (!currentUser?.can_access_all_branches || currentUser?.home_branch) return;
     listBranches()
       .then((rows) => setAllBranches(rows.filter((b) => b.status)))
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const bookingBranchOptions = currentUser?.can_access_all_branches ? allBranches : (currentUser?.branches ?? []);
-  const needsBranchChoice = bookingBranchOptions.length > 1;
+  const needsBranchChoice = !homeBranch && bookingBranchOptions.length > 1;
   const [bookingBranchId, setBookingBranchId] = useState<number | null>(null);
   const bookingAttemptKey = useRef<string | null>(null);
 

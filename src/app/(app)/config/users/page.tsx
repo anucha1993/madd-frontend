@@ -121,11 +121,19 @@ export default function UsersPage() {
                     </div>
                   </td>
                   <td className="px-5 py-3 text-slate-500">
-                    {user.can_access_all_branches
-                      ? "ทุกสาขา"
-                      : user.branches.length > 0
-                          ? user.branches.map((b) => branchLabel(b)).join(", ")
-                        : "-"}
+                    {user.home_branch && (
+                      <div className="font-medium text-slate-700" title="สาขาที่สังกัด — ออก Shipment ในนามสาขานี้">
+                        {branchLabel(user.home_branch)}
+                      </div>
+                    )}
+                    <div className={user.home_branch ? "text-xs text-slate-400" : ""}>
+                      {user.home_branch ? "ดูข้อมูล: " : ""}
+                      {user.can_access_all_branches
+                        ? "ทุกสาขา"
+                        : user.branches.length > 0
+                            ? user.branches.map((b) => branchLabel(b)).join(", ")
+                          : "-"}
+                    </div>
                   </td>
                   <td className="px-5 py-3 text-right">
                     {/* Only users ranked below me (Super Admin: everyone) — see RoleHierarchy. */}

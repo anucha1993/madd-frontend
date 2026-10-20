@@ -24,6 +24,8 @@ export default function UserForm({ branches, roles, initial, onSubmit, onCancel 
   );
   const [canAccessAll, setCanAccessAll] = useState(initial?.can_access_all_branches ?? false);
   const [branchIds, setBranchIds] = useState<number[]>(initial?.branches.map((b) => b.id) ?? []);
+  // The branch they belong to — Shipments are booked under it. Separate from what they may see.
+  const [homeBranchId, setHomeBranchId] = useState<number | null>(initial?.branch_id ?? null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -51,7 +53,7 @@ export default function UserForm({ branches, roles, initial, onSubmit, onCancel 
       setError("กรุณาเลือกอย่างน้อย 1 Role");
       return;
     }
-    if (!canAccessAll && branchIds.length === 0) {
+    if (!canAccessAll && branchIds.length === 0 && !homeBranchId) {
       setError("กรุณาเลือกอย่างน้อย 1 สาขา หรือเปิด \"เข้าถึงได้ทุกสาขา\"");
       return;
     }
@@ -65,7 +67,9 @@ export default function UserForm({ branches, roles, initial, onSubmit, onCancel 
         password: password.trim() || undefined,
         role_ids: roleIds,
         can_access_all_branches: canAccessAll,
-        branch_ids: branchIds,
+        // Their own branch is always one they can see.
+        branch_ids: homeBranchId && !branchIds.includes(homeBranchId) ? [...branchIds, homeBranchId] : branchIds,
+        branch_id: homeBranchId,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
@@ -127,7 +131,29 @@ export default function UserForm({ branches, roles, initial, onSubmit, onCancel 
         </div>
       </div>
 
+      <label className="flex flex-col gap-1.5">
+        <span className="text-sm font-medium text-slate-600">สาขา (สังกัด)</span>
+        <select
+          value={homeBranchId ?? ""}
+          onChange={(e) => {
+            const id = e.target.value ? Number(e.target.value) : null;
+            setHomeBranchId(id);
+            if (id && !branchIds.includes(id)) setBranchIds((prev) => [...prev, id]);
+          }}
+          className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none focus:border-brand-navy focus:bg-white focus:ring-2 focus:ring-brand-navy/15"
+        >
+          <option value="">— ไม่ระบุ (เลือกสาขาเองตอนออก Shipment) —</option>
+          {branches.map((b) => (
+            <option key={b.id} value={b.id}>
+              {branchLabel(b)}
+            </option>
+          ))}
+        </select>
+        <span className="text-xs text-slate-400">ผู้ใช้อยู่สาขานี้ — ออก Shipment ในนามสาขานี้เสมอ (ใบเสร็จ เลขเอกสาร สต็อก)</span>
+      </label>
+
       <div className="rounded-lg border border-slate-200 p-3">
+        <p className="mb-2 text-sm font-medium text-slate-600">สิทธิ์ดูข้อมูลสาขา</p>
         <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
           <input
             type="checkbox"
@@ -147,7 +173,8 @@ export default function UserForm({ branches, roles, initial, onSubmit, onCancel 
                 <label key={branch.id} className="flex min-w-0 items-center gap-2 text-sm text-slate-600" title={branchLabel(branch)}>
                   <input
                     type="checkbox"
-                    checked={branchIds.includes(branch.id)}
+                    checked={branchIds.includes(branch.id) || branch.id === homeBranchId}
+                    disabled={branch.id === homeBranchId}
                     onChange={() => toggleBranch(branch.id)}
                     className="h-4 w-4 shrink-0 rounded border-slate-300 accent-brand-amber"
                   />

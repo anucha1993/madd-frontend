@@ -1,5 +1,6 @@
 "use client";
 
+import { getUser } from "@/lib/auth";
 import ShipmentLink from "@/components/shipment/ShipmentLink";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -100,7 +101,9 @@ export default function SupplyStockPage() {
         if (cancelled) return;
         setBranches(res.branches);
         setSupplies(res.supplies);
-        setBranchId((current) => current ?? res.branches[0]?.id ?? null);
+        // My own branch first (if I can see it), else the first one.
+        const home = getUser()?.branch_id;
+        setBranchId((current) => current ?? res.branches.find((b) => b.id === home)?.id ?? res.branches[0]?.id ?? null);
         setError("");
       })
       .catch((err) => !cancelled && setError(errorText(err)))

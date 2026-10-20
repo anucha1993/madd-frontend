@@ -15,7 +15,10 @@ export type AppUser = {
   email: string;
   roles: UserRoleRef[];
   can_access_all_branches: boolean;
+  // Branches whose data they may see; branch_id / home_branch = the branch they belong to (books under).
   branches: Branch[];
+  branch_id?: number | null;
+  home_branch?: Branch | null;
   // The current user ranks above them (or is Super Admin) — only then edit / delete.
   manageable?: boolean;
 };
@@ -28,6 +31,7 @@ export type AppUserInput = {
   role_ids: number[];
   can_access_all_branches: boolean;
   branch_ids: number[];
+  branch_id: number | null;
 };
 
 export const listUsers = () => apiClient.get<AppUser[]>("/users");

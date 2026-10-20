@@ -21,6 +21,8 @@ export default function Topbar({ onMenuClick }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
+  // The branch this user belongs to (Shipments are booked under it).
+  const [branchText, setBranchText] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
   const { can } = useAccess();
   const canSeeAlerts = can("config.system_alerts");
@@ -46,6 +48,8 @@ export default function Topbar({ onMenuClick }: Props) {
 
   useEffect(() => {
     setName(getUser()?.name ?? "");
+    const home = getUser()?.home_branch;
+    setBranchText(home ? home.nickname || home.code || home.name : "");
   }, []);
 
   useEffect(() => {
@@ -106,8 +110,9 @@ export default function Topbar({ onMenuClick }: Props) {
             <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-navy text-white">
               <User className="h-4.5 w-4.5" />
             </span>
-            <span className="hidden text-sm font-medium text-slate-700 sm:inline">
-              {name}
+            <span className="hidden flex-col items-start leading-tight sm:flex">
+              <span className="text-sm font-medium text-slate-700">{name}</span>
+              {branchText && <span className="text-[11px] text-slate-400">สาขา {branchText}</span>}
             </span>
             <ChevronDown className="h-4 w-4 text-slate-400" />
           </button>
