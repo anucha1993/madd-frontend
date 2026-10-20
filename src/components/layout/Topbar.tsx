@@ -118,7 +118,7 @@ export default function Topbar({ onMenuClick }: Props) {
           </button>
 
           {open && (
-            <div className="absolute right-0 mt-2 w-44 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
+            <div className="absolute right-0 z-50 mt-2 w-44 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
               <a
                 href="/profile"
                 className="block px-4 py-2.5 text-sm text-slate-600 hover:bg-slate-50"
