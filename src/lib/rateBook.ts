@@ -166,3 +166,33 @@ export type RateBookRowsResponse = {
 
 export const getRateBookRows = (runId: number, carrier: RateBookCarrier) =>
   apiClient.get<RateBookRowsResponse>(`/rate-book/runs/${runId}/rows?carrier=${carrier}`);
+
+// ---- Hand-typed rate cards (no API, e.g. SAGAWA → Japan) — checking prices only ----
+
+export type ManualRateCard = {
+  key: string;
+  name: string;
+  destination: string;
+  currency: string;
+  note: string;
+  // A price per listed weight (0.5 … 10 every 0.5, 11 … 20 every 1 kg).
+  steps: { weight: number; price: number }[];
+  // Above the steps: whole kg × the band's rate; max null = "and up".
+  per_kg: { min: number; max: number | null; price: number }[];
+};
+
+export const getManualRateCards = () => apiClient.get<{ cards: ManualRateCard[] }>("/rate-book/manual-cards");
+
+export const saveManualRateCards = (cards: ManualRateCard[]) =>
+  apiClient.put<{ cards: ManualRateCard[] }>("/rate-book/manual-cards", { cards });
+
+/** The card's price for a weight: the next listed step up, else whole kg × its per-kg band (as ManualRateCards.php). */
+export function manualCardPrice(card: ManualRateCard, weight: number): { price: number | null; how: string } {
+  const steps = [...card.steps].sort((a, b) => a.weight - b.weight);
+  const step = steps.find((s) => s.weight >= weight - 1e-9);
+  if (step) return { price: step.price, how: step.weight === weight ? `${step.weight} kg` : `คิดที่ ${step.weight} kg` };
+  const kg = Math.ceil(weight - 1e-9);
+  const band = card.per_kg.find((b) => kg >= b.min && (b.max == null || kg <= b.max));
+  if (!band) return { price: null, how: "" };
+  return { price: Math.round(kg * band.price * 100) / 100, how: `${kg} kg × ${band.price} /kg (${band.max == null ? `${band.min}+` : `${band.min}–${band.max}`} kg)` };
+}

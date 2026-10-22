@@ -14,6 +14,8 @@ import {
   type RateBookService,
 } from "@/lib/rateBook";
 import RateBookChart from "./RateBookChart";
+import ManualRateCard from "./ManualRateCard";
+import { getManualRateCards } from "@/lib/rateBook";
 
 // Same as the backend's RateBookRateCard: per-kg bands are listed kg by kg up to this weight.
 const EXPAND_PER_KG_UP_TO = 70;
@@ -105,6 +107,14 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
   const runId = pickedRunId != null && completed.some((r) => r.id === pickedRunId) ? pickedRunId : (completed[0]?.id ?? null);
   const run = completed.find((r) => r.id === runId);
   const [carrier, setCarrier] = useState<RateBookCarrier>("UPS");
+  // A hand-typed card (e.g. SAGAWA) shown instead of the API carriers' rates; null = UPS / DHL.
+  const [manualKey, setManualKey] = useState<string | null>(null);
+  const [manualCards, setManualCards] = useState<{ key: string; name: string }[]>([]);
+  useEffect(() => {
+    getManualRateCards()
+      .then((r) => setManualCards(r.cards.map((c) => ({ key: c.key, name: c.name }))))
+      .catch(() => {});
+  }, []);
   // "card" | "doc" | "<service key>::<column key>" (calc sheet) | "chart"
   const [sheet, setSheet] = useState<string>("card");
   const [chartType, setChartType] = useState<RateBookPackageType>("box");
@@ -156,6 +166,46 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
   const service = services.find((s) => s.key === serviceKey) ?? services[0];
   const chartRows = { document: typeRows(service.key, "document"), box: typeRows(service.key, "box") };
   const extraServices = services.filter((s) => !s.main && (rowsByService.get(s.key)?.length ?? 0) > 0);
+
+  // Carrier tabs: the API carriers, then the hand-typed cards (no Sync needed for those).
+  const carrierTabs = (
+    <>
+      {(["UPS", "DHL"] as const).map((c) => (
+        <button
+          key={c}
+          type="button"
+          onClick={() => {
+            setCarrier(c);
+            setManualKey(null);
+            setServiceKey(null);
+          }}
+          className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${!manualKey && carrier === c ? "bg-brand-navy-dark text-white" : "border border-slate-300 text-slate-600 hover:bg-slate-50"}`}
+        >
+          {c}
+        </button>
+      ))}
+      {manualCards.map((m) => (
+        <button
+          key={m.key}
+          type="button"
+          onClick={() => setManualKey(m.key)}
+          title="ราคาที่พิมพ์เอง (ไม่มี API)"
+          className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${manualKey === m.key ? "bg-brand-navy-dark text-white" : "border border-dashed border-slate-300 text-slate-600 hover:bg-slate-50"}`}
+        >
+          {m.name}
+        </button>
+      ))}
+    </>
+  );
+
+  if (manualKey) {
+    return (
+      <div className="p-5">
+        <div className="mb-4 flex flex-wrap items-center gap-2">{carrierTabs}</div>
+        <ManualRateCard cardKey={manualKey} />
+      </div>
+    );
+  }
 
   if (completed.length === 0) {
     return <p className="px-5 py-6 text-center text-sm text-slate-400">ยังไม่มีข้อมูลเรท — กด Sync เพื่อสร้าง Rate Book ชุดแรก</p>;
@@ -583,19 +633,7 @@ export default function RateBookTable({ runs }: { runs: RateBookRun[] }) {
   return (
     <div className="p-5">
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        {(["UPS", "DHL"] as const).map((c) => (
-          <button
-            key={c}
-            type="button"
-            onClick={() => {
-              setCarrier(c);
-              setServiceKey(null);
-            }}
-            className={tabClass(carrier === c)}
-          >
-            {c}
-          </button>
-        ))}
+        {carrierTabs}
         <button
           type="button"
           onClick={handleExport}
