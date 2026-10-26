@@ -47,7 +47,7 @@ import { useAiEnabled } from "@/hooks/useAiEnabled";
 import { listProductWeightBands, matchProductWeightBand, pickForcedWeightBand, type ProductWeightBand } from "@/lib/productWeightBands";
 import { listManifestOptions, type ManifestOption } from "@/lib/manifestOptions";
 import { getThaiSubdistrictsByZipCode } from "@/lib/thaiSubdistricts";
-import { checkRate, DOCUMENT_MAX_KG, documentWeightKg, weightUnitLabel, type CheckRateInput, type RateChargeLine, type RateQuote, type ShipmentPackageInput } from "@/lib/shipping";
+import { checkRate, DOCUMENT_MAX_KG, documentWeightKg, weightUnitLabel, type CheckRateInput, type RateChargeLine, type BookableCarrier, type RateQuote, type ShipmentPackageInput } from "@/lib/shipping";
 import { lookupInsuranceCountryCap, type InsuranceCountryCap } from "@/lib/insuranceCountryCaps";
 import { validateAddress, type AddressValidationResult } from "@/lib/addressValidation";
 import { ApiError } from "@/lib/apiClient";
@@ -1816,8 +1816,9 @@ export default function ShipmentCreatePage() {
     try {
       const res = await checkRate(payload);
       setResults(res.results);
+      // Only something bookable is picked for you — never a quote-only price (e.g. SAGAWA).
       const cheapest = res.results
-        .filter((r) => !r.error)
+        .filter((r) => !r.error && !r.quoteOnly)
         .sort((a, b) => (a.negotiated ?? a.published ?? Infinity) - (b.negotiated ?? b.published ?? Infinity))[0];
       setSelectedQuote(cheapest ?? null);
       setQuotedDeclaredValues(Object.fromEntries(packages.map((p) => [p.key, packageTotalDeclaredValue(p)])));
@@ -1836,7 +1837,7 @@ export default function ShipmentCreatePage() {
 
     return {
       agent_account_id: selectedQuote.accountId,
-      carrier: selectedQuote.carrier,
+      carrier: selectedQuote.carrier as BookableCarrier,
       service_code: selectedQuote.serviceCode ?? "",
       service_label: selectedQuote.serviceLabel,
       origin: {
@@ -2096,7 +2097,7 @@ export default function ShipmentCreatePage() {
       : (addonByCategory[activeAddonCategory] ?? []).filter((item) => {
           // Silently limited to the selected Rate Quote's carrier — no items for a carrier the
           // customer didn't book with (e.g. hide DHL-only add-ons once a UPS quote is selected).
-          const matchesCarrier = !selectedQuote || item.carriers.includes(selectedQuote.carrier);
+          const matchesCarrier = !selectedQuote || item.carriers.includes(selectedQuote.carrier as BookableCarrier);
           // Some items (e.g. Insurance) have a different rate per Customer Type — only the
           // variant configured for the currently selected Customer Type is shown.
           const matchesCustomerType = !item.customer_types?.length || item.customer_types.includes(customerType);
@@ -2137,7 +2138,7 @@ export default function ShipmentCreatePage() {
     const items = selectedQuote
       ? (addonByCategory["Insurance"] ?? [])
           .filter((item) => {
-            const matchesCarrier = item.carriers.includes(selectedQuote.carrier);
+            const matchesCarrier = item.carriers.includes(selectedQuote.carrier as BookableCarrier);
             const matchesCustomerType = !item.customer_types?.length || item.customer_types.includes(customerType);
             const isDocument = productType === "DOCUMENT";
             const matchesPackage = (item.package_type ?? "box") === (isDocument ? "document" : "box");
@@ -2478,7 +2479,7 @@ export default function ShipmentCreatePage() {
                   .map((line, li) => {
                   const isCarrierInsuranceLine = carrierCostOnlyCodes.includes(line.code ?? "");
                   const markupBasis = formatMarkupBasis(line);
-                  const insuranceMarkupPct = isCarrierInsuranceLine ? getCarrierOwnInsuranceMarkupPercent(selectedQuote.carrier) : 0;
+                  const insuranceMarkupPct = isCarrierInsuranceLine ? getCarrierOwnInsuranceMarkupPercent(selectedQuote.carrier as BookableCarrier) : 0;
                   const displayAmount = insuranceMarkupPct !== 0 ? line.amount * (1 + insuranceMarkupPct / 100) : line.amount;
                   return (
                     <div key={li} className="flex items-start justify-between gap-3 text-xs">
@@ -4184,14 +4185,20 @@ export default function ShipmentCreatePage() {
                     return (
                       <div
                         key={`${r.carrier}-${r.accountId}-${r.serviceCode}-${i}`}
-                        onClick={() => setSelectedQuote(r)}
-                        role="button"
-                        tabIndex={0}
+                        // A quote-only price (hand-typed card, e.g. SAGAWA) can't be picked — no booking through it.
+                        onClick={() => !r.quoteOnly && setSelectedQuote(r)}
+                        role={r.quoteOnly ? undefined : "button"}
+                        tabIndex={r.quoteOnly ? undefined : 0}
                         onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") setSelectedQuote(r);
+                          if (!r.quoteOnly && (e.key === "Enter" || e.key === " ")) setSelectedQuote(r);
                         }}
-                        className={`w-full cursor-pointer rounded-xl border p-3 text-left transition ${
-                          isSelected ? "border-brand-amber bg-amber-50/60 ring-1 ring-brand-amber" : "border-slate-200 hover:border-slate-300"
+                        title={r.quoteOnly ? "ราคาตามตาราง (Rate Book) — เช็คราคาเท่านั้น ไม่ออก Shipment ผ่านระบบ" : undefined}
+                        className={`w-full rounded-xl border p-3 text-left transition ${
+                          r.quoteOnly
+                            ? "cursor-default border-dashed border-slate-300 bg-slate-50"
+                            : isSelected
+                              ? "cursor-pointer border-brand-amber bg-amber-50/60 ring-1 ring-brand-amber"
+                              : "cursor-pointer border-slate-200 hover:border-slate-300"
                         }`}
                       >
                         <div className="flex items-center justify-between">
@@ -4204,6 +4211,9 @@ export default function ShipmentCreatePage() {
                               <Tag className="h-4 w-4 text-slate-300" />
                             )}
                             <span className="text-sm font-semibold text-slate-700">{r.carrier}</span>
+                            {r.quoteOnly && (
+                              <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600">เช็คราคาเท่านั้น · ไม่ออก Shipment</span>
+                            )}
                           </div>
                           <span className="text-sm font-bold text-brand-navy-dark">
                             {sellAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })} {r.currency}
@@ -4243,7 +4253,7 @@ export default function ShipmentCreatePage() {
                               .map((line, li) => {
                               const markupBasis = formatMarkupBasis(line);
                               const isCarrierInsuranceLine = rCostOnlyCodes.includes(line.code ?? "");
-                              const insuranceMarkupPct = isCarrierInsuranceLine ? getCarrierOwnInsuranceMarkupPercent(r.carrier) : 0;
+                              const insuranceMarkupPct = isCarrierInsuranceLine ? getCarrierOwnInsuranceMarkupPercent(r.carrier as BookableCarrier) : 0;
                               const displayAmount = insuranceMarkupPct !== 0 ? line.amount * (1 + insuranceMarkupPct / 100) : line.amount;
                               return (
                               <div key={li} className="flex items-start justify-between gap-3 text-xs">

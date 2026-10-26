@@ -74,13 +74,19 @@ export type RateChargeLine = {
   markupNote?: string | null;
 };
 
+// The carriers a Shipment can be booked with (a quoteOnly result is never selected for booking).
+export type BookableCarrier = "UPS" | "DHL";
+
 export type RateQuote = {
   // Server-side handle for the FULL quote (see RateQuoteVault) — sent back with the booking so
   // cost is taken from the server's copy. Cost/markup/raw fields below may be absent entirely
   // when the user's Role hides them.
   quoteId?: string;
-  carrier: "UPS" | "DHL";
+  // UPS / DHL — or a hand-typed rate card's name (e.g. "SAGAWA") on a quoteOnly result.
+  carrier: "UPS" | "DHL" | (string & {});
   accountId: number;
+  // A price from a hand-typed rate card (Rate Book → SAGAWA …): shown to compare, never bookable.
+  quoteOnly?: boolean;
   // The quoting account's mode — "production" means booking it is REAL (a DHL booking can't be
   // cancelled through the API afterwards).
   accountMode?: "test" | "production" | null;

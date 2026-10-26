@@ -173,6 +173,8 @@ export type ManualRateCard = {
   key: string;
   name: string;
   destination: string;
+  // Shown in Check Rate (/shipment/create) for this destination (ISO2, e.g. JP) — quote only.
+  country: string;
   currency: string;
   note: string;
   // A price per listed weight (0.5 … 10 every 0.5, 11 … 20 every 1 kg).

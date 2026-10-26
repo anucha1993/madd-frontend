@@ -100,7 +100,9 @@ export default function ManualRateCard({ cardKey }: { cardKey: string }) {
             </p>
           )}
         </div>
-        <p className="text-xs text-slate-400">ราคาที่พิมพ์เอง (ไม่มี API) — ใช้เช็คราคาอย่างเดียว ไม่ออก Shipment ผ่านระบบ</p>
+        <p className="text-xs text-slate-400">
+          ราคาที่พิมพ์เอง (ไม่มี API) — เช็คราคาได้ทั้งที่นี่และหน้า Create Shipment{card.country ? ` (ปลายทาง ${card.country})` : ""} แต่ไม่ออก Shipment ผ่านระบบ
+        </p>
         {canEdit && !draft && (
           <button
             type="button"
@@ -133,10 +135,20 @@ export default function ManualRateCard({ cardKey }: { cardKey: string }) {
         <span className="ml-3 text-lg font-bold">{shown.name}</span>
       </div>
       {draft ? (
-        <div className="mb-3 grid gap-2 sm:grid-cols-2">
+        <div className="mb-3 grid gap-2 sm:grid-cols-3">
           <label className="text-xs text-slate-500">
             ปลายทาง
             <input value={draft.destination} onChange={(e) => setDraft({ ...draft, destination: e.target.value })} className={`${inputClass} text-left`} />
+          </label>
+          <label className="text-xs text-slate-500">
+            แสดงใน Check Rate เมื่อส่งไปประเทศ (ISO2, ว่าง = ไม่แสดง)
+            <input
+              value={draft.country ?? ""}
+              maxLength={2}
+              onChange={(e) => setDraft({ ...draft, country: e.target.value.toUpperCase() })}
+              placeholder="JP"
+              className={`${inputClass} text-left`}
+            />
           </label>
           <label className="text-xs text-slate-500">
             หมายเหตุ / ช่วงเวลาที่ใช้
