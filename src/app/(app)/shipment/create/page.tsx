@@ -2191,7 +2191,8 @@ export default function ShipmentCreatePage() {
     const rawTotal = r.negotiated ?? r.published ?? 0;
     // Sell price is always a whole number — round UP (e.g. 4.9 -> 5), never down, so a leftover
     // fraction is never quietly absorbed as a loss.
-    return { sellAmount: Math.ceil(rawTotal - costOnlyAmount), costOnlyCodes };
+    // Rounded to satang first, as the server checks it: 1000.30 − 0.30 = 1000.0000000001 must stay 1000, not 1001.
+    return { sellAmount: Math.ceil(Math.round((rawTotal - costOnlyAmount) * 100) / 100), costOnlyCodes };
   }
 
   // The carrier's own cost-only insurance line (see getSellFreightAmount) only turns into an
