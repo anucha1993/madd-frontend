@@ -572,7 +572,7 @@ async function openShipmentDocument(path: string, title: string, notFoundMessage
 }
 
 export const openShipmentWaybill = (shipmentId: number) =>
-  openShipmentDocument(`/shipments/${shipmentId}/waybill`, "UPS Waybill", "เปิด Waybill ไม่สำเร็จ");
+  openShipmentDocument(`/shipments/${shipmentId}/waybill`, "Airwaybill", "เปิด Waybill ไม่สำเร็จ");
 
 // DHL's own Waybill Doc exactly as returned at booking (no MADD payment block) — downloaded as a
 // file rather than opened, since it's what DHL / customs ask to be sent.
