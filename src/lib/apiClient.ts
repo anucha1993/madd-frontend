@@ -30,7 +30,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const firstErrorMessage = data?.errors
       ? Object.values(data.errors as Record<string, string[]>).flat()[0]
       : undefined;
-    const message = firstErrorMessage ?? data?.message ?? "เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง";
+    // Controllers also refuse with { error: "..." } (booking, stock, carrier errors).
+    const message = firstErrorMessage ?? (typeof data?.error === "string" ? data.error : undefined) ?? data?.message ?? "เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง";
     throw new ApiError(message, res.status);
   }
 
