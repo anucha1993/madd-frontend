@@ -36,6 +36,15 @@ export type SupplyInput = {
   status?: boolean;
 };
 
+// The stored value stays as first saved ("กล่อง" is the paper carton) — only the label changes.
+export const SUPPLY_TYPES = [
+  { value: "กล่อง", label: "กล่องกระดาษ" },
+  { value: "กล่องเหล็ก", label: "กล่องเหล็ก" },
+  { value: "ซอง", label: "ซอง" },
+];
+
+export const supplyTypeLabel = (type: string | null) => SUPPLY_TYPES.find((t) => t.value === type)?.label ?? type ?? "-";
+
 export const listSupplies = () => apiClient.get<Supply[]>("/supplies");
 
 export const createSupply = (data: SupplyInput) => apiClient.post<Supply>("/supplies", data);

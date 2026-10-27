@@ -363,7 +363,7 @@ const ENTITY_TYPE_OPTIONS: { value: "INDIVIDUAL" | "COMPANY"; label: string; des
 export default function ShipmentCreatePage() {
   // Field groups a Role may leave read-only (config/permissions.php) — the API rejects any
   // non-default value for them anyway, so the inputs are locked to their defaults here.
-  const { can, canEditField, canSeeField, canVisit } = useAccess();
+  const { access, can, canEditField, canSeeField, canVisit } = useAccess();
   // Label / Waybill / Invoice API routes sit inside the shipment.view group — both are needed.
   const canViewShipments = can("shipment.view");
   // After a booking: to the Shipments list if this user can open it, else a fresh Create Shipment.
@@ -1333,21 +1333,32 @@ export default function ShipmentCreatePage() {
     applyDefaultInsurer(pkg, insuranceTypeOf(pkg), carrierOption, thirdPartyOption);
   }
 
-  // Remaining stock at the staff's branch (only when they belong to exactly one — otherwise the
-  // booking branch depends on the account). Booking is never blocked; this is just a heads-up.
+  // Remaining stock at the branch this booking goes under (home branch, the picked one, or the
+  // only one) — null while it isn't known yet. Already-added rows count against it. At 0 the
+  // supply can't be added (the server refuses it too), except for a Super Admin.
+  const stockBranchId = homeBranch?.id ?? (needsBranchChoice ? bookingBranchId : (bookingBranchOptions[0]?.id ?? null));
+  function supplyStockLeft(supply: Supply): number | null {
+    if (!stockBranchId) return null;
+    const onHand = supply.stocks?.find((s) => s.branch_id === stockBranchId)?.quantity ?? 0;
+    const taken = addonRows.filter((r) => r.supplyId === supply.id).reduce((sum, r) => sum + (Number(r.quantity) || 0), 0);
+    return onHand - taken;
+  }
+  const supplyBlocked = (supply: Supply) => !access.is_super_admin && (supplyStockLeft(supply) ?? 1) <= 0;
+
   function renderSupplyStock(supply: Supply) {
-    const branchIds = currentUser?.branches?.map((b) => b.id) ?? [];
-    const stock = branchIds.length === 1 ? supply.stocks?.find((s) => s.branch_id === branchIds[0]) : undefined;
-    if (!stock) return null;
-    const low = stock.quantity <= 0 || (stock.min_qty !== null && stock.quantity <= stock.min_qty);
+    const left = supplyStockLeft(supply);
+    if (left === null) return <span className="text-[10px] leading-tight text-slate-400">เลือกสาขาเพื่อดู Stock</span>;
+    const min = supply.stocks?.find((s) => s.branch_id === stockBranchId)?.min_qty ?? null;
+    const low = left <= 0 || (min !== null && left <= min);
     return (
-      <span className={`text-[10px] leading-tight ${low ? "font-semibold text-red-600" : "text-slate-400"}`}>
-        {stock.quantity <= 0 ? "Stock หมด" : `เหลือ ${stock.quantity.toLocaleString()}`}
+      <span className={`text-[10px] leading-tight ${low ? "font-semibold text-red-600" : "text-slate-500"}`}>
+        {left <= 0 ? `Stock หมด (${left.toLocaleString()})` : `คงเหลือ ${left.toLocaleString()}`}
       </span>
     );
   }
 
   function addAddonFromSupply(supply: Supply) {
+    if (supplyBlocked(supply)) return;
     setAddonRows((prev) => [
       ...prev,
       newAddonRow({
@@ -4839,7 +4850,9 @@ export default function ShipmentCreatePage() {
                       type="button"
                       key={supply.id}
                       onClick={() => addAddonFromSupply(supply)}
-                      className="flex min-w-0 flex-col items-center gap-1 rounded-xl border-2 border-slate-200 bg-white p-2 text-center transition hover:border-brand-amber hover:bg-amber-50"
+                      disabled={supplyBlocked(supply)}
+                      title={supplyBlocked(supply) ? "Stock หมด — เลือกไม่ได้" : undefined}
+                      className="flex min-w-0 flex-col items-center gap-1 rounded-xl border-2 border-slate-200 bg-white p-2 text-center transition hover:border-brand-amber hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-slate-200 disabled:hover:bg-white"
                     >
                       {supply.icon_url ? (
                         // eslint-disable-next-line @next/next/no-img-element

@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
-import type { Supply, SupplyInput } from "@/lib/supplies";
+import { SUPPLY_TYPES, type Supply, type SupplyInput } from "@/lib/supplies";
 import { listProductWeightBands, type ProductWeightBand } from "@/lib/productWeightBands";
 
 type Props = {
   initial?: Supply | null;
+  // Type a new supply starts with (the tab it was added from).
+  defaultType?: string;
   featuredCount: number;
   onSubmit: (data: SupplyInput) => Promise<void>;
   onCancel: () => void;
@@ -13,9 +15,9 @@ type Props = {
 
 const MAX_FEATURED = 6;
 
-export default function SupplyForm({ initial, featuredCount, onSubmit, onCancel }: Props) {
+export default function SupplyForm({ initial, defaultType, featuredCount, onSubmit, onCancel }: Props) {
   const [name, setName] = useState(initial?.name ?? "");
-  const [type, setType] = useState(initial?.type ?? "");
+  const [type, setType] = useState(initial ? (initial.type ?? "") : (defaultType ?? ""));
   const [weight, setWeight] = useState(initial?.weight != null ? String(initial.weight) : "");
   const [length, setLength] = useState(initial?.length != null ? String(initial.length) : "");
   const [width, setWidth] = useState(initial?.width != null ? String(initial.width) : "");
@@ -118,8 +120,11 @@ export default function SupplyForm({ initial, featuredCount, onSubmit, onCancel 
           <span className={labelClass}>Type</span>
           <select value={type} onChange={(e) => setType(e.target.value)} className={inputClass}>
             <option value="">-</option>
-            <option value="กล่อง">กล่อง (Box)</option>
-            <option value="ซอง">ซอง (Envelope)</option>
+            {SUPPLY_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
           </select>
         </label>
       </div>

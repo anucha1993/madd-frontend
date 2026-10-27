@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   BadgeDollarSign,
+  BookOpen,
   Boxes,
   Building2,
   FileBarChart2,
@@ -68,8 +69,12 @@ export const NAV_SECTIONS: NavItem[] = [
       { label: "Key Billing Report", href: "/reports/key-billing" },
       { label: "Shipment Analytics", href: "/reports/summary" },
       { label: "Revenue & Expense Report", href: "/reports/finance" },
-      { label: "Rate Book", href: "/reports/rate-book" },
     ],
+  },
+  {
+    label: "Rate Book",
+    icon: BookOpen,
+    href: "/reports/rate-book",
   },
   {
     label: "Branches",

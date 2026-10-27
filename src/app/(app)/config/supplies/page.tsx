@@ -8,7 +8,9 @@ import PageHeader from "@/components/layout/PageHeader";
 import Modal from "@/components/ui/Modal";
 import PageLoading from "@/components/ui/PageLoading";
 import SupplyForm from "@/components/config/SupplyForm";
-import { createSupply, deleteSupply, listSupplies, updateSupply, type Supply, type SupplyInput } from "@/lib/supplies";
+import { SUPPLY_TYPES, createSupply, deleteSupply, listSupplies, supplyTypeLabel, updateSupply, type Supply, type SupplyInput } from "@/lib/supplies";
+
+const NONE = "__none";
 
 function formatBaht(value: string | number) {
   return Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -20,6 +22,7 @@ export default function SuppliesPage() {
   const [error, setError] = useState("");
   const [modalSupply, setModalSupply] = useState<Supply | "new" | null>(null);
   const [togglingId, setTogglingId] = useState<number | null>(null);
+  const [tab, setTab] = useState(SUPPLY_TYPES[0].value);
 
   async function loadAll() {
     setLoading(true);
@@ -69,6 +72,15 @@ export default function SuppliesPage() {
   const featuredCount = supplies.filter((s) => s.is_featured).length;
   const { can } = useAccess();
 
+  // One tab per known type, plus any other value already saved and the untyped ones.
+  const known = SUPPLY_TYPES.map((t) => t.value);
+  const extraTypes = [...new Set(supplies.map((s) => s.type).filter((t): t is string => !!t && !known.includes(t)))];
+  const tabs = [
+    ...[...known, ...extraTypes].map((t) => ({ key: t, label: supplyTypeLabel(t), count: supplies.filter((s) => s.type === t).length })),
+    ...(supplies.some((s) => !s.type) ? [{ key: NONE, label: "ไม่ระบุ", count: supplies.filter((s) => !s.type).length }] : []),
+  ];
+  const shown = supplies.filter((s) => (tab === NONE ? !s.type : s.type === tab));
+
   return (
     <div className="relative min-h-[360px]">
       <div className="mb-6 flex items-start justify-between">
@@ -93,12 +105,30 @@ export default function SuppliesPage() {
 
       {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
+      {!loading && supplies.length > 0 && (
+        <div className="mb-4 flex flex-wrap gap-1 border-b border-slate-200">
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTab(t.key)}
+              className={`-mb-px flex items-center gap-1.5 border-b-2 px-4 py-2 text-sm font-medium transition ${
+                tab === t.key ? "border-brand-navy-dark text-brand-navy-dark" : "border-transparent text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              {t.label}
+              <span className={`rounded-full px-1.5 text-xs ${tab === t.key ? "bg-brand-navy-dark text-white" : "bg-slate-100 text-slate-500"}`}>{t.count}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {loading ? (
         <PageLoading label="Loading Supplies..." />
-      ) : supplies.length === 0 ? (
+      ) : shown.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white py-20 text-center">
           <Boxes className="h-10 w-10 text-brand-amber" />
-          <p className="font-medium text-slate-600">No supplies yet</p>
+          <p className="font-medium text-slate-600">{supplies.length === 0 ? "No supplies yet" : "ยังไม่มีรายการในประเภทนี้"}</p>
         </div>
       ) : (
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -118,7 +148,7 @@ export default function SuppliesPage() {
               </tr>
             </thead>
             <tbody>
-              {supplies.map((supply) => (
+              {shown.map((supply) => (
                 <tr key={supply.id} className="border-b border-slate-200 last:border-0">
                   <td className="px-5 py-3">
                     {supply.icon_url ? (
@@ -132,7 +162,7 @@ export default function SuppliesPage() {
                     <div className="font-medium text-slate-700">{supply.name}</div>
                     {supply.description && <div className="text-xs text-slate-400">{supply.description}</div>}
                   </td>
-                  <td className="px-5 py-3 text-slate-500">{supply.type ?? "-"}</td>
+                  <td className="px-5 py-3 text-slate-500">{supplyTypeLabel(supply.type)}</td>
                   <td className="px-5 py-3 text-slate-500">
                     {supply.length && supply.width && supply.height
                       ? `${supply.length}x${supply.width}x${supply.height} cm`
@@ -197,6 +227,7 @@ export default function SuppliesPage() {
         >
           <SupplyForm
             initial={modalSupply === "new" ? null : modalSupply}
+            defaultType={tab === NONE ? undefined : tab}
             featuredCount={featuredCount}
             onSubmit={handleSubmit}
             onCancel={() => setModalSupply(null)}
