@@ -1,13 +1,15 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  BadgeDollarSign,
   Boxes,
   Building2,
   FileBarChart2,
   LayoutDashboard,
-  Layers,
   Package,
+  PackagePlus,
   Receipt,
   Settings,
+  SlidersHorizontal,
   Truck,
   Users,
 } from "lucide-react";
@@ -86,22 +88,38 @@ export const NAV_SECTIONS: NavItem[] = [
     href: "/config/supplies/stock",
   },
   {
-    id: "management",
-    label: "Management",
-    icon: Layers,
+    id: "general",
+    label: "General Setting",
+    icon: SlidersHorizontal,
     children: [
-      { label: "Mark-up Settings", href: "/config/markup" },
-      { label: "Weight Markup", href: "/config/weight-markups" },
-      { label: "Heavy Weight Rate", href: "/config/heavy-rates" },
       { label: "Customer Display", href: "/config/customer-display" },
-      { label: "Charge Display Names", href: "/config/charge-names" },
-      { label: "Add-on Settings", href: "/config/addon" },
-      { label: "Insurance UPSC", href: "/config/insurance-caps" },
-      { label: "Packaging Supplies", href: "/config/supplies" },
-      { label: "Shipment Weight Bands", href: "/config/weight-bands" },
-      { label: "Manifest Form Options", href: "/config/manifest-options" },
-      { label: "Receipt Line Templates", href: "/config/receipt-line-templates" },
-      { label: "Countries", href: "/config/countries" },
+      { label: "UPSC Lane Limit", href: "/config/insurance-caps" },
+      { label: "Code & Display Name", href: "/config/charge-names" },
+      { label: "Weight Range for Report", href: "/config/weight-bands" },
+      { label: "Manifest for Report", href: "/config/manifest-options" },
+      { label: "Tax Invoice Template", href: "/config/receipt-line-templates" },
+      { label: "Zone & Country List", href: "/config/countries" },
+    ],
+  },
+  {
+    id: "pricing",
+    label: "Price Setting",
+    icon: BadgeDollarSign,
+    children: [
+      { label: "Mark up by Account", href: "/config/markup" },
+      { label: "Weight Range Mark up", href: "/config/weight-markups" },
+      { label: "Heavy Weight Mark up", href: "/config/heavy-rates" },
+      { label: "Account & Bypass", href: "/config/agent-accounts" },
+    ],
+  },
+  // Add-ons and the packaging sold with them (cartons / metal boxes) — one topic, one menu.
+  {
+    id: "addon",
+    label: "Add-on Setting",
+    icon: PackagePlus,
+    children: [
+      { label: "Add-on Setting", href: "/config/addon" },
+      { label: "Carton & Metal Setting", href: "/config/supplies" },
     ],
   },
   {
@@ -109,7 +127,6 @@ export const NAV_SECTIONS: NavItem[] = [
     label: "System Settings",
     icon: Settings,
     children: [
-      { label: "Agent Accounts (UPS/DHL)", href: "/config/agent-accounts" },
       { label: "Shipment Required Fields", href: "/config/shipment-fields" },
       { label: "Thai Address Database", href: "/config/thai-address" },
       { label: "Users", href: "/config/users" },

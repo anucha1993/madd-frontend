@@ -175,6 +175,8 @@ export type ManualRateCard = {
   destination: string;
   // Shown in Check Rate (/shipment/create) for this destination (ISO2, e.g. JP) — quote only.
   country: string;
+  // Who sees it there follows this agent account's branch assignments (null = the first SGW account).
+  agent_account_id?: number | null;
   currency: string;
   note: string;
   // A price per listed weight (0.5 … 10 every 0.5, 11 … 20 every 1 kg).

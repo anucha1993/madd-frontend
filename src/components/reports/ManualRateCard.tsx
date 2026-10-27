@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { useAccess } from "@/components/auth/AccessProvider";
 import { getManualRateCards, manualCardPrice, saveManualRateCards, type ManualRateCard as Card } from "@/lib/rateBook";
+import { listAgentAccounts, type AgentAccount } from "@/lib/agentAccounts";
 
 const money = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 2 });
 const HEAD = "#1F4E79";
@@ -22,12 +23,19 @@ export default function ManualRateCard({ cardKey }: { cardKey: string }) {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [weight, setWeight] = useState("");
+  // Accounts to link the card to (who sees it in Check Rate follows the account's branches).
+  const [accounts, setAccounts] = useState<AgentAccount[]>([]);
 
   useEffect(() => {
     getManualRateCards()
       .then((r) => setCards(r.cards))
       .catch((e) => setError(e instanceof Error ? e.message : "โหลดไม่สำเร็จ"));
-  }, []);
+    if (canEdit) {
+      listAgentAccounts()
+        .then(setAccounts)
+        .catch(() => {});
+    }
+  }, [canEdit]);
 
   const card = cards?.find((c) => c.key === cardKey) ?? null;
   if (error && !cards) return <p className="text-sm text-red-600">{error}</p>;
@@ -139,6 +147,22 @@ export default function ManualRateCard({ cardKey }: { cardKey: string }) {
           <label className="text-xs text-slate-500">
             ปลายทาง
             <input value={draft.destination} onChange={(e) => setDraft({ ...draft, destination: e.target.value })} className={`${inputClass} text-left`} />
+          </label>
+          <label className="text-xs text-slate-500 sm:col-span-3">
+            บัญชี Agent — สาขาที่ติ๊กบัญชีนี้ (หน้า Branches) จึงเห็นราคาใน Check Rate
+            <select
+              value={draft.agent_account_id ?? ""}
+              onChange={(e) => setDraft({ ...draft, agent_account_id: e.target.value ? Number(e.target.value) : null })}
+              className={`${inputClass} text-left`}
+            >
+              <option value="">อัตโนมัติ (บัญชี SGW แรก)</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.agent?.agent_name ?? a.agent?.agent_code} · {a.username_acc}
+                  {a.status ? "" : " (ปิดใช้งาน)"}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="text-xs text-slate-500">
             แสดงใน Check Rate เมื่อส่งไปประเทศ (ISO2, ว่าง = ไม่แสดง)

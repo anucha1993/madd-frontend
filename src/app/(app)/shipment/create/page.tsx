@@ -35,6 +35,7 @@ import { AlertTriangle, ArrowUpDown, CheckCircle2, LayoutGrid, ChevronLeft, Chev
 import PageHeader from "@/components/layout/PageHeader";
 import { useAccess } from "@/components/auth/AccessProvider";
 import Modal from "@/components/ui/Modal";
+import MultiSelect from "@/components/ui/MultiSelect";
 import ThaiAddressSearch from "@/components/shipment/ThaiAddressSearch";
 import CountrySelect from "@/components/shipment/CountrySelect";
 import CustomerAddressPicker from "@/components/shipment/CustomerAddressPicker";
@@ -691,7 +692,9 @@ export default function ShipmentCreatePage() {
   const [customerType, setCustomerType] = useState("DAILY");
   const [entityType, setEntityType] = useState<"INDIVIDUAL" | "COMPANY">("INDIVIDUAL");
   const [paymentOptions, setPaymentOptions] = useState<ManifestOption[]>([]);
+  // One or more payment method codes, comma-separated ("QR,CARD") — as the API stores them.
   const [paymentMethod, setPaymentMethod] = useState("");
+  const paymentCodes = paymentMethod ? paymentMethod.split(",").filter(Boolean) : [];
   const [billTransportationOptions, setBillTransportationOptions] = useState<ManifestOption[]>([]);
   const [billTransportationTo, setBillTransportationTo] = useState("");
   const [billTransportationAccountNumber, setBillTransportationAccountNumber] = useState("");
@@ -2545,7 +2548,9 @@ export default function ShipmentCreatePage() {
           <span className="font-medium uppercase tracking-wide text-slate-400">Payment / Reference</span>
           <div className="flex items-center justify-between">
             <span className="text-slate-500">Payment Method</span>
-            <span className="font-medium text-slate-700">{paymentOptions.find((o) => o.code === paymentMethod)?.name || "-"}</span>
+            <span className="text-right font-medium text-slate-700">
+              {paymentCodes.map((c) => paymentOptions.find((o) => o.code === c)?.name ?? c).join(", ") || "-"}
+            </span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-slate-500">Bill Transportation to</span>
@@ -4560,16 +4565,19 @@ export default function ShipmentCreatePage() {
       <div className="rounded-2xl border border-slate-200 border-t-4 border-t-brand-amber bg-white p-4 shadow-sm">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Payment Method</h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <label className="flex flex-col gap-1">
-            <span className={labelClass}>{L("payment_method", "Payment Method")}{req("payment_method")}</span>
-            <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={inputClass}>
-              {paymentOptions.map((opt) => (
-                <option key={opt.id} value={opt.code}>
-                  {opt.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="flex flex-col gap-1">
+            <span className={labelClass}>
+              {L("payment_method", "Payment Method")}
+              {req("payment_method")} <span className="font-normal text-slate-400">(เลือกได้หลายรายการ)</span>
+            </span>
+            <MultiSelect
+              options={paymentOptions.map((o) => ({ value: o.code, label: o.name }))}
+              value={paymentCodes}
+              onChange={(codes) => setPaymentMethod(codes.join(","))}
+              placeholder="— เลือกวิธีชำระเงิน —"
+              className={inputClass}
+            />
+          </div>
           <div className={billTransportationTo === "RECEIVER" || billTransportationTo === "THIRD_PARTY" ? "grid grid-cols-2 gap-3" : ""}>
           <label className="flex flex-col gap-1">
             <span className={labelClass}>Bill Transportation to</span>

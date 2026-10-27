@@ -1,6 +1,6 @@
 "use client";
 
-import { DHL_SERVICE_OPTIONS, UPS_SERVICE_OPTIONS } from "@/lib/carrierServices";
+import { serviceOptionsFor } from "@/lib/carrierServices";
 import { useMemo } from "react";
 import type { AgentAccount } from "@/lib/agentAccounts";
 import type { BranchCarrierAccountInput } from "@/lib/branchCarrierAccounts";
@@ -42,8 +42,9 @@ export default function BranchCarrierAccountsForm({ agentAccounts, value, onChan
   return (
     <div className="flex flex-col gap-3">
       <p className="text-xs text-slate-500">
-        เลือกบัญชี Agent (UPS/DHL) ที่สาขานี้สามารถใช้งานได้ — หากไม่เลือกบัญชีใดเลยของ Agent หนึ่ง สาขานี้จะใช้ได้ทุกบัญชีของ Agent
-        นั้น (ค่าเริ่มต้น เช่น สำนักงานใหญ่) — เลือกบัญชีแล้วยังจำกัด Service ที่ใช้ได้ต่อได้อีกชั้นหนึ่ง (ว่าง = ใช้ได้ทุก Service)
+        เลือกบัญชีที่สาขานี้ใช้เช็คราคา / ออก Shipment ได้ — ผู้ใช้ที่<b>สังกัด</b>สาขานี้ (/config/users → สาขา) จะเห็นเฉพาะบัญชีที่ติ๊ก
+        (รวม SAGAWA · SGW: ติ๊กแล้วจึงเห็นราคา SAGAWA ตอนส่งไปญี่ปุ่น) · ไม่ติ๊กบัญชีใดเลย = ใช้ได้ทุกบัญชี · ติ๊กบัญชีแล้วจำกัด Service ต่อได้
+        (ว่าง = ทุก Service)
       </p>
 
       <div className="flex max-h-[420px] flex-col gap-3 overflow-y-auto pr-1">
@@ -54,7 +55,8 @@ export default function BranchCarrierAccountsForm({ agentAccounts, value, onChan
               {accounts.map((account) => {
                 const row = value.find((r) => r.agent_account_id === account.id);
                 const isSelected = selectedIds.has(account.id);
-                const serviceOptions = account.agent?.agent_code === "UPS" ? UPS_SERVICE_OPTIONS : DHL_SERVICE_OPTIONS;
+                // No Service list for carriers without an API (e.g. SGW / SAGAWA).
+                const serviceOptions = serviceOptionsFor(account.agent?.agent_code);
                 return (
                   <div key={account.id} className="rounded-md bg-slate-50 px-2 py-1.5">
                     <label className="flex items-center gap-2 text-sm text-slate-600">

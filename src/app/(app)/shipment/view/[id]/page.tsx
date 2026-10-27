@@ -682,7 +682,7 @@ export default function ShipmentViewPage() {
         <aside className="flex flex-col gap-3 lg:sticky lg:top-4 lg:self-start">
           <Section title="Payment Info">
             <dl className="divide-y divide-slate-100">
-              <Row label="Payment Method" value={s.payment_method} labelWidth="w-24" />
+              <Row label="Payment Method" value={s.payment_method?.split(",").join(", ")} labelWidth="w-24" />
               <Row label="Bill Transport to" value={s.bill_transportation_to} labelWidth="w-24" />
               <Row label="Bill Duty/Tax to" value={s.bill_duty_tax_to} labelWidth="w-24" />
             </dl>
