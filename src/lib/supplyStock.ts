@@ -25,7 +25,7 @@ export type StockSupplyRow = {
 };
 
 export type StockMovementType =
-  "receive" | "adjust" | "shipment" | "shipment_return";
+  "receive" | "adjust" | "shipment" | "shipment_return" | "sale" | "sale_return";
 
 export type StockMovement = {
   id: number;
@@ -62,6 +62,8 @@ export const MOVEMENT_LABEL: Record<StockMovementType, string> = {
   adjust: "ปรับยอด",
   shipment: "ใช้กับ Shipment",
   shipment_return: "คืนจาก Void",
+  sale: "ขายหน้าร้าน",
+  sale_return: "คืนจาก Void การขาย",
 };
 
 const query = (params: Record<string, string | number | undefined>) => {

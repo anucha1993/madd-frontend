@@ -10,6 +10,7 @@ import {
   PackagePlus,
   Receipt,
   Settings,
+  ShoppingCart,
   SlidersHorizontal,
   Truck,
   Users,
@@ -52,6 +53,15 @@ export const NAV_SECTIONS: NavItem[] = [
       { label: "Issue Receipt / Tax Invoice", href: "/billing/receipts/new" },
       { label: "Receipts & Tax Invoices", href: "/billing/receipts" },
       { label: "Tax Invoice Customers", href: "/billing/customers" },
+    ],
+  },
+  {
+    id: "supply-sales",
+    label: "ขายกล่อง / ซัพพลาย",
+    icon: ShoppingCart,
+    children: [
+      { label: "ขายสินค้า", href: "/supply-sales/new" },
+      { label: "รายการขาย", href: "/supply-sales" },
     ],
   },
   {

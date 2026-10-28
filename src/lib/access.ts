@@ -53,6 +53,9 @@ const ROUTE_PERMISSIONS: { pattern: RegExp; permission: string | string[]; all?:
   { pattern: /^\/billing\/receipts\/[^/]+\/edit(\/|$)/, permission: "receipt.edit", all: ["receipt.view"] },
   { pattern: /^\/billing\/carrier-invoices(\/|$)/, permission: "carrier_invoice.view" },
   { pattern: /^\/billing\/receipts(\/|$)/, permission: "receipt.view" },
+  // Before /supply-sales — selling has its own permission.
+  { pattern: /^\/supply-sales\/new(\/|$)/, permission: "supply_sale.create" },
+  { pattern: /^\/supply-sales(\/|$)/, permission: "supply_sale.view" },
   { pattern: /^\/billing\/customers(\/|$)/, permission: ["billing_customer.view", "receipt.create"] },
   { pattern: /^\/tracking(\/|$)/, permission: ["tracking.view", "shipment.view"] },
   { pattern: /^\/manifest(\/|$)/, permission: "report.manifest" },

@@ -128,8 +128,6 @@ export type ReceiptLineInput = { description: string; invoice_no?: string | null
 export type CreateReceiptInput = {
   shipment_ids: number[];
   manual_shipment_refs?: string[];
-  // Box/supply sale over the counter — no shipment or ref needed.
-  no_shipment?: boolean;
   // Defaults to the selected shipments' own branch on the backend when omitted — only required
   // when issuing a manual-only receipt with no real shipment to infer it from.
   branch_id?: number | null;
@@ -170,7 +168,10 @@ export const voidReceipt = (id: number, voidNote?: string) =>
 export const deleteReceipt = (id: number) => apiClient.delete<void>(`/receipts/${id}`);
 
 /** Opens the generated PDF (each document type is a standalone 1-page PDF) in a new tab. */
-export async function openReceiptPdf(id: number) {
+export const openReceiptPdf = (id: number) => openApiPdf(`/receipts/${id}/pdf`, "Receipt");
+
+/** Opens a PDF from the API (bearer auth) in a new tab — also used by Box Sales' 80 mm receipt. */
+export async function openApiPdf(path: string, title: string) {
   // Must open synchronously within the click handler, before the async fetch, or popup blockers
   // will silently swallow it (leaving a frozen-looking blank about:blank tab instead).
   let printWindow = window.open("", "_blank");
@@ -192,7 +193,7 @@ export async function openReceiptPdf(id: number) {
     printWindow = null;
   }
 
-  const res = await fetch(`${API_URL}/receipts/${id}/pdf`, {
+  const res = await fetch(`${API_URL}${path}`, {
     headers: { Authorization: `Bearer ${getToken()}` },
   });
   if (!res.ok) {
@@ -215,7 +216,7 @@ export async function openReceiptPdf(id: number) {
 
   try {
     printWindow.document.write(
-      `<!DOCTYPE html><html><head><title>Receipt</title><style>
+      `<!DOCTYPE html><html><head><title>${title}</title><style>
         html,body,iframe{margin:0;padding:0;width:100%;height:100%;border:0;}
       </style></head><body><iframe src="${url}"></iframe></body></html>`,
     );

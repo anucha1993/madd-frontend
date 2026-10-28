@@ -654,8 +654,8 @@ export default function ShipmentCreatePage() {
   // Commercial Invoice step — invoice_lines is ALWAYS required (min 1 row) to build the
   // carrier's mandatory customs declaration (confirmed against DHL's own MyDHL+ portal:
   // every shipment REQUIRES structured product/customs data regardless of any file upload).
-  // The file upload here is a SEPARATE optional supplementary attachment sent to DHL as
-  // documentImages typeCode CIN — it does NOT replace the line items. `invoiceMode` is kept
+  // An uploaded file becomes the MAIN Commercial Invoice the carrier gets (DHL documentImages
+  // CIN / UPS UserCreatedForm) — the line items are still required as customs data. `invoiceMode` is kept
   // only so old saved drafts still load; it always resolves to "FORM" at booking time now.
   const [invoiceMode, setInvoiceMode] = useState<"FORM" | "UPLOAD">("FORM");
   const [invoiceLines, setInvoiceLines] = useState<InvoiceLineRow[]>([newInvoiceLine()]);
@@ -850,6 +850,14 @@ export default function ShipmentCreatePage() {
 
   // An insured document is quoted by DHL only (UPS has no document insurance).
   const hasInsuredDocument = packages.some((p) => p.is_document && p.insured);
+  // Insurance ticked with no Declared Value — nothing to insure, so the flow stops at Step 2.
+  const insuredWithoutValue = packages
+    .map((p, idx) => ({ p, no: idx + 1 }))
+    .filter(({ p }) => p.insured && !(packageTotalDeclaredValue(p) > 0))
+    .map(({ no }) => no);
+  const insuredWithoutValueMessage = insuredWithoutValue.length
+    ? `ติ๊ก Insurance แล้ว ต้องใส่ Declared Value มากกว่า 0 (กล่อง #${insuredWithoutValue.join(", #")}) — หรือเอาติ๊ก Insurance ออก`
+    : "";
   function toggleCarrierFilter(carrier: "UPS" | "DHL") {
     if (carrier === "UPS" && hasInsuredDocument && !selectedCarriers.includes("UPS")) {
       alert("มีเอกสารที่ติ๊กประกันอยู่ — ประกันเอกสารมีเฉพาะ DHL จึงเช็คราคาเฉพาะ DHL (เอาติ๊ก Insurance ออกก่อน ถ้าต้องการราคา UPS)");
@@ -1981,6 +1989,10 @@ export default function ShipmentCreatePage() {
   }
 
   async function handleConfirmBooking() {
+    if (insuredWithoutValue.length) {
+      setBookingError(insuredWithoutValueMessage);
+      return;
+    }
     const payload = buildBookingPayload();
     if (!payload) return;
     const missing = missingRequiredFields(payload, fieldRules, payload.carrier);
@@ -2925,7 +2937,14 @@ export default function ShipmentCreatePage() {
           <div key={s.number} className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setStep(s.number)}
+              onClick={() => {
+                if (s.number > 2 && insuredWithoutValue.length) {
+                  setStep(2);
+                  alert(insuredWithoutValueMessage);
+                  return;
+                }
+                setStep(s.number);
+              }}
               className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold transition ${
                 step === s.number
                   ? "bg-brand-amber text-brand-navy-dark"
@@ -4082,7 +4101,7 @@ export default function ShipmentCreatePage() {
                         value={pkg.declared_value ?? 0}
                         disabled={!isActive}
                         onChange={(e) => updateDeclaredValue(pkg, Number(e.target.value))}
-                        className={`w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15 disabled:bg-slate-100 ${
+                        className={`w-full rounded-lg border ${pkg.insured && !(packageTotalDeclaredValue(pkg) > 0) ? "border-red-400" : "border-slate-300"} bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15 disabled:bg-slate-100 ${
                           !isActive ? "pointer-events-none" : ""
                         }`}
                       />
@@ -4393,11 +4412,13 @@ export default function ShipmentCreatePage() {
                       <p className="text-sm text-slate-400">No valid quotes returned.</p>
                     ))}
                 </div>
+                {insuredWithoutValueMessage && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{insuredWithoutValueMessage}</p>}
                 <div className="mt-4 flex justify-end">
                   <button
                     type="button"
                     onClick={() => setStep(3)}
-                    disabled={!selectedQuote}
+                    disabled={!selectedQuote || insuredWithoutValue.length > 0}
+                    title={insuredWithoutValueMessage || undefined}
                     className="flex items-center gap-2 rounded-lg bg-brand-amber px-6 py-2.5 text-sm font-semibold text-brand-navy-dark shadow-sm hover:bg-brand-amber/90 disabled:opacity-60"
                   >
                     Next <ChevronRight className="h-4 w-4" />
@@ -4450,7 +4471,8 @@ export default function ShipmentCreatePage() {
           <p className="font-semibold text-slate-700">Commercial Invoice</p>
           <p className="mt-0.5">
             กรอกรายการสินค้าตามจริง (อย่างน้อย 1 รายการ) — ระบบจะส่งเป็นข้อมูลศุลกากรให้ Carrier
-            เอง (บังคับตาม DHL/UPS schema) และแนบไฟล์ Invoice ของคุณเป็นเอกสารเสริมได้ด้านล่าง
+            เสมอ (บังคับตาม DHL/UPS schema) — ถ้าอัปโหลดไฟล์ Invoice ด้านล่าง ไฟล์นั้นจะเป็น Commercial
+            Invoice หลักที่ส่งให้ Carrier
           </p>
         </div>
 
@@ -4577,13 +4599,14 @@ export default function ShipmentCreatePage() {
           <div className="mt-4 flex flex-col gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/50 p-3">
             <label className="flex flex-col gap-1.5">
               <span className="text-xs font-semibold text-slate-700">
-                {L("commercial_invoice_upload_key", "ไฟล์ Commercial Invoice (เสริม — PDF/JPG/PNG)")}{req("commercial_invoice_upload_key")}
+                {L("commercial_invoice_upload_key", "ไฟล์ Commercial Invoice (PDF/JPG/PNG)")}{req("commercial_invoice_upload_key")}
               </span>
               <span className="text-[11px] text-slate-500">
-                ถ้าคุณมีไฟล์ Invoice ของบริษัทเอง แนบที่นี่ได้ — ไม่แทนที่ข้อมูลรายการสินค้าด้านบน
-                (บังคับต้องกรอกทั้งคู่) ไฟล์นี้จะถูกส่งให้ carrier รับทราบทางอิเล็กทรอนิกส์จริง: DHL
-                รับเป็นเอกสารแนบ (documentImages CIN) ในคำขอสร้าง Shipment เดียวกัน, UPS อัปโหลดเข้า
-                Paperless Document แล้วผูกกับ Shipment ให้ขึ้น EDI-IDIS บนใบส่ง — ขนาดไฟล์ไม่เกิน 5MB
+                ถ้าคุณมีไฟล์ Invoice ของบริษัทเอง แนบที่นี่ — ไฟล์นี้จะเป็น Commercial Invoice หลักที่ส่งให้
+                Carrier ทางอิเล็กทรอนิกส์: DHL รับเป็น Commercial Invoice (documentImages CIN) ในคำขอสร้าง
+                Shipment เดียวกัน, UPS อัปโหลดเข้า Paperless Document แล้วผูกเป็น Invoice ของ Shipment
+                (ขึ้น EDI-IDIS บนใบส่ง) — ยังต้องกรอกรายการสินค้าด้านบนด้วย เพราะ Carrier ใช้เป็นข้อมูล
+                ศุลกากร — ขนาดไฟล์ไม่เกิน 5MB
               </span>
               <input
                 type="file"
@@ -4596,7 +4619,7 @@ export default function ShipmentCreatePage() {
             {invoiceUploadError && <p className="text-xs text-red-600">{invoiceUploadError}</p>}
             {invoiceUploadKey && !uploadingInvoiceFile && (
               <p className="text-xs font-medium text-emerald-600">
-                อัปโหลดสำเร็จ: {invoiceFile?.name} — จะแนบไปกับ Shipment นี้เป็นเอกสารเสริม
+                อัปโหลดสำเร็จ: {invoiceFile?.name} — จะส่งให้ Carrier เป็น Commercial Invoice หลักของ Shipment นี้
               </p>
             )}
           </div>
