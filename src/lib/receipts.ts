@@ -128,6 +128,8 @@ export type ReceiptLineInput = { description: string; invoice_no?: string | null
 export type CreateReceiptInput = {
   shipment_ids: number[];
   manual_shipment_refs?: string[];
+  // Box/supply sale over the counter — no shipment or ref needed.
+  no_shipment?: boolean;
   // Defaults to the selected shipments' own branch on the backend when omitted — only required
   // when issuing a manual-only receipt with no real shipment to infer it from.
   branch_id?: number | null;

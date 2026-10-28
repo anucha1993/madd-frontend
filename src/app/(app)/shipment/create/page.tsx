@@ -222,6 +222,12 @@ type PackageRow = ShipmentPackageInput & {
   // Whether `declared_value` (typed by staff) means the TOTAL for this row (qty boxes combined)
   // or the value of ONE box (system multiplies by qty) — undefined (old drafts) behaves as TOTAL.
   declared_value_mode?: "TOTAL" | "PER_BOX";
+  // What staff typed in "Dim. Weight" (UI only) — kept while typing so the derived L/W/H don't
+  // rewrite the field under them; cleared as soon as L/W/H are typed by hand.
+  dim_weight_input?: string;
+  // Which one staff filled in — the other input is hidden. Unset (both shown) until one is typed
+  // into, and again once it's cleared.
+  dim_mode?: "LWH" | "DIM";
 };
 
 // A free-form Commercial Invoice product line — NOT tied 1:1 to physical packages (a real
@@ -1145,6 +1151,30 @@ export default function ShipmentCreatePage() {
     setPackages((prev) => prev.map((p) => (p.key === key ? { ...p, ...patch } : p)));
   }
 
+  // Dimensional Weight = L × W × H ÷ 5000. Typed instead of L/W/H, it becomes the box's weight plus a
+  // near-cube box of at most that volume (carriers only take dimensions) — H is rounded DOWN so the
+  // volume never tops the weight, and the carrier bills exactly the Dim. Weight typed.
+  function updateDimWeight(key: number, input: string) {
+    if (input.trim() === "") {
+      updatePackage(key, { dim_weight_input: undefined, dim_mode: undefined, length: 0, width: 0, height: 0, weight: 0 });
+      return;
+    }
+    const dimWeight = Number(input);
+    if (!(dimWeight > 0)) {
+      updatePackage(key, { dim_weight_input: input, dim_mode: "DIM" });
+      return;
+    }
+    const volume = dimWeight * 5000;
+    const side = Math.max(1, Math.round(Math.cbrt(volume)));
+    // Weight is hidden in this mode — the box is sent at its Dim. Weight (what it's billed at anyway).
+    updatePackage(key, { dim_weight_input: input, dim_mode: "DIM", weight: dimWeight, length: side, width: side, height: Math.max(1, Math.floor(volume / (side * side))) });
+  }
+
+  function updateLwh(pkg: PackageRow, patch: Pick<Partial<PackageRow>, "length" | "width" | "height">) {
+    const next = { ...pkg, ...patch };
+    updatePackage(pkg.key, { ...patch, dim_weight_input: undefined, dim_mode: next.length || next.width || next.height ? "LWH" : undefined });
+  }
+
   // API_COST insurance (e.g. DHL's own) freezes its sell price from the LAST Check Rate's real
   // chargeBreakdown — editing Declared Value after that makes that frozen price stale (it no
   // longer reflects what the carrier would actually charge for the new value), so the selection
@@ -1727,6 +1757,8 @@ export default function ShipmentCreatePage() {
       length: Number(supply.length) || undefined,
       width: Number(supply.width) || undefined,
       height: Number(supply.height) || undefined,
+      dim_weight_input: undefined,
+      dim_mode: supply.length || supply.width || supply.height ? "LWH" : undefined,
       is_document: false,
       ...(supply.weight_band_id ? { quantity: 1 } : {}),
       forcedWeightBandId: supply.weight_band_id ?? null,
@@ -3863,13 +3895,14 @@ export default function ShipmentCreatePage() {
                     </div>
                   )}
                   <div className="flex items-end gap-3">
+                  {(pkg.is_document || pkg.dim_mode !== "DIM") && (
                   <label className="flex w-24 flex-col gap-1">
                     <span className={labelClass}>Weight (kg)</span>
                     <input
                       type="number"
                       min={0.1}
                       step={0.1}
-                      value={pkg.weight}
+                      value={pkg.weight || ""}
                       disabled={!isActive}
                       title={
                         pkg.forcedWeightBandWeight
@@ -3882,7 +3915,8 @@ export default function ShipmentCreatePage() {
                       }`}
                     />
                   </label>
-                  {!pkg.is_document && (
+                  )}
+                  {!pkg.is_document && pkg.dim_mode !== "DIM" && (
                     <div className="flex flex-col gap-1">
                       <div className="flex">
                         <span className={`${labelClass} w-16`}>Length</span>
@@ -3893,9 +3927,9 @@ export default function ShipmentCreatePage() {
                         <input
                           type="number"
                           min={1}
-                          value={pkg.length}
+                          value={pkg.length || ""}
                           disabled={!isActive}
-                          onChange={(e) => updatePackage(pkg.key, { length: Number(e.target.value) })}
+                          onChange={(e) => updateLwh(pkg, { length: Number(e.target.value) })}
                           className={`w-16 rounded-l-lg px-3 py-1.5 text-sm outline-none disabled:bg-slate-100 ${
                             !isActive ? "pointer-events-none" : ""
                           }`}
@@ -3903,9 +3937,9 @@ export default function ShipmentCreatePage() {
                         <input
                           type="number"
                           min={1}
-                          value={pkg.width}
+                          value={pkg.width || ""}
                           disabled={!isActive}
-                          onChange={(e) => updatePackage(pkg.key, { width: Number(e.target.value) })}
+                          onChange={(e) => updateLwh(pkg, { width: Number(e.target.value) })}
                           className={`w-16 px-3 py-1.5 text-sm outline-none disabled:bg-slate-100 ${
                             !isActive ? "pointer-events-none" : ""
                           }`}
@@ -3913,9 +3947,9 @@ export default function ShipmentCreatePage() {
                         <input
                           type="number"
                           min={1}
-                          value={pkg.height}
+                          value={pkg.height || ""}
                           disabled={!isActive}
-                          onChange={(e) => updatePackage(pkg.key, { height: Number(e.target.value) })}
+                          onChange={(e) => updateLwh(pkg, { height: Number(e.target.value) })}
                           className={`w-16 rounded-r-lg px-3 py-1.5 text-sm outline-none disabled:bg-slate-100 ${
                             !isActive ? "pointer-events-none" : ""
                           }`}
@@ -3928,7 +3962,7 @@ export default function ShipmentCreatePage() {
                     <input
                       type="number"
                       min={1}
-                      value={pkg.quantity}
+                      value={pkg.quantity || ""}
                       disabled={!isActive || !!pkg.forcedWeightBandId}
                       title={pkg.forcedWeightBandId ? "กล่อง CPM ต้องมี Qty = 1 เสมอ ไม่สามารถเพิ่มได้" : undefined}
                       onChange={(e) => updatePackage(pkg.key, { quantity: Number(e.target.value) })}
@@ -3947,6 +3981,29 @@ export default function ShipmentCreatePage() {
                     <Trash2 className="h-4 w-4" />
                   </button>
                   </div>
+                  {!pkg.is_document && pkg.dim_mode !== "LWH" && (
+                    <div className="flex items-end gap-3">
+                      <label className="flex w-36 flex-col gap-1">
+                        <span className={labelClass}>Dim. Weight (kg)</span>
+                        <input
+                          type="number"
+                          min={0.1}
+                          step={0.01}
+                          value={pkg.dim_weight_input ?? ""}
+                          disabled={!isActive}
+                          onChange={(e) => updateDimWeight(pkg.key, e.target.value)}
+                          className={`w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15 disabled:bg-slate-100 ${
+                            !isActive ? "pointer-events-none" : ""
+                          }`}
+                        />
+                      </label>
+                      <p className="pb-2 text-xs text-slate-400">
+                        {pkg.dim_mode === "DIM"
+                          ? `= กว้าง × ยาว × สูง ÷ 5,000 — ส่ง Carrier เป็นกล่อง ${pkg.length}×${pkg.width}×${pkg.height} cm น้ำหนัก ${pkg.weight} kg · ลบค่าเพื่อกลับไปกรอก L/W/H`
+                          : "กรอก L/W/H หรือ Dim. Weight อย่างใดอย่างหนึ่ง (กว้าง × ยาว × สูง ÷ 5,000)"}
+                      </p>
+                    </div>
+                  )}
                   {pkg.is_document && documentOverLimitCarriers.length > 0 && (
                     <p className="text-xs text-red-600">
                       Document รวม {totalDocumentKg} กก. เกินที่{" "}
@@ -4232,7 +4289,7 @@ export default function ShipmentCreatePage() {
                               <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600">เช็คราคาเท่านั้น · ไม่ออก Shipment</span>
                             )}
                           </div>
-                          <span className="text-sm font-bold text-brand-navy-dark">
+                          <span className="text-sm font-bold text-black">
                             {sellAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })} {r.currency}
                           </span>
                         </div>
@@ -4280,7 +4337,7 @@ export default function ShipmentCreatePage() {
                                   {markupBasis && <span className="block text-[11px] text-emerald-600">{markupBasis}</span>}
                                   {canSeeMarkup && insuranceMarkupPct !== 0 && <span className="ml-1 text-emerald-600">(+{insuranceMarkupPct}%)</span>}
                                 </span>
-                                <span className={`shrink-0 whitespace-nowrap font-medium ${canSeeMarkup && (line.isCustomCharge || insuranceMarkupPct !== 0) ? "text-emerald-600" : "text-slate-600"}`}>
+                                <span className={`shrink-0 whitespace-nowrap font-medium ${canSeeMarkup && (line.isCustomCharge || insuranceMarkupPct !== 0) ? "text-emerald-600" : "text-black"}`}>
                                   {Math.ceil(displayAmount).toLocaleString(undefined, { maximumFractionDigits: 0 })} {line.currency}
                                 </span>
                               </div>

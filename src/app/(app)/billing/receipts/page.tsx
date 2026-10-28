@@ -163,7 +163,7 @@ const RECEIPT_COLUMNS: ReceiptColumn[] = [
       const list = rep.shipments ?? [];
       if (list.length === 0) {
         const manual = rep.manual_shipment_refs ?? [];
-        if (manual.length === 0) return "-";
+        if (manual.length === 0) return "ขายสินค้า / ซัพพลาย";
         const first = `${manual[0]} (manual)`;
         if (manual.length === 1) return first;
         return (

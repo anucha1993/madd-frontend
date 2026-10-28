@@ -107,6 +107,8 @@ export default function IssueReceiptPage() {
   // system (2026-09-25) — lets staff issue a receipt for them too, entered as plain text.
   const [manualRefs, setManualRefs] = useState<string[]>([]);
   const [manualRefInput, setManualRefInput] = useState("");
+  // Selling boxes/supplies with no shipment — lines are typed by hand, stock is still adjusted by hand.
+  const [noShipment, setNoShipment] = useState(false);
   // Carriers with no real API integration (is_api_enabled=false on their Agent Account, e.g.
   // Kerry/Flash) — offered here as a pick-list so staff tag the manual ref with a proper carrier
   // name instead of typing it every time (see /config/agent-accounts "ปิดใช้งาน API" toggle).
@@ -404,9 +406,9 @@ export default function IssueReceiptPage() {
   const shipmentsWithCost = shipments.filter((s) => s.cost_amount != null);
   const totalCost =
     shipmentsWithCost.length > 0 ? shipmentsWithCost.reduce((sum, s) => sum + Number(s.cost_amount), 0) : null;
-  const canSubmit = (shipments.length > 0 || manualRefs.length > 0) && branchId != null && lines.length > 0 && buyerName.trim().length > 0;
+  const canSubmit = (shipments.length > 0 || manualRefs.length > 0 || noShipment) && branchId != null && lines.length > 0 && buyerName.trim().length > 0;
   const disabledReason =
-    shipments.length === 0 && manualRefs.length === 0
+    shipments.length === 0 && manualRefs.length === 0 && !noShipment
       ? "Add at least one shipment"
       : branchId == null
         ? "Select a branch"
@@ -459,6 +461,7 @@ export default function IssueReceiptPage() {
       const pair = await createReceipt({
         shipment_ids: shipments.map((s) => s.id),
         manual_shipment_refs: manualRefs.length > 0 ? manualRefs : undefined,
+        no_shipment: noShipment || undefined,
         branch_id: branchId,
         billing_customer_id: billingCustomerId,
         buyer_name: buyerName,
@@ -580,6 +583,25 @@ export default function IssueReceiptPage() {
           </section>
 
           <Card title="Shipments">
+            <label
+              className={`mb-3 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${noShipment ? "border-brand-amber bg-amber-50" : "border-slate-200"} ${shipments.length > 0 || manualRefs.length > 0 ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+              title={shipments.length > 0 || manualRefs.length > 0 ? "เอา Shipment ที่เลือกออกก่อน" : undefined}
+            >
+              <input
+                type="checkbox"
+                checked={noShipment}
+                disabled={shipments.length > 0 || manualRefs.length > 0}
+                onChange={(e) => setNoShipment(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-brand-navy focus:ring-brand-navy/30"
+              />
+              <span className="font-medium text-slate-700">ขายสินค้า / ซัพพลาย (ไม่มี Shipment)</span>
+            </label>
+            {noShipment ? (
+              <p className="text-xs text-slate-500">
+                ใส่รายการสินค้า (เช่น กล่อง, เทป) และยอดเงินในตาราง Line Items — Stock ยังต้องปรับเองที่หน้า Supplies เหมือนเดิม
+              </p>
+            ) : (
+            <>
             {refreshError && <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{refreshError}</p>}
             {shipments.length === 0 && manualRefs.length === 0 ? (
               <p className="mb-2 text-sm text-slate-400">No shipments selected yet — search below to add one.</p>
@@ -697,6 +719,8 @@ export default function IssueReceiptPage() {
                 </div>
               )}
             </div>
+            </>
+            )}
           </Card>
         </div>
 
