@@ -76,6 +76,7 @@ const ROUTE_PERMISSIONS: { pattern: RegExp; permission: string | string[]; all?:
   { pattern: /^\/config\/supplies\/stock(\/|$)/, permission: "supply_stock.view" },
   { pattern: /^\/config\/supplies(\/|$)/, permission: "config.supplies" },
   { pattern: /^\/config\/weight-bands(\/|$)/, permission: "config.weight_bands" },
+  { pattern: /^\/config\/hs-codes(\/|$)/, permission: "config.hs_codes" },
   { pattern: /^\/config\/manifest-options(\/|$)/, permission: "config.manifest_options" },
   { pattern: /^\/config\/receipt-line-templates(\/|$)/, permission: "config.receipt_templates" },
   { pattern: /^\/config\/countries(\/|$)/, permission: "config.countries" },

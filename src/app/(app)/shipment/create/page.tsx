@@ -36,12 +36,13 @@ import PageHeader from "@/components/layout/PageHeader";
 import { useAccess } from "@/components/auth/AccessProvider";
 import Modal from "@/components/ui/Modal";
 import MultiSelect from "@/components/ui/MultiSelect";
+import HsCodeInput from "@/components/shipment/HsCodeInput";
 import ThaiAddressSearch from "@/components/shipment/ThaiAddressSearch";
 import CountrySelect from "@/components/shipment/CountrySelect";
 import CustomerAddressPicker from "@/components/shipment/CustomerAddressPicker";
 import { listCountries, type Country } from "@/lib/countries";
 import { listAgents, type Agent } from "@/lib/agentAccounts";
-import { listSupplies, type Supply } from "@/lib/supplies";
+import { listSupplies, SUPPLY_TYPES, type Supply } from "@/lib/supplies";
 import { listAddonItems, type AddonItem } from "@/lib/addonItems";
 import { parseAddressWithAi } from "@/lib/ai";
 import { useAiEnabled } from "@/hooks/useAiEnabled";
@@ -52,7 +53,7 @@ import { checkRate, DOCUMENT_MAX_KG, documentWeightKg, weightUnitLabel, type Che
 import { lookupInsuranceCountryCap, type InsuranceCountryCap } from "@/lib/insuranceCountryCaps";
 import { validateAddress, type AddressValidationResult } from "@/lib/addressValidation";
 import { ApiError } from "@/lib/apiClient";
-import { bookShipment, describeShipmentPieces, downloadDhlOriginalWaybill, openShipmentCommercialInvoice, openShipmentLabel, openShipmentWaybill, printAllShipmentLabels, uploadCommercialInvoiceFile, type BookShipmentInput, type Shipment } from "@/lib/shipments";
+import { bookShipment, describeShipmentPieces, downloadDhlOriginalWaybill, getShipment, openShipmentCommercialInvoice, openShipmentLabel, openShipmentWaybill, printAllShipmentLabels, uploadCommercialInvoiceFile, type BookShipmentInput, type Shipment } from "@/lib/shipments";
 import { getShipmentDraft, createShipmentDraft, updateShipmentDraft, deleteShipmentDraft } from "@/lib/shipmentDrafts";
 import { getUser } from "@/lib/auth";
 import { useChargeDisplayNames } from "@/hooks/useChargeDisplayNames";
@@ -243,6 +244,7 @@ type InvoiceLineRow = {
   weight: string;
   country_of_origin: string;
   hs_code: string;
+  unit: string;
 };
 let invoiceLineKeySeq = 1;
 const newInvoiceLine = (init?: Partial<InvoiceLineRow>): InvoiceLineRow => ({
@@ -253,8 +255,131 @@ const newInvoiceLine = (init?: Partial<InvoiceLineRow>): InvoiceLineRow => ({
   weight: "",
   country_of_origin: "TH",
   hs_code: "",
+  unit: "PCS",
   ...init,
 });
+
+// "Clone" (/shipment/create?clone=<id>): an earlier shipment as a draft snapshot (see
+// buildDraftSnapshot) — same sender, receiver, boxes and invoice. Rates, add-ons, insurance
+// choice and the booking itself start again from Step 1; reference numbers are left blank.
+function shipmentToSnapshot(s: Shipment) {
+  const o = s.origin ?? {};
+  const d = s.destination ?? {};
+  return {
+    step: 1,
+    customerType: s.customer_type ?? undefined,
+    entityType: s.entity_type ?? undefined,
+    origin: {
+      contactName: o.contact_name ?? "",
+      company: o.company ?? "",
+      taxId: o.tax_id ?? "",
+      postcode: o.postcode ?? "",
+      city: o.city ?? "",
+      address: o.address ?? "",
+      address2: o.address2 ?? "",
+      address3: o.address3 ?? "",
+      phone: o.phone ?? "",
+      notes: o.notes ?? "",
+    },
+    destination: {
+      contactName: d.contact_name ?? "",
+      company: d.company ?? "",
+      taxId: d.tax_id ?? "",
+      taxIdType: d.tax_id_type ?? "VAT",
+      country: d.country ?? "",
+      city: d.city ?? "",
+      state: d.state ?? "",
+      postcode: d.postcode ?? "",
+      address: d.address ?? "",
+      address2: d.address2 ?? "",
+      address3: d.address3 ?? "",
+      phone: d.phone ?? "",
+      email: d.email ?? "",
+      notes: d.notes ?? "",
+    },
+    packages: (s.packages ?? []).map((p) => ({
+      ...newRow(),
+      weight: Number(p.weight) || 0,
+      length: Number(p.length) || 0,
+      width: Number(p.width) || 0,
+      height: Number(p.height) || 0,
+      quantity: p.quantity ?? 1,
+      description: p.description ?? "",
+      is_document: !!p.is_document,
+      declared_value: Number(p.declared_value) || 0,
+      insured: !!p.insured,
+      productType: (p.product_type as ProductType) ?? "NON_SILVER",
+      productTypeOther: p.product_type_other ?? "",
+    })),
+    invoiceLines: (s.invoice_lines ?? []).map((l) =>
+      newInvoiceLine({
+        description: l.description ?? "",
+        quantity: Number(l.quantity) || 1,
+        unit_value: l.unit_value != null ? String(l.unit_value) : "",
+        weight: l.weight != null ? String(l.weight) : "",
+        country_of_origin: l.country_of_origin || "TH",
+        hs_code: l.hs_code ?? "",
+        unit: l.unit || "PCS",
+      }),
+    ),
+    exportReason: s.export_reason ?? "SALE",
+    invoiceCurrency: s.invoice_currency ?? "THB",
+    paymentMethod: s.payment_method ?? undefined,
+    billTransportationTo: s.bill_transportation_to ?? undefined,
+    billDutyTaxTo: s.bill_duty_tax_to ?? undefined,
+  };
+}
+
+// Commercial Invoice choices — mapped to each carrier's own codes server-side (CommercialInvoiceCodes).
+const EXPORT_REASONS = [
+  { value: "SALE", label: "Commercial / ขาย (Sale)" },
+  { value: "GIFT", label: "Gift / ของขวัญ" },
+  { value: "SAMPLE", label: "Sample / ตัวอย่างสินค้า" },
+  { value: "PERSONAL", label: "Personal use / ของใช้ส่วนตัว" },
+  { value: "RETURN", label: "Return / ส่งคืน" },
+  { value: "REPAIR", label: "Repair / ส่งซ่อม" },
+];
+const INVOICE_UNITS = [
+  { value: "PCS", label: "PCS (ชิ้น)" },
+  { value: "PRS", label: "PRS (คู่)" },
+  { value: "SET", label: "SET (ชุด)" },
+  { value: "BOX", label: "BOX (กล่อง)" },
+  { value: "DOZ", label: "DOZ (โหล)" },
+  { value: "KG", label: "KG (กิโลกรัม)" },
+  { value: "GM", label: "GM (กรัม)" },
+  { value: "M", label: "M (เมตร)" },
+  { value: "ROLL", label: "ROLL (ม้วน)" },
+  { value: "OTHER", label: "อื่นๆ" },
+];
+const INVOICE_CURRENCIES = ["THB", "USD", "EUR", "JPY", "HKD", "GBP", "CNY", "SGD", "AUD", "KRW", "TWD", "MYR", "CAD", "CHF"];
+const TAX_ID_TYPES = [
+  { value: "VAT", label: "Tax ID / VAT" },
+  { value: "EOR", label: "EORI" },
+  { value: "NID", label: "National ID" },
+  { value: "PAS", label: "Passport" },
+  { value: "SSN", label: "SSN" },
+  { value: "EIN", label: "EIN" },
+  { value: "CNP", label: "CPF / CNPJ (Brazil)" },
+];
+// Destinations where DHL / customs usually won't clear a parcel without the receiver's number —
+// a reminder for staff, not a complete or legal list.
+const RECEIVER_ID_HINTS: Record<string, string> = {
+  BR: "CPF (บุคคล) / CNPJ (บริษัท)",
+  AR: "CUIT / CUIL",
+  CL: "RUT",
+  CO: "NIT / Cédula",
+  PE: "RUC / DNI",
+  MX: "RFC",
+  KR: "Personal Customs Clearance Code (PCCC)",
+  CN: "เลขบัตรประชาชนจีน / USCI (บริษัท)",
+  TW: "National ID / UBN",
+  ID: "NIK / NPWP",
+  TR: "Turkish ID / Tax No.",
+  IL: "Israeli ID / Tax ID",
+  EG: "Tax ID",
+  IN: "GSTIN / PAN",
+  GB: "EORI (สินค้าเชิงพาณิชย์)",
+};
 
 let rowKeySeq = 1;
 const newRow = (): PackageRow => ({
@@ -520,6 +645,7 @@ export default function ShipmentCreatePage() {
   const [destinationCustomerId, setDestinationCustomerId] = useState<number | null>(null);
   const [destinationCompany, setDestinationCompany] = useState("");
   const [destinationTaxId, setDestinationTaxId] = useState("");
+  const [destinationTaxIdType, setDestinationTaxIdType] = useState("VAT");
   const [destinationCountry, setDestinationCountry] = useState("");
   const [destinationCity, setDestinationCity] = useState("");
   // UPS's real Ship API (unlike its Rate API, which tolerates it being blank) hard-requires
@@ -659,8 +785,10 @@ export default function ShipmentCreatePage() {
   // only so old saved drafts still load; it always resolves to "FORM" at booking time now.
   const [invoiceMode, setInvoiceMode] = useState<"FORM" | "UPLOAD">("FORM");
   const [invoiceLines, setInvoiceLines] = useState<InvoiceLineRow[]>([newInvoiceLine()]);
-  const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
-  const [invoiceUploadKey, setInvoiceUploadKey] = useState<string | null>(null);
+  // Uploaded Commercial Invoice files (all sent to the carrier) — removable before booking.
+  const [invoiceUploads, setInvoiceUploads] = useState<{ key: string; name: string }[]>([]);
+  const [exportReason, setExportReason] = useState("SALE");
+  const [invoiceCurrency, setInvoiceCurrency] = useState("THB");
   const [uploadingInvoiceFile, setUploadingInvoiceFile] = useState(false);
   const [invoiceUploadError, setInvoiceUploadError] = useState("");
   const invoiceLinesTotal = invoiceLines.reduce((sum, l) => sum + l.quantity * (Number(l.unit_value) || 0), 0);
@@ -673,20 +801,25 @@ export default function ShipmentCreatePage() {
     setInvoiceLines((prev) => (prev.length > 1 ? prev.filter((l) => l.key !== key) : prev));
   }
 
-  async function handleInvoiceFileChange(file: File | null) {
-    setInvoiceFile(file);
-    setInvoiceUploadKey(null);
+  async function handleInvoiceFilesChange(files: File[]) {
     setInvoiceUploadError("");
-    if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      setInvoiceUploadError("ไฟล์ต้องมีขนาดไม่เกิน 5MB (ข้อจำกัดของ DHL)");
-      setInvoiceFile(null);
+    if (files.length === 0) return;
+    if (invoiceUploads.length + files.length > 5) {
+      setInvoiceUploadError("แนบได้สูงสุด 5 ไฟล์ต่อ Shipment");
+      return;
+    }
+    // DHL's limit is 5MB for all customs documents of one shipment together.
+    const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+    if (files.some((f) => f.size > 5 * 1024 * 1024) || totalSize > 5 * 1024 * 1024) {
+      setInvoiceUploadError("ไฟล์รวมกันต้องไม่เกิน 5MB (ข้อจำกัดของ DHL)");
       return;
     }
     setUploadingInvoiceFile(true);
     try {
-      const res = await uploadCommercialInvoiceFile(file);
-      setInvoiceUploadKey(res.storage_key);
+      for (const file of files) {
+        const res = await uploadCommercialInvoiceFile(file);
+        setInvoiceUploads((prev) => [...prev, { key: res.storage_key, name: file.name }]);
+      }
     } catch (err) {
       setInvoiceUploadError(err instanceof Error ? err.message : "อัปโหลดไฟล์ไม่สำเร็จ");
     } finally {
@@ -1008,6 +1141,7 @@ export default function ShipmentCreatePage() {
         customerId: destinationCustomerId,
         company: destinationCompany,
         taxId: destinationTaxId,
+        taxIdType: destinationTaxIdType,
         country: destinationCountry,
         city: destinationCity,
         state: destinationState,
@@ -1023,6 +1157,9 @@ export default function ShipmentCreatePage() {
       activePackageKey,
       invoiceMode,
       invoiceLines,
+      exportReason,
+      invoiceCurrency,
+      invoiceUploads,
       addonRows,
       stockSupplyId,
       selectedCarriers,
@@ -1072,6 +1209,7 @@ export default function ShipmentCreatePage() {
     setDestinationCustomerId(d.customerId ?? null);
     setDestinationCompany(d.company ?? "");
     setDestinationTaxId(d.taxId ?? "");
+    setDestinationTaxIdType(d.taxIdType ?? "VAT");
     setDestinationCountry(d.country ?? "");
     setDestinationCity(d.city ?? "");
     setDestinationState(cleanStateCode(d.state ?? ""));
@@ -1094,9 +1232,12 @@ export default function ShipmentCreatePage() {
     if (Array.isArray(s.invoiceLines) && s.invoiceLines.length > 0) {
       // Drafts saved before quantities became whole-number only may hold decimals — round
       // them here so the user sees (and can fix) the value that will actually be sent.
-      setInvoiceLines(s.invoiceLines.map((l: InvoiceLineRow) => ({ ...l, quantity: Math.max(1, Math.round(Number(l.quantity) || 1)) })));
+      setInvoiceLines(s.invoiceLines.map((l: InvoiceLineRow) => ({ ...l, unit: l.unit || "PCS", quantity: Math.max(1, Math.round(Number(l.quantity) || 1)) })));
       invoiceLineKeySeq = Math.max(invoiceLineKeySeq, ...s.invoiceLines.map((l: InvoiceLineRow) => l.key)) + 1;
     }
+    if (typeof s.exportReason === "string") setExportReason(s.exportReason);
+    if (typeof s.invoiceCurrency === "string") setInvoiceCurrency(s.invoiceCurrency);
+    if (Array.isArray(s.invoiceUploads)) setInvoiceUploads(s.invoiceUploads);
     if (Array.isArray(s.addonRows)) {
       setAddonRows(s.addonRows);
       if (s.addonRows.length > 0) {
@@ -1136,6 +1277,20 @@ export default function ShipmentCreatePage() {
       })
       .catch(() => setDraftError("โหลดฉบับร่างไม่สำเร็จ — อาจถูกลบไปแล้ว"))
       .finally(() => setLoadingDraft(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const cloneParam = searchParams.get("clone");
+    if (!cloneParam || searchParams.get("draft")) return;
+    const id = Number(cloneParam);
+    if (!Number.isFinite(id)) return;
+    getShipment(id)
+      .then((source) => {
+        applyDraftSnapshot(shipmentToSnapshot(source));
+        setDraftMessage(`คัดลอกข้อมูลจาก Shipment ${source.tracking_number ?? `#${source.id}`} แล้ว — เช็คราคาและเลือกประกัน / Add-on ใหม่ก่อนจอง`);
+      })
+      .catch(() => setDraftError("โหลด Shipment ต้นฉบับไม่สำเร็จ"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1382,18 +1537,6 @@ export default function ShipmentCreatePage() {
     return onHand - taken;
   }
   const supplyBlocked = (supply: Supply) => !access.is_super_admin && (supplyStockLeft(supply) ?? 1) <= 0;
-
-  function renderSupplyStock(supply: Supply) {
-    const left = supplyStockLeft(supply);
-    if (left === null) return <span className="text-[10px] leading-tight text-slate-400">เลือกสาขาเพื่อดู Stock</span>;
-    const min = supply.stocks?.find((s) => s.branch_id === stockBranchId)?.min_qty ?? null;
-    const low = left <= 0 || (min !== null && left <= min);
-    return (
-      <span className={`text-[10px] leading-tight ${low ? "font-semibold text-red-600" : "text-slate-500"}`}>
-        {left <= 0 ? `Stock หมด (${left.toLocaleString()})` : `คงเหลือ ${left.toLocaleString()}`}
-      </span>
-    );
-  }
 
   function addAddonFromSupply(supply: Supply) {
     if (supplyBlocked(supply)) return;
@@ -1910,6 +2053,7 @@ export default function ShipmentCreatePage() {
         contact_name: destinationContactName.trim() || undefined,
         company: destinationCompany.trim() || undefined,
         tax_id: destinationTaxId.trim() || undefined,
+        tax_id_type: destinationTaxId.trim() ? destinationTaxIdType : undefined,
         country: destinationCountry,
         city: destinationCity.trim(),
         state: destinationState.trim() || undefined,
@@ -1953,8 +2097,11 @@ export default function ShipmentCreatePage() {
         weight: Number(l.weight) || undefined,
         country_of_origin: l.country_of_origin || "TH",
         hs_code: l.hs_code || undefined,
+        unit: l.unit || "PCS",
       })),
-      commercial_invoice_upload_key: invoiceUploadKey || undefined,
+      commercial_invoice_upload_keys: invoiceUploads.map((u) => u.key),
+      export_reason: exportReason,
+      invoice_currency: invoiceCurrency,
       dhl_optional_services: dhlOptionalServiceCodes,
       ups_optional_services: upsOptionalServiceCodes,
       addon_lines: addonRows.map((row) => ({
@@ -2148,7 +2295,21 @@ export default function ShipmentCreatePage() {
   const matchingSupplySuggestions = supplies.filter(
     (s) => !isAddonSearching || s.name.toLowerCase().includes(addonSearch.trim().toLowerCase()),
   );
-  const visibleSupplySuggestions = isAddonSearching ? matchingSupplySuggestions : matchingSupplySuggestions.slice(0, MAX_SUGGESTIONS);
+  // Packing Supplies are picked from one dropdown per supply type — Carton (no charge, stock only)
+  // and Metal (charged + stock) first, then any other type; each pick adds a row, any number of times.
+  const SUPPLY_PICKER_HINTS: Record<string, string> = {
+    กล่อง: "Carton — ไม่เก็บเงิน ใช้เช็ค / ตัด Stock",
+    กล่องเหล็ก: "Metal — เก็บเงิน + ตัด Stock",
+  };
+  const supplyPickerGroups = [...SUPPLY_TYPES.map((t) => t.value), ...new Set(supplies.map((x) => x.type ?? "").filter((t) => t && !SUPPLY_TYPES.some((st) => st.value === t)))]
+    .map((type) => ({
+      type,
+      label: SUPPLY_TYPES.find((t) => t.value === type)?.label ?? type,
+      items: matchingSupplySuggestions.filter((x) => (x.type ?? "") === type),
+    }))
+    .filter((g) => g.items.length > 0);
+  const untypedSupplies = matchingSupplySuggestions.filter((x) => !x.type);
+  if (untypedSupplies.length) supplyPickerGroups.push({ type: "", label: "อื่นๆ", items: untypedSupplies });
   const matchingAddonSuggestions =
     activeAddonCategory === SUPPLIES_TAB
       ? []
@@ -3257,17 +3418,36 @@ export default function ShipmentCreatePage() {
             <label className="flex flex-col gap-1">
               <span className={labelClass}>{L("destination.tax_id", "Tax ID No.")}{req("destination.tax_id")}</span>
               <div className="relative">
-                <input
-                  type="text"
-                  value={destinationTaxId}
-                  onChange={(e) => setDestinationTaxId(e.target.value)}
-                  placeholder="Tax ID (optional)"
-                  className={`${inputClass} ${destinationTaxId ? "pr-8" : ""}`}
-                />
+                <div className="flex gap-1.5">
+                  <select
+                    value={destinationTaxIdType}
+                    onChange={(e) => setDestinationTaxIdType(e.target.value)}
+                    title="ประเภทเลข (DHL ต้องรู้ว่าเป็นเลขอะไร)"
+                    className={`${inputClass} w-32 shrink-0 px-2`}
+                  >
+                    {TAX_ID_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={destinationTaxId}
+                    onChange={(e) => setDestinationTaxId(e.target.value)}
+                    placeholder="Tax ID / EORI / ID (optional)"
+                    className={`${inputClass} ${destinationTaxId ? "pr-8" : ""} ${RECEIVER_ID_HINTS[destinationCountry] && !destinationTaxId.trim() ? "border-amber-400" : ""}`}
+                  />
+                </div>
                 {destinationTaxId && (
                   <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />
                 )}
               </div>
+              {RECEIVER_ID_HINTS[destinationCountry] && !destinationTaxId.trim() && (
+                <span className="text-[11px] text-amber-600">
+                  ปลายทางนี้มักต้องมีเลขของผู้รับ: {RECEIVER_ID_HINTS[destinationCountry]} — ถ้าไม่ใส่ Carrier / ศุลกากรอาจไม่ปล่อยของ
+                </span>
+              )}
             </label>
               ),
               "destination.country": (
@@ -4476,14 +4656,39 @@ export default function ShipmentCreatePage() {
           </p>
         </div>
 
+        <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <label className="flex flex-col gap-1">
+            <span className={labelClass}>วัตถุประสงค์การส่ง (Purpose of shipment)</span>
+            <select value={exportReason} onChange={(e) => setExportReason(e.target.value)} className={inputClass}>
+              {EXPORT_REASONS.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className={labelClass}>สกุลเงินของ Invoice</span>
+            <select value={invoiceCurrency} onChange={(e) => setInvoiceCurrency(e.target.value)} className={inputClass}>
+              {INVOICE_CURRENCIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            <span className="text-[11px] text-slate-400">ใช้กับมูลค่าสินค้าใน Invoice (ศุลกากร) เท่านั้น — Declared Value / ประกันยังเป็น THB</span>
+          </label>
+        </div>
+
         <div className="flex flex-col gap-3">
             <div className="overflow-x-auto rounded-xl border border-slate-200">
-              <table className="w-full min-w-[940px] border-collapse text-left text-xs">
+              <table className="w-full min-w-[1040px] border-collapse text-left text-xs">
                 <thead className="bg-gradient-to-r from-brand-navy-dark to-brand-navy text-[11px] uppercase text-white/90">
                   <tr>
                     <th className="whitespace-nowrap px-2 py-1 font-medium">Description</th>
                     <th className="w-16 whitespace-nowrap px-2 py-1 font-medium text-right">Qty</th>
-                    <th className="w-32 whitespace-nowrap px-2 py-1 font-medium text-right">Unit Value (THB)</th>
+                    <th className="w-28 whitespace-nowrap px-2 py-1 font-medium">Unit</th>
+                    <th className="w-32 whitespace-nowrap px-2 py-1 font-medium text-right">Unit Value ({invoiceCurrency})</th>
                     <th className="w-24 whitespace-nowrap px-2 py-1 font-medium text-right">{L("invoice_lines.*.weight", "Weight (kg)")}{req("invoice_lines.*.weight")}</th>
                     <th className="w-36 whitespace-nowrap px-2 py-1 font-medium">Country of Origin</th>
                     <th className="w-28 whitespace-nowrap px-2 py-1 font-medium">{L("invoice_lines.*.hs_code", "HS Code")}{req("invoice_lines.*.hs_code")}</th>
@@ -4495,10 +4700,12 @@ export default function ShipmentCreatePage() {
                   {invoiceLines.map((line, idx) => (
                     <tr key={line.key} className="border-b border-slate-100 last:border-0">
                       <td className="px-1 py-0.5">
-                        <input
-                          type="text"
+                        <HsCodeInput
+                          mode="description"
                           value={line.description}
-                          onChange={(e) => updateInvoiceLine(line.key, { description: e.target.value })}
+                          onChange={(text) => updateInvoiceLine(line.key, { description: text })}
+                          // Picking from the HS list fills both the description and its HS Code.
+                          onPick={(hs) => updateInvoiceLine(line.key, { description: hs.description, hs_code: hs.code })}
                           placeholder={`e.g. Cotton T-Shirts`}
                           className="w-full min-w-[160px] rounded border border-transparent bg-transparent px-1.5 py-1 text-xs outline-none focus:border-brand-navy focus:bg-white focus:ring-1 focus:ring-brand-navy/20"
                         />
@@ -4517,6 +4724,19 @@ export default function ShipmentCreatePage() {
                           onChange={(e) => updateInvoiceLine(line.key, { quantity: Math.max(1, Math.floor(Number(e.target.value) || 1)) })}
                           className="w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-right text-xs outline-none focus:border-brand-navy focus:bg-white focus:ring-1 focus:ring-brand-navy/20"
                         />
+                      </td>
+                      <td className="px-1 py-0.5">
+                        <select
+                          value={line.unit || "PCS"}
+                          onChange={(e) => updateInvoiceLine(line.key, { unit: e.target.value })}
+                          className="w-full rounded border border-slate-200 bg-white px-1 py-1 text-xs outline-none focus:border-brand-navy focus:ring-1 focus:ring-brand-navy/20"
+                        >
+                          {INVOICE_UNITS.map((u) => (
+                            <option key={u.value} value={u.value}>
+                              {u.label}
+                            </option>
+                          ))}
+                        </select>
                       </td>
                       <td className="px-1 py-0.5">
                         <input
@@ -4547,11 +4767,12 @@ export default function ShipmentCreatePage() {
                         />
                       </td>
                       <td className="px-1 py-0.5">
-                        <input
-                          type="text"
+                        <HsCodeInput
                           value={line.hs_code}
-                          onChange={(e) => updateInvoiceLine(line.key, { hs_code: e.target.value })}
-                          placeholder="ถ้ามี"
+                          onChange={(code) => updateInvoiceLine(line.key, { hs_code: code })}
+                          // An empty Description takes the picked code's product name; a typed one is kept.
+                          onPick={(hs) => updateInvoiceLine(line.key, { hs_code: hs.code, ...(line.description.trim() ? {} : { description: hs.description }) })}
+                          placeholder="ค้นหา / ถ้ามี"
                           className="w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-xs outline-none focus:border-brand-navy focus:bg-white focus:ring-1 focus:ring-brand-navy/20"
                         />
                       </td>
@@ -4575,11 +4796,11 @@ export default function ShipmentCreatePage() {
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan={6} className="border-t border-slate-200 px-2 py-1.5 text-right text-xs font-semibold text-slate-500">
+                    <td colSpan={7} className="border-t border-slate-200 px-2 py-1.5 text-right text-xs font-semibold text-slate-500">
                       รวมมูลค่าสินค้าทั้งหมด
                     </td>
                     <td className="border-t border-slate-200 px-2 py-1.5 text-right text-xs font-bold text-brand-navy-dark">
-                      {invoiceLinesTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      {invoiceLinesTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })} {invoiceCurrency}
                     </td>
                     <td className="border-t border-slate-200" />
                   </tr>
@@ -4610,17 +4831,41 @@ export default function ShipmentCreatePage() {
               </span>
               <input
                 type="file"
+                multiple
                 accept=".pdf,.jpg,.jpeg,.png"
-                onChange={(e) => handleInvoiceFileChange(e.target.files?.[0] ?? null)}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1 file:text-xs file:font-semibold"
+                disabled={uploadingInvoiceFile || invoiceUploads.length >= 5}
+                onChange={(e) => {
+                  void handleInvoiceFilesChange(Array.from(e.target.files ?? []));
+                  e.target.value = "";
+                }}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1 file:text-xs file:font-semibold disabled:opacity-60"
               />
             </label>
             {uploadingInvoiceFile && <p className="text-xs text-slate-400">กำลังอัปโหลด...</p>}
             {invoiceUploadError && <p className="text-xs text-red-600">{invoiceUploadError}</p>}
-            {invoiceUploadKey && !uploadingInvoiceFile && (
-              <p className="text-xs font-medium text-emerald-600">
-                อัปโหลดสำเร็จ: {invoiceFile?.name} — จะส่งให้ Carrier เป็น Commercial Invoice หลักของ Shipment นี้
-              </p>
+            {invoiceUploads.length > 0 && (
+              <ul className="flex flex-col divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">
+                {invoiceUploads.map((u, i) => (
+                  <li key={u.key} className="flex items-center gap-2 px-3 py-1.5 text-xs">
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                    <span className="min-w-0 flex-1 truncate text-slate-700">
+                      {i + 1}. {u.name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setInvoiceUploads((prev) => prev.filter((x) => x.key !== u.key))}
+                      className="rounded p-1 text-red-500 hover:bg-red-50"
+                      title="ลบไฟล์นี้ (ไม่ส่งให้ Carrier)"
+                      aria-label="Remove file"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {invoiceUploads.length > 0 && (
+              <p className="text-[11px] text-emerald-600">ไฟล์ทั้งหมด {invoiceUploads.length} ไฟล์จะส่งให้ Carrier เป็น Commercial Invoice ของ Shipment นี้ (สูงสุด 5 ไฟล์ รวมไม่เกิน 5MB)</p>
             )}
           </div>
       </div>
@@ -4921,38 +5166,39 @@ export default function ShipmentCreatePage() {
 
         <div className="mb-4 flex flex-col gap-1">
           {activeAddonCategory === SUPPLIES_TAB ? (
-            visibleSupplySuggestions.length === 0 ? (
+            supplyPickerGroups.length === 0 ? (
               <p className="text-sm text-slate-400">No matching supplies.</p>
             ) : (
-              <>
-                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4">
-                  {visibleSupplySuggestions.map((supply) => (
-                    <button
-                      type="button"
-                      key={supply.id}
-                      onClick={() => addAddonFromSupply(supply)}
-                      disabled={supplyBlocked(supply)}
-                      title={supplyBlocked(supply) ? "Stock หมด — เลือกไม่ได้" : undefined}
-                      className="flex min-w-0 flex-col items-center gap-1 rounded-xl border-2 border-slate-200 bg-white p-2 text-center transition hover:border-brand-amber hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-slate-200 disabled:hover:bg-white"
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {supplyPickerGroups.map((group) => (
+                  <label key={group.type || "other"} className="flex flex-col gap-1">
+                    <span className="text-xs font-semibold text-slate-700">
+                      {group.label}
+                      {SUPPLY_PICKER_HINTS[group.type] && <span className="ml-1 font-normal text-slate-400">· {SUPPLY_PICKER_HINTS[group.type]}</span>}
+                    </span>
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        const supply = group.items.find((x) => String(x.id) === e.target.value);
+                        if (supply) addAddonFromSupply(supply);
+                      }}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-navy focus:ring-2 focus:ring-brand-navy/15"
                     >
-                      {supply.icon_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={supply.icon_url} alt={supply.name} className="h-7 w-7 shrink-0 object-contain" />
-                      ) : (
-                        <Package className="h-7 w-7 shrink-0 text-slate-300" />
-                      )}
-                      <span className="w-full truncate text-xs font-semibold leading-tight text-slate-700">{supply.name}</span>
-                      <span className="text-[10px] font-semibold leading-tight text-brand-navy-dark">
-                        {Number(supply.sale_price).toLocaleString()} THB
-                      </span>
-                      {renderSupplyStock(supply)}
-                    </button>
-                  ))}
-                </div>
-                {!isAddonSearching && matchingSupplySuggestions.length > MAX_SUGGESTIONS && (
-                  <p className="mt-1 text-xs text-slate-400">พิมพ์ค้นหาเพื่อดูรายการอื่นเพิ่มเติม ({matchingSupplySuggestions.length} รายการทั้งหมด)</p>
-                )}
-              </>
+                      <option value="">+ เลือก{group.label}เพื่อเพิ่ม ({group.items.length} รายการ)</option>
+                      {group.items.map((supply) => {
+                        const left = supplyStockLeft(supply);
+                        return (
+                          <option key={supply.id} value={supply.id} disabled={supplyBlocked(supply)}>
+                            {supply.name} — {Number(supply.sale_price).toLocaleString()} THB
+                            {left === null ? "" : left <= 0 ? ` — Stock หมด (${left})` : ` — คงเหลือ ${left}`}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </label>
+                ))}
+                <p className="text-[11px] text-slate-400 sm:col-span-2">เลือกได้หลายรายการและหลายประเภท — เลือกซ้ำเพื่อเพิ่มอีกแถว หรือแก้จำนวนในตารางด้านล่าง</p>
+              </div>
             )
           ) : isInsuranceCategory ? (
             packages.filter((p) => p.insured).length === 0 ? (

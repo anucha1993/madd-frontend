@@ -114,6 +114,7 @@ export const NAV_SECTIONS: NavItem[] = [
       { label: "Manifest for Report", href: "/config/manifest-options" },
       { label: "Tax Invoice Template", href: "/config/receipt-line-templates" },
       { label: "Zone & Country List", href: "/config/countries" },
+      { label: "HS Code", href: "/config/hs-codes" },
     ],
   },
   {

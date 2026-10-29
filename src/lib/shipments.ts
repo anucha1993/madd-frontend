@@ -30,6 +30,8 @@ export type BookShipmentInvoiceLine = {
   weight?: number;
   country_of_origin?: string;
   hs_code?: string;
+  // Unit of measure (PCS, PRS, SET …) — mapped to each carrier's own code server-side.
+  unit?: string;
 };
 
 export type BookShipmentAddonLine = {
@@ -63,6 +65,8 @@ export type BookShipmentInput = {
     contact_name?: string;
     company?: string;
     tax_id?: string;
+    // What tax_id is: VAT, EOR (EORI), NID (national ID), PAS (passport) … — DHL needs the type.
+    tax_id_type?: string;
     country: string;
     city: string;
     // Required by UPS's real booking API for US/CA ship-to addresses.
@@ -87,6 +91,12 @@ export type BookShipmentInput = {
   invoice_mode?: "FORM" | "UPLOAD";
   invoice_lines?: BookShipmentInvoiceLine[];
   commercial_invoice_upload_key?: string | null;
+  // Several uploaded invoice files (all sent to the carrier) — replaces the single key above.
+  commercial_invoice_upload_keys?: string[];
+  // Purpose of shipment (SALE, GIFT, SAMPLE, PERSONAL, RETURN, REPAIR) — both carriers require one.
+  export_reason?: string;
+  // Currency of the invoice's customs values; Declared Value / insurance stays THB.
+  invoice_currency?: string;
   // DHL Optional Services (live-verified serviceCodes) — same list sent at Check Rate, kept
   // consistent through to the real booking. Defaults to ["SX"] (No Signature Required) server-side.
   dhl_optional_services?: string[];
@@ -125,6 +135,8 @@ export type ShipmentAddress = {
   contact_name?: string;
   company?: string;
   tax_id?: string;
+  tax_id_type?: string;
+  state?: string;
   postcode?: string;
   city?: string;
   country?: string;
@@ -217,6 +229,12 @@ export type Shipment = {
   bill_duty_tax_third_party_country?: string | null;
   bill_duty_tax_third_party_postal_code?: string | null;
   ref_invoice_no?: string | null;
+  invoice_lines?: BookShipmentInvoiceLine[] | null;
+  export_reason?: string | null;
+  invoice_currency?: string | null;
+  // From GET /shipments/{id} only: what was sent to the carrier as its own insurance, and what
+  // UPS billed for it (code 400) — null for shipments booked before the request was kept.
+  carrier_insurance?: { requested: number | null; charged: number | null; document_cover: boolean; currency: string } | null;
   ref_insurance_no?: string | null;
   ref_purchase_no?: string | null;
   rate_quote?: Record<string, unknown> | null;

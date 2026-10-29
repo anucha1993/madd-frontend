@@ -644,6 +644,28 @@ export default function ShipmentViewPage() {
             ) : (
               <p className="text-[13px] text-slate-400">No package details on this shipment.</p>
             )}
+            {s.carrier_insurance && (s.carrier_insurance.requested || s.carrier_insurance.document_cover || packages.some((p) => p.insured)) && (
+              <div
+                className={`mt-3 rounded-lg px-3 py-2 text-[12px] ${
+                  s.carrier_insurance.requested || s.carrier_insurance.document_cover ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"
+                }`}
+              >
+                {s.carrier_insurance.requested || s.carrier_insurance.document_cover ? (
+                  <>
+                    <span className="font-semibold">ซื้อประกันกับ {s.carrier} แล้ว</span>
+                    {s.carrier_insurance.requested ? ` — แจ้ง Declared Value ${s.carrier_insurance.requested.toLocaleString("en-US")} ${s.carrier_insurance.currency}` : " — Extended Liability (เอกสาร)"}
+                    {s.carrier === "UPS" &&
+                      (s.carrier_insurance.charged
+                        ? ` · UPS เรียกเก็บค่าประกัน (400) ${s.carrier_insurance.charged.toLocaleString("en-US", { minimumFractionDigits: 2 })} THB`
+                        : " · UPS ยังไม่ได้แสดงค่าประกันในผลตอบกลับ")}
+                  </>
+                ) : (
+                  <>
+                    <span className="font-semibold">ไม่ได้ซื้อประกันกับ {s.carrier}</span> — กล่องที่ติ๊ก Insurance ใช้ประกันบุคคลที่สาม (UPSC) หรือจองก่อนแก้ระบบ ICDV (29/10/2026)
+                  </>
+                )}
+              </div>
+            )}
           </Section>
 
           <Section title="Add On">

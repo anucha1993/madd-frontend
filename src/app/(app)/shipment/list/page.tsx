@@ -1141,6 +1141,17 @@ export default function ShipmentListPage() {
                             View Shipment Details
                           </Link>
                           )}
+                          {can("shipment.create") && (
+                          <Link
+                            href={`/shipment/create?clone=${s.id}`}
+                            onClick={() => setActionsMenuId(null)}
+                            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+                            title="เริ่ม Shipment ใหม่ด้วยข้อมูลเดียวกัน (ผู้ส่ง / ผู้รับ / กล่อง / Invoice)"
+                          >
+                            <Copy className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                            Clone Shipment (สร้างใหม่จากรายการนี้)
+                          </Link>
+                          )}
                           {(describeShipmentPieces(s).length > 1 ? can(["shipment.label", "shipment.label_all"]) : can("shipment.label")) && (
                           <>
                           <button
