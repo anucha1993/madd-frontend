@@ -5652,6 +5652,21 @@ export default function ShipmentCreatePage() {
                     { label: "ดึงเอกสาร Label (ใบปะหน้ากล่อง)", done: hasLabel },
                     { label: "ดึงเอกสาร Waybill (Shipper's Copy)", done: hasWaybill },
                     { label: "ดึงเอกสาร Commercial Invoice (ใบกำกับสินค้าศุลกากร)", done: hasInvoice },
+                    // Each attached invoice file, as it really went — never assumed.
+                    ...(bookedShipment.invoice_upload_status ?? []).flatMap((st, i) => [
+                      {
+                        label: st.sent_to_carrier
+                          ? `ส่งไฟล์ Invoice ที่แนบ ${i + 1} ให้ ${bookedShipment.carrier}`
+                          : `ส่งไฟล์ Invoice ที่แนบ ${i + 1} ให้ ${bookedShipment.carrier} ไม่สำเร็จ — ${st.carrier_error ?? "ไม่ทราบสาเหตุ"} (ต้องส่งเอกสารนี้ให้ ${bookedShipment.carrier} เอง)`,
+                        done: st.sent_to_carrier,
+                      },
+                      {
+                        label: st.in_merged_pdf
+                          ? `รวมไฟล์แนบ ${i + 1} เข้า PDF "Open invoice" ของระบบ`
+                          : `รวมไฟล์แนบ ${i + 1} เข้า PDF "Open invoice" ของระบบไม่ได้ — เปิดไฟล์ต้นฉบับได้ที่ปุ่ม "ไฟล์แนบ ${i + 1}" หน้า Shipment`,
+                        done: st.in_merged_pdf,
+                      },
+                    ]),
                   ];
 
                   const documents: { label: string; icon: typeof FileText; onOpen: () => void; loading: boolean }[] = [

@@ -7,7 +7,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useAccess } from "@/components/auth/AccessProvider";
 import VoidShipmentModal, { CopyButton, dhlCancelMessage } from "@/components/shipment/VoidShipmentModal";
 import Timeline from "@/components/timeline/Timeline";
-import { ArrowLeft, ArrowRight, Download, Loader2, Package, Printer, Receipt, FileCheck, XCircle, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Download, Loader2, Package, Printer, Receipt, FileCheck, Paperclip, XCircle, Trash2 } from "lucide-react";
 import {
   getShipment,
   openShipmentLabel,
@@ -15,6 +15,7 @@ import {
   openShipmentWaybill,
   downloadDhlOriginalWaybill,
   openShipmentCommercialInvoice,
+  openShipmentInvoiceUpload,
   unvoidShipment,
   confirmCarrierCancel,
   markCarrierCancelNotified,
@@ -384,6 +385,28 @@ export default function ShipmentViewPage() {
                   Open invoice
                 </button>
               )}
+              {can("shipment.invoice") &&
+                (s.commercial_invoice_upload_keys ?? []).map((_, i) => {
+                  const st = s.invoice_upload_status?.[i];
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => openShipmentInvoiceUpload(s.id, i + 1).catch((err) => setLabelError(err instanceof Error ? err.message : "Couldn't open the file."))}
+                      className={`${headerBtn} ${st && !st.sent_to_carrier ? "!border-red-300 !text-red-600" : ""}`}
+                      title={
+                        !st
+                          ? "ไฟล์ Invoice ที่แนบตอนจอง (ต้นฉบับ) — ไม่มีบันทึกผลการส่ง"
+                          : st.sent_to_carrier
+                            ? `ส่งให้ ${s.carrier} แล้ว${st.in_merged_pdf ? "" : " · ไม่ได้อยู่ใน PDF Open invoice"}`
+                            : `ไม่ถึง ${s.carrier}: ${st.carrier_error ?? "ไม่ทราบสาเหตุ"} — ต้องส่งเอกสารนี้ให้ ${s.carrier} เอง`
+                      }
+                    >
+                      <Paperclip className="h-3.5 w-3.5" /> ไฟล์แนบ {i + 1}
+                      {st && (st.sent_to_carrier ? ` · ส่ง ${s.carrier} แล้ว` : ` · ไม่ถึง ${s.carrier}`)}
+                    </button>
+                  );
+                })}
               {can("shipment.issue_receipt") && can("receipt.create") && s.status === "booked" && (
                 <button type="button" onClick={() => router.push(`/billing/receipts/new?shipment_ids=${s.id}`)} className={headerBtn}>
                   <Printer className="h-3.5 w-3.5" /> Issue Receipt

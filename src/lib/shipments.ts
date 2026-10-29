@@ -232,6 +232,11 @@ export type Shipment = {
   invoice_lines?: BookShipmentInvoiceLine[] | null;
   export_reason?: string | null;
   invoice_currency?: string | null;
+  commercial_invoice_upload_keys?: string[] | null;
+  // What really happened to each uploaded file at booking (same order as the keys above).
+  invoice_upload_status?: { sent_to_carrier: boolean; carrier_error: string | null; in_merged_pdf: boolean }[] | null;
+  // Only on the booking response: plain-language problems with the uploaded files.
+  upload_warnings?: string[];
   // From GET /shipments/{id} only: what was sent to the carrier as its own insurance, and what
   // UPS billed for it (code 400) — null for shipments booked before the request was kept.
   carrier_insurance?: { requested: number | null; charged: number | null; document_cover: boolean; currency: string } | null;
@@ -612,6 +617,10 @@ export async function downloadDhlOriginalWaybill(shipment: Pick<Shipment, "id" |
 
 export const openShipmentCommercialInvoice = (shipmentId: number) =>
   openShipmentDocument(`/shipments/${shipmentId}/commercial-invoice`, "Commercial Invoice", "เปิด Commercial Invoice ไม่สำเร็จ");
+
+/** One of the invoice files staff attached at booking, exactly as uploaded (1-based). */
+export const openShipmentInvoiceUpload = (shipmentId: number, number: number) =>
+  openShipmentDocument(`/shipments/${shipmentId}/invoice-uploads/${number}`, `Invoice attachment ${number}`, "เปิดไฟล์ Invoice ที่แนบไม่สำเร็จ");
 
 // Opens every piece's label as ONE merged multi-page PDF in a single tab (server-side merge —
 // see ShipmentController::allLabels()) — avoids stacking a separate mini PDF-viewer iframe per
