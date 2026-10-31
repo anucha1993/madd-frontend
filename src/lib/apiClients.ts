@@ -21,6 +21,7 @@ export type ApiClientRecord = {
   browser_origins: string[] | null;
   allow_rates: boolean;
   allow_tracking: boolean;
+  allow_rate_book: boolean;
   track_any_number: boolean;
   external_tracking_daily_limit: number;
   status: boolean;

@@ -47,6 +47,7 @@ const EMPTY: ApiClientInput = {
   browser_origins: null,
   allow_rates: true,
   allow_tracking: true,
+  allow_rate_book: false,
   track_any_number: false,
   external_tracking_daily_limit: 500,
   status: true,
@@ -180,7 +181,7 @@ export default function ApiClientsPage() {
                     </div>
                   </td>
                   <td className="px-4 py-2.5 text-slate-600">{c.carriers?.join(", ") ?? "UPS, DHL"}</td>
-                  <td className="px-4 py-2.5 text-xs text-slate-600">{[c.allow_rates && "เช็คราคา", c.allow_tracking && "Tracking"].filter(Boolean).join(", ") || "—"}</td>
+                  <td className="px-4 py-2.5 text-xs text-slate-600">{[c.allow_rates && "เช็คราคา", c.allow_tracking && "Tracking", c.allow_rate_book && "Rate Book"].filter(Boolean).join(", ") || "—"}</td>
                   <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">
                     {(c.calls_30d ?? 0).toLocaleString()}
                     {!!c.failed_30d && <div className="text-xs text-red-500">ไม่สำเร็จ {c.failed_30d.toLocaleString()}</div>}
@@ -372,6 +373,10 @@ function ClientForm({ client, branches, onClose, onSaved }: { client: ApiClientR
             <label className="flex items-center gap-2">
               <input type="checkbox" checked={form.allow_tracking} onChange={(e) => set("allow_tracking", e.target.checked)} />
               ใช้ติดตามพัสดุได้
+            </label>
+            <label className="flex items-center gap-2" title="GET /api/public/v1/rate-book — Rate Book รอบล่าสุดเป็นตารางราคาขาย (ใช้กับ Plugin MADD Rate Book, ต้องใช้ API Key)">
+              <input type="checkbox" checked={form.allow_rate_book} onChange={(e) => set("allow_rate_book", e.target.checked)} />
+              ใช้ Rate Book ได้
             </label>
             <label className="flex items-center gap-2">
               <input type="checkbox" checked={form.status} onChange={(e) => set("status", e.target.checked)} />
