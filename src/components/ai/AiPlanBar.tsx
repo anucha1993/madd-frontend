@@ -63,7 +63,26 @@ export default function AiPlanBar({ compact = false, refreshKey = 0 }: { compact
           </>
         ) : null}
       </div>
-      {url ? (
+      {plan.plans?.length && plan.reason !== "payment_required" ? (
+        // trial / expired: one button per paid plan, the customer picks
+        <div className="flex flex-wrap gap-2">
+          {plan.plans.map((p) => (
+            <a
+              key={p.url}
+              href={p.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setTimeout(() => load(true), 60000)}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold hover:opacity-90 ${
+                p.recommended ? "bg-brand-navy-dark text-white" : "border border-brand-navy-dark bg-white text-brand-navy-dark"
+              }`}
+              title={p.included ? `${p.included.toLocaleString()} credits / ${p.billing === "year" ? "ปี" : "เดือน"}` : undefined}
+            >
+              <CreditCard className="h-3.5 w-3.5" /> สมัคร {p.name} ฿{p.price_thb.toLocaleString()}/{p.billing === "year" ? "ปี" : "เดือน"}
+            </a>
+          ))}
+        </div>
+      ) : url ? (
         <a
           href={url}
           target="_blank"
