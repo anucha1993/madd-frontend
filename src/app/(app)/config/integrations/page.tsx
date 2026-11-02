@@ -9,6 +9,7 @@ import { getAiSettings, toggleAi, updateAiSettings, type AiSettings } from "@/li
 import { getRestCountriesSettings, updateRestCountriesSettings, type RestCountriesSettings } from "@/lib/countries";
 import { getR2Settings, updateR2Settings, type R2Settings } from "@/lib/r2";
 import { getGoogleVisionSettings, updateGoogleVisionSettings, type GoogleVisionSettings } from "@/lib/googleVision";
+import AiPlanBar from "@/components/ai/AiPlanBar";
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-sm text-slate-800 outline-none transition focus:border-brand-navy focus:bg-white focus:ring-2 focus:ring-brand-navy/15";
@@ -219,7 +220,9 @@ export default function IntegrationsPage() {
             </div>
             <p className="mb-3 text-xs text-slate-400">
               ใช้สำหรับ AI ช่วยกรอกที่อยู่อัตโนมัติในหน้า Create Shipment และ Chat ถามเรทราคาส่งที่ปุ่มลอยมุมซ้ายล่าง
+              — ผ่าน DataCorp: ใส่ key <code>dca_sk_…</code> ที่นี่ (OCR ใบแจ้งหนี้ขนส่งจะใช้ key นี้ด้วย ไม่ต้องใส่ Google Vision key)
             </p>
+            <div className="mb-3"><AiPlanBar /></div>
             <div className="mb-3 flex items-center gap-3">
               <span className="text-sm font-medium text-slate-600">เปิดใช้งาน AI</span>
               <button
@@ -258,7 +261,7 @@ export default function IntegrationsPage() {
                   type="text"
                   value={aiKeyInput}
                   onChange={(e) => setAiKeyInput(e.target.value)}
-                  placeholder="sk-..."
+                  placeholder="dca_sk_... หรือ sk-..."
                   className={inputClass}
                 />
               </label>

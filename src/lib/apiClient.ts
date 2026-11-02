@@ -3,9 +3,12 @@ import { API_URL } from "./apiUrl";
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  /** Parsed JSON body of the error response (e.g. `payment` details on a 402 from the AI endpoints). */
+  data: unknown;
+  constructor(message: string, status: number, data: unknown = null) {
     super(message);
     this.status = status;
+    this.data = data;
   }
 }
 
@@ -32,7 +35,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       : undefined;
     // Controllers also refuse with { error: "..." } (booking, stock, carrier errors).
     const message = firstErrorMessage ?? (typeof data?.error === "string" ? data.error : undefined) ?? data?.message ?? "เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง";
-    throw new ApiError(message, res.status);
+    throw new ApiError(message, res.status, data);
   }
 
   return data as T;

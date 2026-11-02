@@ -39,6 +39,31 @@ export type RateChatResult = {
   quotes: RateQuote[];
 };
 
+/** AI plan when the AI/OCR go through DataCorp (dca_sk_ key) — `enabled: false` otherwise. Pay links only for config.integrations. */
+export type AiPlan = {
+  enabled: boolean;
+  can_pay?: boolean;
+  plan?: string | null;
+  used?: number;
+  included?: number | null;
+  remaining?: number | null;
+  renews_at?: string | null;
+  blocked?: boolean;
+  message?: string | null;
+  upgrade_url?: string | null;
+  upgrade_plan?: string | null;
+  upgrade_price?: number | null;
+  pay_url?: string | null;
+  days_left?: number | null;
+  renew_due?: boolean;
+  auto_renew?: boolean;
+};
+
+export const getAiPlan = (fresh = false) => apiClient.get<AiPlan>(`/ai/plan${fresh ? "?fresh=1" : ""}`);
+
+/** `payment` part of a 402 from the AI endpoints (plan expired / credits used up / unpaid). */
+export type AiPayment = { reason: string; title: string; detail: string; pay_url: string | null };
+
 export const askRateAi = (message: string) =>
   apiClient.post<RateChatResult>("/ai/rate-chat", { message });
 

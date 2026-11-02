@@ -792,6 +792,8 @@ export default function ShipmentCreatePage() {
   const [uploadingInvoiceFile, setUploadingInvoiceFile] = useState(false);
   const [invoiceUploadError, setInvoiceUploadError] = useState("");
   const invoiceLinesTotal = invoiceLines.reduce((sum, l) => sum + l.quantity * (Number(l.unit_value) || 0), 0);
+  // Weight is typed per piece; the carrier gets each line's total (× quantity).
+  const invoiceLinesWeight = invoiceLines.reduce((sum, l) => sum + l.quantity * (Number(l.weight) || 0), 0);
 
   function updateInvoiceLine(key: number, patch: Partial<InvoiceLineRow>) {
     setInvoiceLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -4689,7 +4691,7 @@ export default function ShipmentCreatePage() {
                     <th className="w-16 whitespace-nowrap px-2 py-1 font-medium text-right">Qty</th>
                     <th className="w-28 whitespace-nowrap px-2 py-1 font-medium">Unit</th>
                     <th className="w-32 whitespace-nowrap px-2 py-1 font-medium text-right">Unit Value ({invoiceCurrency})</th>
-                    <th className="w-24 whitespace-nowrap px-2 py-1 font-medium text-right">{L("invoice_lines.*.weight", "Weight (kg)")}{req("invoice_lines.*.weight")}</th>
+                    <th className="w-24 whitespace-nowrap px-2 py-1 font-medium text-right">{L("invoice_lines.*.weight", "Weight / ชิ้น (kg)")}{req("invoice_lines.*.weight")}</th>
                     <th className="w-36 whitespace-nowrap px-2 py-1 font-medium">Country of Origin</th>
                     <th className="w-28 whitespace-nowrap px-2 py-1 font-medium">{L("invoice_lines.*.hs_code", "HS Code")}{req("invoice_lines.*.hs_code")}</th>
                     <th className="w-24 whitespace-nowrap px-2 py-1 font-medium text-right">Amount</th>
@@ -4757,6 +4759,11 @@ export default function ShipmentCreatePage() {
                           placeholder="0.00"
                           className="w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-right text-xs outline-none focus:border-brand-navy focus:bg-white focus:ring-1 focus:ring-brand-navy/20"
                         />
+                        {Number(line.weight) > 0 && line.quantity > 1 && (
+                          <p className="px-1.5 text-right text-[10px] text-slate-500">
+                            รวม {(Number(line.weight) * line.quantity).toLocaleString(undefined, { maximumFractionDigits: 3 })} kg
+                          </p>
+                        )}
                       </td>
                       <td className="px-1 py-0.5">
                         <CountrySelect
@@ -4804,6 +4811,15 @@ export default function ShipmentCreatePage() {
                     </td>
                     <td className="border-t border-slate-200" />
                   </tr>
+                  {invoiceLinesWeight > 0 && (
+                    <tr>
+                      <td colSpan={9} className={`px-2 pb-1.5 text-right text-[11px] ${invoiceLinesWeight > totalRealBookingWeight ? "font-semibold text-amber-600" : "text-slate-500"}`}>
+                        น้ำหนักสินค้ารวม {invoiceLinesWeight.toLocaleString(undefined, { maximumFractionDigits: 3 })} kg · น้ำหนักกล่องรวม{" "}
+                        {totalRealBookingWeight.toLocaleString(undefined, { maximumFractionDigits: 3 })} kg
+                        {invoiceLinesWeight > totalRealBookingWeight && " — สินค้าหนักกว่ากล่อง ตรวจน้ำหนักต่อชิ้น / จำนวน หรือน้ำหนักกล่องใน Step 2 อีกครั้ง"}
+                      </td>
+                    </tr>
+                  )}
                 </tfoot>
               </table>
             </div>

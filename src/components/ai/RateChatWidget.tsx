@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { MessageCircleQuestion, Send, Sparkles, X } from "lucide-react";
-import { askRateAi } from "@/lib/ai";
+import { CreditCard, MessageCircleQuestion, Send, Sparkles, X } from "lucide-react";
+import { askRateAi, type AiPayment } from "@/lib/ai";
+import { ApiError } from "@/lib/apiClient";
+import AiPlanBar from "@/components/ai/AiPlanBar";
 import type { RateQuote } from "@/lib/shipping";
 import { useAiEnabled } from "@/hooks/useAiEnabled";
 
@@ -15,7 +17,7 @@ const EXAMPLE_QUESTIONS = [
   "ส่ง 3 กล่อง กล่องละ 4.5 กก. ไปญี่ปุ่น ราคาเท่าไหร่",
 ];
 
-type ChatMessage = { role: "user" | "ai"; text: string; quotes?: RateQuote[] };
+type ChatMessage = { role: "user" | "ai"; text: string; quotes?: RateQuote[]; payUrl?: string | null };
 
 // Global floating launcher for the "ask AI about shipping rates" chat — available on
 // every page instead of being embedded in a single form.
@@ -25,6 +27,7 @@ export default function RateChatWidget() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [planRefresh, setPlanRefresh] = useState(0);
 
   async function sendQuestion(question: string) {
     if (!question || loading) return;
@@ -35,9 +38,12 @@ export default function RateChatWidget() {
       const res = await askRateAi(question);
       setMessages((prev) => [...prev, { role: "ai", text: res.reply, quotes: res.quotes }]);
     } catch (err) {
+      // 402 = AI plan expired / credits used up / unpaid (DataCorp) → show the pay button when allowed
+      const payment = err instanceof ApiError && err.status === 402 ? (err.data as { payment?: AiPayment } | null)?.payment : undefined;
+      if (payment) setPlanRefresh((n) => n + 1);
       setMessages((prev) => [
         ...prev,
-        { role: "ai", text: err instanceof Error ? err.message : "เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง" },
+        { role: "ai", text: err instanceof Error ? err.message : "เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง", payUrl: payment?.pay_url },
       ]);
     } finally {
       setLoading(false);
@@ -67,6 +73,7 @@ export default function RateChatWidget() {
           </div>
 
           <div className="p-4">
+            <AiPlanBar compact refreshKey={planRefresh} />
             {messages.length === 0 ? (
               <div className="mb-3 flex flex-col gap-2">
                 <p className="text-sm text-slate-400">
@@ -95,6 +102,16 @@ export default function RateChatWidget() {
                       }`}
                     >
                       {m.text}
+                      {m.payUrl && (
+                        <a
+                          href={m.payUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-2 flex w-fit items-center gap-1.5 rounded-lg bg-brand-navy-dark px-2.5 py-1 text-xs font-semibold text-white hover:opacity-90"
+                        >
+                          <CreditCard className="h-3.5 w-3.5" /> ชำระเงิน / สมัครใช้ต่อ
+                        </a>
+                      )}
                     </div>
                     {m.quotes && m.quotes.length > 0 && (
                       <div className="mt-1.5 flex w-full max-w-[85%] flex-col gap-1">
