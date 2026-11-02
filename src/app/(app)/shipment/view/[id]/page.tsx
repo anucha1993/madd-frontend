@@ -7,7 +7,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useAccess } from "@/components/auth/AccessProvider";
 import VoidShipmentModal, { CopyButton, dhlCancelMessage } from "@/components/shipment/VoidShipmentModal";
 import Timeline from "@/components/timeline/Timeline";
-import { ArrowLeft, ArrowRight, Download, Loader2, Package, Printer, Receipt, FileCheck, Paperclip, XCircle, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Download, Loader2, Package, Printer, Receipt, Copy, FileCheck, Paperclip, XCircle, Trash2 } from "lucide-react";
 import {
   getShipment,
   openShipmentLabel,
@@ -407,6 +407,16 @@ export default function ShipmentViewPage() {
                     </button>
                   );
                 })}
+              {can("shipment.create") && (
+                <button
+                  type="button"
+                  onClick={() => router.push(`/shipment/create?clone=${s.id}`)}
+                  className={headerBtn}
+                  title="เริ่ม Shipment ใหม่ด้วยข้อมูลเดียวกัน (ผู้ส่ง / ผู้รับ / กล่อง / Invoice)"
+                >
+                  <Copy className="h-3.5 w-3.5" /> Clone
+                </button>
+              )}
               {can("shipment.issue_receipt") && can("receipt.create") && s.status === "booked" && (
                 <button type="button" onClick={() => router.push(`/billing/receipts/new?shipment_ids=${s.id}`)} className={headerBtn}>
                   <Printer className="h-3.5 w-3.5" /> Issue Receipt
