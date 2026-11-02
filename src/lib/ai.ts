@@ -54,6 +54,7 @@ export type AiPlan = {
   upgrade_plan?: string | null;
   upgrade_price?: number | null;
   pay_url?: string | null;
+  plans_url?: string | null;
   days_left?: number | null;
   renew_due?: boolean;
   auto_renew?: boolean;

@@ -367,6 +367,18 @@ export default function IntegrationsPage() {
             <p className="mb-3 text-xs text-slate-400">
               ใช้อ่านไฟล์ PDF ใบแจ้งหนี้จริงจาก UPS/DHL อัตโนมัติ — สร้าง API Key จาก Google Cloud Console (เปิดใช้งาน Vision API)
             </p>
+            {visionSettings?.via_datacorp ? (
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-600">Connected · ผ่าน DataCorp</span>
+                  <span className="text-xs text-slate-500">
+                    ใช้ key DataCorp (dca_sk_…) ตัวเดียวกับการ์ด OpenAI ด้านบน — ไม่ต้องใส่ Google key · คิด credits ต่อหน้าที่อ่าน
+                  </span>
+                </div>
+                <AiPlanBar />
+              </div>
+            ) : (
+            <>
             <div className="flex flex-wrap items-end gap-3">
               <div className="flex flex-col gap-1.5">
                 <span className="text-sm font-medium text-slate-600">Status</span>
@@ -399,6 +411,8 @@ export default function IntegrationsPage() {
             </div>
             {visionKeyMessage && <p className="mt-2 text-sm text-emerald-600">{visionKeyMessage}</p>}
             {visionKeyError && <p className="mt-2 text-sm text-red-600">{visionKeyError}</p>}
+            </>
+            )}
           </div>
         </div>
       )}

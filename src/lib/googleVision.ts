@@ -2,6 +2,8 @@ import { apiClient } from "./apiClient";
 
 export type GoogleVisionSettings = {
   is_configured: boolean;
+  /** OCR goes through DataCorp with the same dca_sk_ key as the AI — no Google key needed. */
+  via_datacorp?: boolean;
 };
 
 export const getGoogleVisionSettings = () => apiClient.get<GoogleVisionSettings>("/google-vision/settings");
