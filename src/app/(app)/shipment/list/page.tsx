@@ -1149,7 +1149,7 @@ export default function ShipmentListPage() {
                             title="เริ่ม Shipment ใหม่ด้วยข้อมูลเดียวกัน (ผู้ส่ง / ผู้รับ / กล่อง / Invoice)"
                           >
                             <Copy className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                            Clone Shipment (สร้างใหม่จากรายการนี้)
+                            Clone Shipment
                           </Link>
                           )}
                           {(describeShipmentPieces(s).length > 1 ? can(["shipment.label", "shipment.label_all"]) : can("shipment.label")) && (
