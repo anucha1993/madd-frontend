@@ -25,8 +25,9 @@ export default function AiPlanBar({ compact = false, refreshKey = 0 }: { compact
   if (compact && !actionable) return null;
 
   const pct = plan.included ? Math.min(100, Math.round(((plan.used ?? 0) / plan.included) * 100)) : 0;
-  // trial / renewal: direct Polar checkout link; if DataCorp gives none, the DataCorp portal plans page (login) instead
-  const url = plan.blocked ? plan.pay_url ?? plan.plans_url : trial || plan.renew_due ? plan.upgrade_url ?? plan.plans_url : null;
+  // An order already waiting for payment (pay_url) is reused first — the upgrade link opens a new order on DataCorp.
+  // trial / renewal: direct checkout link; if DataCorp gives none, the DataCorp portal plans page (login) instead
+  const url = plan.pay_url ?? (plan.blocked ? plan.plans_url : trial || plan.renew_due ? plan.upgrade_url ?? plan.plans_url : null);
   const tone = plan.blocked ? "border-red-200 bg-red-50" : plan.renew_due || pct >= 90 ? "border-amber-200 bg-amber-50" : "border-sky-200 bg-sky-50";
   const bar = plan.blocked || pct >= 100 ? "bg-red-500" : pct >= 90 ? "bg-amber-500" : "bg-sky-500";
   const when = plan.blocked

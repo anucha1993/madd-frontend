@@ -34,6 +34,8 @@ export default function HeavyRatesPage() {
   const [bands, setBands] = useState<EditBand[]>([]);
   const [codes, setCodes] = useState<{ code: string; label: string }[]>([]);
   const [replaced, setReplaced] = useState<string[]>([]);
+  const [services, setServices] = useState<{ code: string; label: string }[]>([]);
+  const [countryServices, setCountryServices] = useState<Record<string, string[]>>({});
   const [codeFilter, setCodeFilter] = useState("");
   // Countries with a special price (added from the picker, or already priced in a band).
   const [extraCountries, setExtraCountries] = useState<string[]>([]);
@@ -69,6 +71,8 @@ export default function HeavyRatesPage() {
         setBands(toEdit(res.bands));
         setCodes(res.codes);
         setReplaced(res.replaced_codes);
+        setServices(res.services);
+        setCountryServices(res.country_services ?? {});
         setExtraCountries([]);
       })
       .catch((e) => !cancelled && setError(e instanceof Error ? e.message : "โหลดข้อมูลไม่สำเร็จ"));
@@ -87,7 +91,13 @@ export default function HeavyRatesPage() {
 
   function removeCountry(iso2: string) {
     setExtraCountries((prev) => prev.filter((c) => c !== iso2));
+    setCountryServices((prev) => Object.fromEntries(Object.entries(prev).filter(([c]) => c !== iso2)));
     setBands((prev) => prev.map((b) => ({ ...b, rates: Object.fromEntries(Object.entries(b.rates).filter(([k]) => k !== `country:${iso2}`)) })));
+  }
+
+  // "" = every service.
+  function setCountryService(iso2: string, code: string) {
+    setCountryServices((prev) => ({ ...prev, [iso2]: code ? [code] : [] }));
   }
 
   function setBand(i: number, patch: Partial<EditBand>) {
@@ -111,9 +121,14 @@ export default function HeavyRatesPage() {
             .map(([k, v]) => [k, Number(v)]),
         ),
       }));
-      const res = await saveHeavyRates(carrier, payload);
+      const res = await saveHeavyRates(
+        carrier,
+        payload,
+        Object.fromEntries(Object.entries(countryServices).filter(([c, codes]) => pricedCountries.includes(c) && codes.length > 0)),
+      );
       await saveHeavyRateCodes(carrier, replaced);
       setBands(toEdit(res.bands));
+      setCountryServices(res.country_services ?? {});
       setMessage("บันทึกแล้ว — มีผลกับราคาขายทันที (Check Rate / Create Shipment / Rate Book / Public API)");
     } catch (e) {
       setError(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
@@ -198,6 +213,7 @@ export default function HeavyRatesPage() {
                       {key === "all" ? (
                         "ค่าปกติ (ทุก Zone)"
                       ) : key.startsWith("country:") ? (
+                        <>
                         <span className="flex items-center gap-1.5">
                           <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">พิเศษ</span>
                           <span className="truncate" title={countryName(key.slice(8))}>
@@ -213,6 +229,21 @@ export default function HeavyRatesPage() {
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         </span>
+                        {/* Which service this country's price is for — "ทุก Service" = every service; others use the zone price. */}
+                        <select
+                          value={countryServices[key.slice(8)]?.[0] ?? ""}
+                          onChange={(e) => setCountryService(key.slice(8), e.target.value)}
+                          title="ราคาพิเศษใช้กับ Service ที่เลือก · Service อื่นใช้ราคา Zone"
+                          className={`${fieldClass} mt-1 w-full py-1 text-xs`}
+                        >
+                          <option value="">ทุก Service</option>
+                          {services.map((s) => (
+                            <option key={s.code} value={s.code}>
+                              {s.code} {s.label}
+                            </option>
+                          ))}
+                        </select>
+                        </>
                       ) : (
                         `Zone ${key.slice(5)}`
                       )}
@@ -267,7 +298,7 @@ export default function HeavyRatesPage() {
               placeholder="+ ราคาพิเศษรายประเทศ… (พิมพ์ชื่อ / รหัส เช่น Japan, US)"
               openUp
             />
-            <span className="text-xs text-slate-400">ลำดับ: ราคาประเทศ &gt; ราคา Zone &gt; ค่าปกติ · ช่องว่าง = ใช้ราคาถัดไป</span>
+            <span className="text-xs text-slate-400">ลำดับ: ราคาประเทศ (เฉพาะ Service ที่เลือก) &gt; ราคา Zone &gt; ค่าปกติ · ช่องว่าง = ใช้ราคาถัดไป</span>
           </div>
 
           <div className="mt-6 border-t border-slate-100 pt-4">

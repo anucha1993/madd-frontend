@@ -1865,6 +1865,12 @@ export default function ShipmentCreatePage() {
   // shown to staff alongside the sell weight above so a CPM box's "sell 10kg, book 3kg" divergence
   // is visible BEFORE Confirm, not just discovered afterward on the carrier's own label/invoice.
   const totalRealBookingWeight = packages.reduce((sum, p) => sum + (Number(p.weight) || 0) * (Number(p.quantity) || 1), 0);
+  // The goods can't weigh more than their boxes — blocks Next on Commercial Invoice and booking.
+  const invoiceWeightOver = invoiceLinesWeight > totalRealBookingWeight + 0.0005;
+  // UPS takes the receiver's tax number without spaces / dashes / dots / slashes, at most 15 characters.
+  const upsTaxIdLength = destinationTaxId.replace(/[\s\-./]+/g, "").length;
+  const upsTaxIdTooLong = upsTaxIdLength > 15;
+  const upsTaxIdBlocked = upsTaxIdTooLong && selectedQuote?.carrier === "UPS";
   const totalPackageQuantity = packages.reduce((sum, p) => sum + (Number(p.quantity) || 1), 0);
   const overallPackageType: "box" | "document" = packages.every((p) => p.is_document) ? "document" : "box";
   // A CPM box (e.g. CPM10/CPM25) is always sold as exactly ONE fixed-weight box — a shipment
@@ -3425,7 +3431,7 @@ export default function ShipmentCreatePage() {
                     value={destinationTaxIdType}
                     onChange={(e) => setDestinationTaxIdType(e.target.value)}
                     title="ประเภทเลข (DHL ต้องรู้ว่าเป็นเลขอะไร)"
-                    className={`${inputClass} w-32 shrink-0 px-2`}
+                    className={`${inputClass} !w-36 shrink-0 px-2`}
                   >
                     {TAX_ID_TYPES.map((t) => (
                       <option key={t.value} value={t.value}>
@@ -3438,13 +3444,19 @@ export default function ShipmentCreatePage() {
                     value={destinationTaxId}
                     onChange={(e) => setDestinationTaxId(e.target.value)}
                     placeholder="Tax ID / EORI / ID (optional)"
-                    className={`${inputClass} ${destinationTaxId ? "pr-8" : ""} ${RECEIVER_ID_HINTS[destinationCountry] && !destinationTaxId.trim() ? "border-amber-400" : ""}`}
+                    className={`${inputClass} min-w-0 flex-1 ${destinationTaxId ? "pr-8" : ""} ${RECEIVER_ID_HINTS[destinationCountry] && !destinationTaxId.trim() ? "border-amber-400" : ""}`}
                   />
                 </div>
                 {destinationTaxId && (
                   <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-500" />
                 )}
               </div>
+              {upsTaxIdTooLong && (
+                <span className={`text-[11px] ${upsTaxIdBlocked ? "font-semibold text-red-600" : "text-amber-600"}`}>
+                  UPS รับได้ไม่เกิน 15 ตัว (ไม่นับช่องว่าง / ขีด) — ตอนนี้ {upsTaxIdLength} ตัว
+                  {upsTaxIdBlocked ? " ต้องแก้ก่อนจอง UPS" : " · DHL รับได้ถึง 35 ตัว"}
+                </span>
+              )}
               {RECEIVER_ID_HINTS[destinationCountry] && !destinationTaxId.trim() && (
                 <span className="text-[11px] text-amber-600">
                   ปลายทางนี้มักต้องมีเลขของผู้รับ: {RECEIVER_ID_HINTS[destinationCountry]} — ถ้าไม่ใส่ Carrier / ศุลกากรอาจไม่ปล่อยของ
@@ -4813,10 +4825,10 @@ export default function ShipmentCreatePage() {
                   </tr>
                   {invoiceLinesWeight > 0 && (
                     <tr>
-                      <td colSpan={9} className={`px-2 pb-1.5 text-right text-[11px] ${invoiceLinesWeight > totalRealBookingWeight ? "font-semibold text-amber-600" : "text-slate-500"}`}>
+                      <td colSpan={9} className={`px-2 pb-1.5 text-right text-[11px] ${invoiceWeightOver ? "font-semibold text-red-600" : "text-slate-500"}`}>
                         น้ำหนักสินค้ารวม {invoiceLinesWeight.toLocaleString(undefined, { maximumFractionDigits: 3 })} kg · น้ำหนักกล่องรวม{" "}
                         {totalRealBookingWeight.toLocaleString(undefined, { maximumFractionDigits: 3 })} kg
-                        {invoiceLinesWeight > totalRealBookingWeight && " — สินค้าหนักกว่ากล่อง ตรวจน้ำหนักต่อชิ้น / จำนวน หรือน้ำหนักกล่องใน Step 2 อีกครั้ง"}
+                        {invoiceWeightOver && " — น้ำหนักสินค้าเกินน้ำหนักจริงไม่ได้ แก้น้ำหนักต่อชิ้น / จำนวน หรือน้ำหนักกล่องใน Step 2"}
                       </td>
                     </tr>
                   )}
@@ -4897,7 +4909,8 @@ export default function ShipmentCreatePage() {
         <button
           type="button"
           onClick={() => setStep(4)}
-          disabled={uploadingInvoiceFile}
+          disabled={uploadingInvoiceFile || invoiceWeightOver}
+          title={invoiceWeightOver ? "น้ำหนักสินค้ารวมเกินน้ำหนักจริงของกล่อง" : undefined}
           className="flex items-center gap-2 rounded-lg bg-brand-amber px-6 py-2.5 text-sm font-semibold text-brand-navy-dark shadow-sm hover:bg-brand-amber/90 disabled:opacity-60"
         >
           Next <ChevronRight className="h-4 w-4" />
@@ -5083,7 +5096,7 @@ export default function ShipmentCreatePage() {
         </button>
         <button
           type="button"
-          disabled={!selectedQuote || !paymentInfoValid || missingFields.length > 0}
+          disabled={!selectedQuote || !paymentInfoValid || missingFields.length > 0 || invoiceWeightOver || upsTaxIdBlocked}
           onClick={() => {
             setBookedShipment(null);
             setBookingError("");

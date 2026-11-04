@@ -12,13 +12,16 @@ export type HeavyRateSettings = {
   bands: HeavyRateBand[];
   replaced_codes: string[];
   codes: { code: string; label: string }[];
+  // Services a special-country price is for, by ISO2 — missing / empty = every service.
+  country_services: Record<string, string[]>;
+  services: { code: string; label: string }[];
 };
 
 export const getHeavyRates = (carrier: HeavyRateCarrier) => apiClient.get<HeavyRateSettings>(`/heavy-rates?carrier=${carrier}`);
 
 // Saves the whole band × zone matrix of one carrier.
-export const saveHeavyRates = (carrier: HeavyRateCarrier, bands: HeavyRateBand[]) =>
-  apiClient.put<HeavyRateSettings>("/heavy-rates", { carrier, bands });
+export const saveHeavyRates = (carrier: HeavyRateCarrier, bands: HeavyRateBand[], country_services: Record<string, string[]>) =>
+  apiClient.put<HeavyRateSettings>("/heavy-rates", { carrier, bands, country_services });
 
 export const saveHeavyRateCodes = (carrier: HeavyRateCarrier, replaced_codes: string[]) =>
   apiClient.put<HeavyRateSettings>("/heavy-rates/codes", { carrier, replaced_codes });
