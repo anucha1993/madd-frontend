@@ -92,6 +92,8 @@ const ROUTE_PERMISSIONS: { pattern: RegExp; permission: string | string[]; all?:
   { pattern: /^\/config\/shipment-fields(\/|$)/, permission: "config.shipment_fields" },
   { pattern: /^\/config\/report-schedules(\/|$)/, permission: "config.report_schedules" },
   { pattern: /^\/config\/smtp-settings(\/|$)/, permission: "config.smtp" },
+  // Administrator (Super Admin) only — a key no Role can be given (not in config/permissions.php).
+  { pattern: /^\/ai-assistant(\/|$)/, permission: "ai.admin_assistant" },
 ];
 
 export function routePermission(pathname: string): string | string[] | null {

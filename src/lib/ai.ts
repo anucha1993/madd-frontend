@@ -74,3 +74,15 @@ export const askRateAi = (message: string) =>
   apiClient.post<RateChatResult>("/ai/rate-chat", { message });
 
 
+
+// ผู้ช่วย AI (/ai-assistant) — Administrator only. `actions` = SQL it ran this turn; `pending` =
+// writes waiting for the Administrator's ยืนยัน (DELETE, over 20 rows, users / roles / settings).
+export type AssistantAction = { type: "read" | "write" | "error"; sql: string; rows?: number; error?: string };
+export type AssistantPending = { id: string; sql: string; purpose: string; reason: string; affected_rows: number };
+export type AssistantReply = { reply: string; actions: AssistantAction[]; pending: AssistantPending[] };
+
+export const askAdminAssistant = (messages: { role: "user" | "assistant"; content: string }[]) =>
+  apiClient.post<AssistantReply>("/ai/admin-assistant", { messages });
+
+export const confirmAssistantAction = (id: string) =>
+  apiClient.post<{ affected_rows: number }>("/ai/admin-assistant/confirm", { id });

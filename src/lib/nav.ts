@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   BadgeDollarSign,
   BookOpen,
+  Bot,
   Boxes,
   Building2,
   FileBarChart2,
@@ -85,6 +86,11 @@ export const NAV_SECTIONS: NavItem[] = [
     label: "Rate Book",
     icon: BookOpen,
     href: "/reports/rate-book",
+  },
+  {
+    label: "ผู้ช่วย AI",
+    icon: Bot,
+    href: "/ai-assistant",
   },
   {
     label: "Branches",
